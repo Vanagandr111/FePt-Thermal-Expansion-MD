@@ -1,0 +1,45 @@
+# LAMMPS input for Fe-Pt MEAM thermal expansion
+# Kim, Koo, Lee (2006) - 2NN MEAM
+# Windows-ready: uses relative paths from project dir
+
+variable datafile index data/data.fept_c1.00.lmp
+variable T index 300
+variable comp index 1.0
+
+units           metal
+boundary        p p p
+atom_style      atomic
+
+read_data       ${datafile}
+
+# MEAM potential (2NN MEAM, Kim-Koo-Lee 2006)
+# Mapping: atom type 1 = Fe, atom type 2 = Pt
+# Relative paths from C:\проекты\Nikolay\ work for both WSL and Windows
+pair_style      meam
+pair_coeff      * * potentials/library.meam Fe Pt potentials/PtFe.meam Fe Pt
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+thermo          100
+thermo_style    custom step temp pe ke press vol lx ly lz
+
+minimize        1.0e-6 1.0e-8 1000 10000
+print "MINIMIZATION_DONE"
+
+fix             nptfix all npt temp ${T} ${T} 0.5 iso 0.0 0.0 1.0
+
+thermo          1000
+run             10000
+thermo          500
+run             20000
+
+# Box variables
+variable myvol equal vol
+variable mylx equal lx
+variable myly equal ly
+variable mylz equal lz
+variable mynat equal count(all)
+variable mya equal (4.0*vol/count(all))^(1.0/3.0)
+
+print "RESULT: T=${T} COMP=${comp} VOL=${myvol} LX=${mylx} LY=${myly} LZ=${mylz} NATOMS=${mynat} A=${mya}"
