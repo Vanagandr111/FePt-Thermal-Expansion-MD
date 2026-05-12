@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""
+lmp_helper.py — общий модуль для Fe-Pt MD проекта.
+Windows-first, никаких хардкоженых /mnt/c/ путей.
+Автоопределение корня проекта, поиск lmp.exe, запуск LAMMPS.
+"""
+import os
+import shutil
+import subprocess
+import sys
+
+# ── Автоопределение корня проекта ──────────────────────────────────
+def get_projdir():
+    """Корень проекта = родитель scripts/."""
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(this_dir)  # на уровень выше scripts/
+
+PROJDIR = os.environ.get('FEPT_PROJECT_DIR') or get_projdir()
+DATA_DIR = os.path.join(PROJDIR, 'data')
+POT_DIR  = os.path.join(PROJDIR, 'potentials')
+OUTPUT   = os.path.join(PROJDIR, 'output')
+SCRIPTS  = os.path.join(PROJDIR, 'scripts')
+
+# ── Поиск lmp.exe ──────────────────────────────────────────────────
+def find_lmp():
+    """
+    Поиск LAMMPS. Порядок:
+      1. env var LMP_EXE (если задана пользователем вручную)
+      2. lmp.exe / lmp в PATH или рядом с проектом
+      3. Типовые пути установки LAMMPS на Windows
+      4. wsl lmp (fallback — если WSL установлен и lmp есть там)
+    Возвращает команду (список строк) для subprocess, либо None.
+    """
+    # 1. Переменная окружения
+    env_lmp = os.environ.get('LMP_EXE')
+    if env_lmp:
+        if os.path.isfile(env_lmp) or shutil.which(env_lmp):
+            return [env_lmp]
+
+    # 2. which / shutil
+    for name in ('lmp.exe', 'lmp'):
+        path = shutil.which(name)
+        if path:
+            return [path]
+
+    # 3. Типовые пути Windows
+    typical_paths = [
+        r'C:\Program Files\LAMMPS 64-bit\bin\lmp.exe',
+        r'C:\Program Files\LAMMPS 64-bit\lmp.exe',
+        r'C:\Program Files\LAMMPS\lmp.exe',
+        r'C:\Program Files (x86)\LAMMPS\lmp.exe',
+        r'C:\LAMMPS\lmp.exe',
+        # Возможна установка вручную рядом с проектом
+        os.path.join(PROJDIR, 'lmp.exe'),
+        os.path.join(PROJDIR, 'bin', 'lmp.exe'),
+    ]
+    for p in typical_paths:
+        if os.path.isfile(p):
+            return [p]
+
+    # 4. WSL fallback
+    for wsl_candidate in ('wsl lmp', 'wsl.exe lmp'):
+        wsl_path = shutil.which(wsl_candidate.split()[0])
+        if wsl_path:
+            return wsl_candidate.split()
+
+    return None
+
+
+def find_lmp_display():
+    """Человекочитаемое описание найденного LAMMPS."""
+    cmd = find_lmp()
+    if cmd is None:
+        return None
+    if cmd[0] == 'wsl' or cmd[0] == 'wsl.exe':
+        return 'WSL: ' + ' '.join(cmd)
+    if os.path.isfile(cmd[0]):
+        return cmd[0]
+    return 'PATH: ' + cmd[0]
+
+
+# ── Запуск LAMMPS ──────────────────────────────────────────────────
+def run_lmp(infile, logfile=None, timeout=300, **kwargs):
+    """
+    Запуск LAMMPS с заданным infile.
+    logfile опционален — если не указан, LAMMPS пишет log.lammps.
+    Возвращает subprocess.CompletedProcess с stdout/stderr.
+    """
+    cmd = find_lmp()
+    if cmd is None:
+        raise RuntimeError(
+            "LAMMPS не найден! Установите LAMMPS для Windows или\n"
+            "задайте путь в переменной LMP_EXE (например):\n"
+            "  set LMP_EXE=C:\\Program Files\\LAMMPS 64-bit\\bin\\lmp.exe"
+        )
+
+    args = list(cmd) + ['-in', infile]
+    if logfile:
+        args += ['-log', logfile]
+
+    result = subprocess.run(
+        args,
+        capture_output=True, text=True, timeout=timeout,
+        **kwargs
+    )
+    return result
+
+
+def parse_result_line(line):
+    """Парсит RESULT-строку из LAMMPS."""
+    import re
+    m = re.search(r'RESULT:\s*T=(\d+)', line)
+    if not m:
+        return None
+    fields = {
+        'T': int(m.group(1)),
+        'comp': float(re.search(r'COMP=([\d.]+)', line).group(1)),
+        'vol': float(re.search(r'VOL=([\d.]+)', line).group(1)),
+        'lx': float(re.search(r'LX=([\d.]+)', line).group(1)),
+        'ly': float(re.search(r'LY=([\d.]+)', line).group(1)),
+        'lz': float(re.search(r'LZ=([\d.]+)', line).group(1)),
+        'a': float(re.search(r'A=([\d.]+)', line).group(1)),
+        'natoms': int(re.search(r'NATOMS=(\d+)', line).group(1)),
+    }
+    return fields
+
+
+def extract_result_from_log(logfile):
+    """Извлекает RESULT из файла лога LAMMPS."""
+    if not os.path.exists(logfile):
+        return None
+    with open(logfile, 'r', encoding='utf-8', errors='replace') as f:
+        content = f.read()
+    for line in content.split('\n'):
+        if line.startswith('RESULT:'):
+            r = parse_result_line(line)
+            if r:
+                return r
+    for line in content.split('\n'):
+        if 'RESULT:' in line and 'T=' in line and 'A=' in line:
+            r = parse_result_line(line)
+            if r:
+                return r
+    return None
+
+
+def extract_result_from_stdout(result):
+    """Извлекает RESULT из stdout CompletedProcess."""
+    for line in (result.stdout or '').split('\n'):
+        if line.startswith('RESULT:'):
+            r = parse_result_line(line)
+            if r:
+                return r
+    return None
+
+
+def gen_structure(comp, nx=4, ny=4, nz=4):
+    """Генерирует структуру через gen_structure.py."""
+    import sys
+    gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
+    outfile = os.path.join(DATA_DIR, f"data.fept_c{comp:.2f}.lmp")
+    if os.path.exists(outfile):
+        return outfile
+    subprocess.run(
+        [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile],
+        capture_output=True, timeout=30
+    )
+    return outfile

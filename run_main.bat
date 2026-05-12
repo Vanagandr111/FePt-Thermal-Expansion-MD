@@ -1,12 +1,14 @@
 @echo off
 chcp 65001 >nul
 
-REM === run_main.bat — Полный прогон Fe-Pt ===
-REM Windows-first: uses C:\Windows\System32\wsl.exe python3 for the runner script
+REM === run_main.bat — Полный прогон Fe-Pt (20 симуляций) ===
+REM Windows-first. Не требует WSL.
+REM Использует lmp.exe из LMP_EXE, PATH или типовых путей установки.
 REM Авто-детект .venv (создаётся bootstrap.bat) с fallback на system python
 
 setlocal
-cd /d C:\проекты\Nikolay
+cd /d "%~dp0"
+set PROJ_DIR=%CD%
 
 echo ==================================================
 echo Fe-Pt MD Thermal Expansion — FULL RUN
@@ -32,22 +34,33 @@ if exist ".venv\Scripts\python.exe" (
 echo [OK] Python ready
 echo.
 
-REM Check WSL + LAMMPS
-C:\Windows\System32\wsl.exe which lmp >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] LAMMPS not found in WSL.
+REM --- Поиск LAMMPS (Windows-first) ---
+call :find_lammps
+if errorlevel 1 (
+    echo [ERROR] LAMMPS не найден!
+    echo.
+    echo Что делать:
+    echo   Вариант 1: Установите LAMMPS для Windows с lammps.org
+    echo   Вариант 2: Задайте LMP_EXE вручную, напр.:
+    echo             set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
+    echo   Вариант 3: Если у вас WSL с LAMMPS — он тоже подойдёт
     pause
     exit /b 1
 )
-echo [OK] LAMMPS (WSL) found
+echo [OK] LAMMPS: %LMP_EXE%
 echo.
 
-echo [OK] Starting full run via WSL python3
+REM Создаём output директорию
+if not exist output mkdir output
+
+REM Запускаем полный прогон через Python (он сам вызывает LAMMPS)
+echo [OK] Starting full run via Python
+echo   LAMMPS: %LMP_EXE%
+echo   Python: %PYTHON%
 echo Time estimate: 10-20 minutes
 echo.
 
-REM Run full script in WSL (it handles all paths internally)
-C:\Windows\System32\wsl.exe python3 /mnt/c/проекты/Nikolay/scripts/run_all.py
+%PYTHON% scripts\run_all.py --full
 if %errorlevel% neq 0 (
     echo [ERROR] Run failed
     pause
@@ -64,3 +77,59 @@ echo ==================================================
 echo.
 endlocal
 pause
+exit /b 0
+
+REM ============================================================
+REM Подпрограмма поиска LAMMPS
+REM ============================================================
+:find_lammps
+
+REM 1. Переменная окружения LMP_EXE
+if defined LMP_EXE (
+    if exist "%LMP_EXE%" (
+        exit /b 0
+    )
+)
+
+REM 2. lmp.exe в PATH
+where lmp.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    set LMP_EXE=lmp.exe
+    exit /b 0
+)
+
+REM 3. lmp (без .exe) в PATH
+where lmp >nul 2>&1
+if %errorlevel% equ 0 (
+    for /f "delims=" %%P in ('where lmp') do (
+        set LMP_EXE=%%P
+        exit /b 0
+    )
+)
+
+REM 4. Типовые пути установки LAMMPS на Windows
+set LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe"
+for %%P in (%LMP_PATHS%) do (
+    if exist %%P (
+        set LMP_EXE=%%~P
+        exit /b 0
+    )
+)
+
+REM 5. lmp.exe рядом с проектом
+if exist "%PROJ_DIR%\lmp.exe" (
+    set LMP_EXE=%PROJ_DIR%\lmp.exe
+    exit /b 0
+)
+
+REM 6. Fallback: WSL
+where wsl.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    wsl.exe which lmp >nul 2>&1
+    if %errorlevel% equ 0 (
+        set LMP_EXE=wsl.exe lmp
+        exit /b 0
+    )
+)
+
+exit /b 1

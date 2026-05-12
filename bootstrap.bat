@@ -148,21 +148,28 @@ echo [OK] Зависимости установлены
 echo.
 
 REM ===================================================================
-REM Шаг 5: Проверка WSL + LAMMPS
+REM Шаг 5: Поиск LAMMPS (Windows-first, затем WSL fallback)
 REM ===================================================================
-echo [5/5] Проверка LAMMPS в WSL...
-C:\Windows\System32\wsl.exe which lmp >nul 2>&1
+echo [5/5] Поиск LAMMPS...
+call :find_lammps
 if %errorlevel% neq 0 (
-    echo [WARN] LAMMPS не найден в WSL.
-    echo   Откройте терминал и выполните:
-    echo     wsl --install
-    echo     sudo apt update ^&^& sudo apt install -y lammps
+    echo [WARN] LAMMPS не найден.
     echo.
+    echo   Проект будет работать, но запуск симуляций невозможен.
+    echo   Установите LAMMPS для Windows с lammps.org:
+    echo     https://packages.lammps.org/windows.html
+    echo.
+    echo   Или убедитесь, что lmp.exe доступен в PATH.
+    echo   Либо задайте путь вручную: set LMP_EXE=C:\путь\к\lmp.exe
+    echo.
+    echo   Нажмите Enter, чтобы продолжить без LAMMPS (только установка Python).
     pause
-    exit /b 1
+    goto :boot_end
 )
-echo [OK] LAMMPS найден
+echo [OK] LAMMPS: %LMP_EXE%
 echo.
+
+:boot_end
 
 echo ==================================================
 echo  Всё готово! Запускаю DEMO...
@@ -188,3 +195,58 @@ echo ==================================================
 echo.
 pause
 endlocal
+
+REM ============================================================
+REM Подпрограмма поиска LAMMPS
+REM ============================================================
+:find_lammps
+
+REM 1. Переменная окружения LMP_EXE
+if defined LMP_EXE (
+    if exist "%LMP_EXE%" (
+        exit /b 0
+    )
+)
+
+REM 2. lmp.exe в PATH
+where lmp.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    set LMP_EXE=lmp.exe
+    exit /b 0
+)
+
+REM 3. lmp (без .exe) в PATH
+where lmp >nul 2>&1
+if %errorlevel% equ 0 (
+    for /f "delims=" %%P in ('where lmp') do (
+        set LMP_EXE=%%P
+        exit /b 0
+    )
+)
+
+REM 4. Типовые пути установки LAMMPS на Windows
+set LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe"
+for %%P in (%LMP_PATHS%) do (
+    if exist %%P (
+        set LMP_EXE=%%~P
+        exit /b 0
+    )
+)
+
+REM 5. lmp.exe рядом с проектом
+if exist "%PROJ_DIR%\lmp.exe" (
+    set LMP_EXE=%PROJ_DIR%\lmp.exe
+    exit /b 0
+)
+
+REM 6. Fallback: WSL
+where wsl.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    wsl.exe which lmp >nul 2>&1
+    if %errorlevel% equ 0 (
+        set LMP_EXE=wsl.exe lmp
+        exit /b 0
+    )
+)
+
+exit /b 1
