@@ -43,7 +43,8 @@ if errorlevel 1 (
     echo   Вариант 1: Установите LAMMPS для Windows с lammps.org
     echo   Вариант 2: Задайте LMP_EXE вручную, напр.:
     echo             set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
-    echo   Вариант 3: Если у вас WSL с LAMMPS — он тоже подойдёт
+    echo   Вариант 3: Запустите LAMMPS через WSL (если lmp.exe нет):
+    echo             set LMP_EXE=wsl.exe lmp
     pause
     exit /b 1
 )
@@ -81,24 +82,32 @@ exit /b 0
 
 REM ============================================================
 REM Подпрограмма поиска LAMMPS
+REM Ищет строго Windows-native lmp.exe внутри папки проекта.
+REM Никакого WSL. Никаких других операционок.
 REM ============================================================
 :find_lammps
 
-REM 1. Переменная окружения LMP_EXE
+REM 1. lmp.exe в bin/ рядом с проектом (портативная сборка)
+if exist "%PROJ_DIR%\bin\lmp.exe" (
+    set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
+    exit /b 0
+)
+
+REM 2. Переменная окружения LMP_EXE
 if defined LMP_EXE (
     if exist "%LMP_EXE%" (
         exit /b 0
     )
 )
 
-REM 2. lmp.exe в PATH
+REM 3. lmp.exe в PATH
 where lmp.exe >nul 2>&1
 if %errorlevel% equ 0 (
     set LMP_EXE=lmp.exe
     exit /b 0
 )
 
-REM 3. lmp (без .exe) в PATH
+REM 4. lmp (без .exe) в PATH
 where lmp >nul 2>&1
 if %errorlevel% equ 0 (
     for /f "delims=" %%P in ('where lmp') do (
@@ -107,8 +116,8 @@ if %errorlevel% equ 0 (
     )
 )
 
-REM 4. Типовые пути установки LAMMPS на Windows
-set LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe"
+REM 5. Типовые пути установки LAMMPS на Windows
+set "LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe""
 for %%P in (%LMP_PATHS%) do (
     if exist %%P (
         set LMP_EXE=%%~P
@@ -116,20 +125,11 @@ for %%P in (%LMP_PATHS%) do (
     )
 )
 
-REM 5. lmp.exe рядом с проектом
+REM 6. lmp.exe рядом с проектом (на случай если в корне)
 if exist "%PROJ_DIR%\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\lmp.exe
     exit /b 0
 )
 
-REM 6. Fallback: WSL
-where wsl.exe >nul 2>&1
-if %errorlevel% equ 0 (
-    wsl.exe which lmp >nul 2>&1
-    if %errorlevel% equ 0 (
-        set LMP_EXE=wsl.exe lmp
-        exit /b 0
-    )
-)
-
+REM Не нашли
 exit /b 1
