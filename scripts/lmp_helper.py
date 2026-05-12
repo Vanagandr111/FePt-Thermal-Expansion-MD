@@ -77,29 +77,37 @@ def find_lmp_display():
 
 
 # ── Запуск LAMMPS ──────────────────────────────────────────────────
+_RUN_LMP_BAT = os.path.join(PROJDIR, '_run_lmp.bat')
+
 def run_lmp(infile, logfile=None, timeout=300, **kwargs):
     """
-    Запуск LAMMPS с заданным infile.
-    logfile опционален — если не указан, LAMMPS пишет log.lammps.
-    Возвращает subprocess.CompletedProcess с stdout/stderr.
+    Запуск LAMMPS через _run_lmp.bat (helper с %~dp0).
+    Пути относительные от PROJDIR.
     """
     cmd = find_lmp()
     if cmd is None:
         raise RuntimeError(
-            "LAMMPS не найден! Установите LAMMPS для Windows или\n"
-            "задайте путь в переменной LMP_EXE (например):\n"
-            "  set LMP_EXE=C:\\Program Files\\LAMMPS 64-bit\\bin\\lmp.exe"
+            "LAMMPS not found. Install LAMMPS for Windows or\n"
+            "set LMP_EXE environment variable."
         )
 
-    args = list(cmd) + ['-in', infile]
+    # Use relative paths (no cyrillic in the cmd.exe command string)
+    infile_rel = os.path.relpath(infile, PROJDIR)
+    bat_args = [_RUN_LMP_BAT, '-in', infile_rel]
     if logfile:
-        args += ['-log', logfile]
+        logfile_rel = os.path.relpath(logfile, PROJDIR)
+        bat_args += ['-log', logfile_rel]
 
+    # Windows-only: запуск через cmd.exe /c с _run_lmp.bat
+    shell_cmd = subprocess.list2cmdline(bat_args)
     result = subprocess.run(
-        args,
-        capture_output=True, text=True, timeout=timeout,
+        ['cmd.exe', '/c', shell_cmd],
+        capture_output=True, text=False, timeout=timeout,
+        cwd=PROJDIR,
         **kwargs
     )
+    result.stdout = result.stdout.decode('cp1251', errors='replace') if result.stdout else ''
+    result.stderr = result.stderr.decode('cp1251', errors='replace') if result.stderr else ''
     return result
 
 
