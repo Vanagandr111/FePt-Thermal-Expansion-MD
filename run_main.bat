@@ -57,11 +57,9 @@ echo ==================================================
 echo.
 echo Results:
 echo   output\all_results.csv
-echo   output\a_vs_T_all.png
-echo   output\a_vs_comp.png
-echo   output\a_vs_T_pure.png
-echo   output\a_vs_T_residuals.png
 echo   output\integrity_check.txt
+echo   output\a_vs_T.png
+echo   output\a_vs_comp.png
 endlocal
 pause
 exit /b 0
