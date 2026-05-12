@@ -1,17 +1,9 @@
 # Fe-Pt MD Thermal Expansion — Git ignore
-# Создан 12 мая 2026
 
-# Виртуальное окружение (создаётся bootstrap.bat)
+# Виртуальное окружение
 .venv/
 venv/
 env/
-
-# Результаты расчётов (генерируются при запуске)
-output/
-
-# Отладочные файлы
-log.lammps
-test_run.py
 
 # Python кэш
 __pycache__/
@@ -28,9 +20,17 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Временные логи (не в output/)
-*.lmp
+# Архивы
+*.zip
 
-# Portable LAMMPS (если положили lmp.exe в папку проекта)
-# LAMMPS portable binary (~50 MB)
+# Portable LAMMPS (бинарник ~50 МБ)
 bin/
+
+# Phase 1 output (устаревший)
+output/
+output_v2/logs/
+
+# Временные файлы
+log.lammps
+test_run.py
+*.lmp
