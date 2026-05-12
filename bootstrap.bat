@@ -148,7 +148,7 @@ echo [OK] Зависимости установлены
 echo.
 
 REM ===================================================================
-REM Шаг 5: Поиск LAMMPS (Windows-first, затем WSL fallback)
+REM Шаг 5: Поиск LAMMPS (Windows-native, bin\lmp.exe)
 REM ===================================================================
 echo [5/5] Поиск LAMMPS...
 call :find_lammps
