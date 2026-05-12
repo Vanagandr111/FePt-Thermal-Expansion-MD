@@ -1,119 +1,105 @@
 @echo off
 chcp 65001 >nul
-
-REM === env_check.bat — сбор информации об окружении ===
-REM Windows-first. Работает из любой копии папки проекта.
+REM === env_check.bat - Diagnostics ===
+REM Windows-only. No WSL.
 
 setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
 
-echo ==============================================
-echo Environment Check — FePt Project
-echo ==============================================
+echo ==================================================
+echo Fe-Pt MD - Environment Check
+echo ==================================================
 echo.
 
-echo [1] Windows Version:
-ver
-echo.
-
-echo [2] Python:
+REM --- Python ---
+echo [1/4] Python:
 if exist ".venv\Scripts\python.exe" (
-    .venv\Scripts\python --version 2>&1
-    .venv\Scripts\python -c "import sys; print(f'  Path: {sys.executable}')" 2>&1
+    .venv\Scripts\python.exe --version
+    echo        Location: .venv\Scripts\python.exe
 ) else (
-    echo   [WARN] .venv не найден — создайте через bootstrap.bat
+    where python 2>nul && python --version || echo NOT FOUND
+    echo   Run bootstrap.bat first
 )
-for /f "tokens=*" %%V in ('python --version 2^>^&1') do echo   (system) %%V
 echo.
 
-echo [3] LAMMPS (Windows-first):
+REM --- LAMMPS ---
+echo [2/4] LAMMPS:
 call :find_lammps
-if %errorlevel% equ 0 (
-    echo   LMP_EXE: %LMP_EXE%
+if not errorlevel 1 (
+    echo   LMP_EXE=%LMP_EXE%
+    "%LMP_EXE%" -h 2>&1 | findstr "LAMMPS"
 ) else (
-    echo   [NOT FOUND] LAMMPS не найден.
-    echo   Установите LAMMPS для Windows с lammps.org
-    echo   Или задайте LMP_EXE вручную
+    echo   NOT FOUND
 )
 echo.
 
-echo [4] Python packages (.venv):
+REM --- Packages ---
+echo [3/4] Packages:
 if exist ".venv\Scripts\python.exe" (
-    .venv\Scripts\python -c "import numpy; print(f'  numpy: {numpy.__version__}')" 2>&1
-    .venv\Scripts\python -c "import matplotlib; print(f'  matplotlib: {matplotlib.__version__}')" 2>&1
+    .venv\Scripts\python.exe -c "import numpy; print('  numpy', numpy.__version__)"
+    .venv\Scripts\python.exe -c "import matplotlib; print('  matplotlib', matplotlib.__version__)"
 ) else (
-    echo   [NOT FOUND] .venv — запустите bootstrap.bat
+    python -c "import numpy; print('  numpy', numpy.__version__)" 2>&1 || echo "  numpy NOT INSTALLED"
+    python -c "import matplotlib; print('  matplotlib', matplotlib.__version__)" 2>&1 || echo "  matplotlib NOT INSTALLED"
 )
 echo.
 
-echo [5] Structure check:
-echo   Project folder: %PROJ_DIR%
-if exist %PROJ_DIR%\scripts\ (echo   scripts/     [FOUND]) else (echo   scripts/     [MISSING])
-if exist %PROJ_DIR%\data\ (echo   data/        [FOUND]) else (echo   data/        [MISSING])
-if exist %PROJ_DIR%\potentials\ (echo   potentials/  [FOUND]) else (echo   potentials/  [MISSING])
-if exist %PROJ_DIR%\output\ (echo   output/      [FOUND]) else (echo   output/      [MISSING])
-if exist %PROJ_DIR%\run_demo.bat (echo   run_demo.bat [FOUND]) else (echo   run_demo.bat [MISSING])
-if exist %PROJ_DIR%\INSTALL_AND_RUN.txt (echo   INSTALL_AND_RUN.txt [FOUND]) else (echo   INSTALL_AND_RUN.txt [MISSING])
+REM --- Structure ---
+echo [4/4] Structure:
+echo   Dir: %PROJ_DIR%
+for %%D in (data potentials scripts output requirements.txt) do (
+    if exist "%PROJ_DIR%\%%D" (echo   %%D - OK) else (echo   %%D - MISSING)
+)
+if exist "bin\lmp.exe" (echo   bin\lmp.exe - OK) else (echo   bin\lmp.exe - MISSING)
 echo.
 
-echo ==============================================
-echo Check complete.
-echo ==============================================
-echo.
-
+echo ==================================================
+echo All checks done.
+echo ==================================================
 endlocal
 pause
 exit /b 0
 
-REM ============================================================
-REM Подпрограмма поиска LAMMPS
-REM Ищет строго Windows-native lmp.exe внутри папки проекта.
-REM Никакого WSL. Никаких других операционок.
-REM ============================================================
 :find_lammps
 
-REM 1. lmp.exe в bin/ рядом с проектом (портативная сборка)
+REM 1) Portable lmp.exe in bin/ next to project
 if exist "%PROJ_DIR%\bin\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
     exit /b 0
 )
 
-REM 2. Переменная окружения LMP_EXE
+REM 2) LMP_EXE env var
 if defined LMP_EXE (
-    if exist "%LMP_EXE%" exit /b 0
+    if exist "%LMP_EXE%" (
+        exit /b 0
+    )
 )
 
-REM 3. lmp.exe в PATH
+REM 3) lmp.exe in PATH
 where lmp.exe >nul 2>&1
 if %errorlevel% equ 0 (
     set LMP_EXE=lmp.exe
     exit /b 0
 )
 
-REM 4. lmp (без .exe) в PATH
-where lmp >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "delims=" %%P in ('where lmp') do (
-        set LMP_EXE=%%P
-        exit /b 0
-    )
-)
-
-REM 5. Типовые пути установки LAMMPS на Windows
-set "LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe""
-for %%P in (%LMP_PATHS%) do (
-    if exist %%P (
-        set LMP_EXE=%%~P
-        exit /b 0
-    )
-)
-
-REM 6. lmp.exe рядом с проектом (на случай если в корне)
+REM 4) Typical install paths (one by one to avoid (x86) parsing)
 if exist "%PROJ_DIR%\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\lmp.exe
     exit /b 0
 )
+if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
+    exit /b 0
+)
 
-REM Не нашли
+REM Not found
 exit /b 1
