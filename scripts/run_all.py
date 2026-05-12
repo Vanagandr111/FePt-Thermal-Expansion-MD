@@ -27,7 +27,7 @@ def run_lammps(datafile, comp, T, outdir, quick=True):
     infile = os.path.join(outdir, f"in_{T}.lmp")
     steps = 5000 if quick else 20000
 
-    # Generate input file
+    # Generate LAMMPS input file with relative paths (we cd to PROJDIR in run_lmp)
     lines = [
         f"# LAMMPS FePt MEAM T={T}K comp={comp:.2f}",
         "",
@@ -35,11 +35,10 @@ def run_lammps(datafile, comp, T, outdir, quick=True):
         "boundary        p p p",
         "atom_style      atomic",
         "",
-        f"read_data       {datafile}",
+        f"read_data       data{os.sep}{os.path.basename(datafile)}",
         "",
-        "# MEAM 2NN (Kim-Koo-Lee 2006), mapping: 1=Fe 2=Pt",
         "pair_style      meam",
-        f"pair_coeff      * * {lmp.POT_DIR}/library.meam Fe Pt {lmp.POT_DIR}/PtFe.meam Fe Pt",
+        f"pair_coeff      * * potentials{os.sep}library.meam Fe Pt potentials{os.sep}PtFe.meam Fe Pt",
         "",
         "neighbor        2.0 bin",
         "neigh_modify    every 1 delay 0 check yes",
@@ -198,7 +197,7 @@ def main():
             print(f"  T={T}K...", end="", flush=True)
             result = run_lammps(datafile, comp, T, outdir, quick=quick)
             if result:
-                print(f" a={result['a']:.4f}Å")
+                print(f" a={result['a']:.4f} A")
                 all_results[comp].append(result)
             else:
                 print(" FAILED")

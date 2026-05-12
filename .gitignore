@@ -9,6 +9,10 @@ env/
 # Результаты расчётов (генерируются при запуске)
 output/
 
+# Отладочные файлы
+log.lammps
+test_run.py
+
 # Python кэш
 __pycache__/
 *.pyc
