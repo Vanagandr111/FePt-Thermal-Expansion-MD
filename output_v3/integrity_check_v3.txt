@@ -1,0 +1,32 @@
+Integrity check: 26 log files
+================================================================================
+  ✅ eam_u3_T1200_pdamp0.5_iso: a=3.943322 n=502 (csv: a=3.943322 n=502)
+  ✅ eam_u3_T1200_pdamp1.0_iso: a=3.942484 n=502 (csv: a=3.942484 n=502)
+  ✅ eam_u3_T1200_pdamp10.0_aniso: a=3.943333 n=502 (csv: a=3.943333 n=502)
+  ✅ eam_u3_T1200_pdamp10.0_iso: a=3.943280 n=502 (csv: a=3.943280 n=502)
+  ✅ eam_u3_T1200_pdamp10_long: a=3.961912 n=1002 (csv: a=3.961912 n=1002)
+  ✅ eam_u3_T1200_pdamp1_long: a=3.961797 n=1002 (csv: a=3.961797 n=1002)
+  ✅ eam_u3_T1200_pdamp2.0_iso: a=3.943259 n=502 (csv: a=3.943259 n=502)
+  ✅ eam_u3_T300_pdamp0.5_iso: a=3.925583 n=502 (csv: a=3.925583 n=502)
+  ✅ eam_u3_T300_pdamp1.0_iso: a=3.925658 n=502 (csv: a=3.925658 n=502)
+  ✅ eam_u3_T300_pdamp10.0_aniso: a=3.925609 n=502 (csv: a=3.925609 n=502)
+  ✅ eam_u3_T300_pdamp10.0_iso: a=3.925602 n=502 (csv: a=3.925602 n=502)
+  ✅ eam_u3_T300_pdamp10_long: a=3.929670 n=1002 (csv: a=3.929670 n=1002)
+  ✅ eam_u3_T300_pdamp1_long: a=3.929906 n=1002 (csv: a=3.929906 n=1002)
+  ✅ eam_u3_T300_pdamp2.0_iso: a=3.925731 n=502 (csv: a=3.925731 n=502)
+  ✅ meam_T1200_pdamp0.5_iso: a=3.939935 n=502 (csv: a=3.939935 n=502)
+  ✅ meam_T1200_pdamp1.0_iso: a=3.939926 n=502 (csv: a=3.939926 n=502)
+  ✅ meam_T1200_pdamp10.0_iso: a=3.939945 n=502 (csv: a=3.939945 n=502)
+  ✅ meam_T1200_pdamp10_long: a=3.956025 n=1002 (csv: a=3.956025 n=1002)
+  ✅ meam_T1200_pdamp1_long: a=3.955960 n=1002 (csv: a=3.955960 n=1002)
+  ✅ meam_T1200_pdamp2.0_iso: a=3.939937 n=502 (csv: a=3.939937 n=502)
+  ✅ meam_T300_pdamp0.5_iso: a=3.924746 n=502 (csv: a=3.924746 n=502)
+  ✅ meam_T300_pdamp1.0_iso: a=3.924097 n=502 (csv: a=3.924097 n=502)
+  ✅ meam_T300_pdamp10.0_iso: a=3.924677 n=502 (csv: a=3.924677 n=502)
+  ✅ meam_T300_pdamp10_long: a=3.929227 n=1002 (csv: a=3.929227 n=1002)
+  ✅ meam_T300_pdamp1_long: a=3.929193 n=1002 (csv: a=3.929193 n=1002)
+  ✅ meam_T300_pdamp2.0_iso: a=3.924592 n=502 (csv: a=3.924592 n=502)
+================================================================================
+✅ ALL RESULTS VERIFIED against raw logs
+
+Phase 2 (Fe-Pt MEAM): 0 log files available
