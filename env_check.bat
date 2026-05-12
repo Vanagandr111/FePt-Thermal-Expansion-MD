@@ -18,9 +18,13 @@ ver
 echo.
 
 echo [2] Python:
-python --version 2>&1
-python -c "import sys; print(f'  Python path: {sys.executable}')" 2>&1
-where python 2>&1 | findstr /v "AppData\\Local\\Microsoft"
+if exist ".venv\Scripts\python.exe" (
+    .venv\Scripts\python --version 2>&1
+    .venv\Scripts\python -c "import sys; print(f'  Path: {sys.executable}')" 2>&1
+) else (
+    echo   [WARN] .venv не найден — создайте через bootstrap.bat
+)
+for /f "tokens=*" %%V in ('python --version 2^>^&1') do echo   (system) %%V
 echo.
 
 echo [3] LAMMPS (Windows-first):

@@ -248,5 +248,5 @@ if %errorlevel% equ 0 (
         exit /b 0
     )
 )
-
+pause
 exit /b 1
