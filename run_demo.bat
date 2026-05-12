@@ -1,21 +1,21 @@
 @echo off
 chcp 65001 >nul
 
-REM === run_demo.bat — Быстрый тест Fe-Pt MD (2 точки) ===
-REM Windows-first. Не требует WSL.
-REM Использует lmp.exe из LMP_EXE, PATH или типовых путей установки.
-REM Авто-детект .venv (создаётся bootstrap.bat) с fallback на system python
+REM === run_demo.bat - Quick Fe-Pt MD test (2 points) ===
+REM Windows-only. No WSL.
+REM Uses lmp.exe from: bin/, LMP_EXE, PATH, or typical install paths.
+REM Auto-detects .venv (created by bootstrap.bat) with system python fallback.
 
 setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
 
 echo ==================================================
-echo Fe-Pt MD Thermal Expansion — DEMO
+echo Fe-Pt MD Thermal Expansion - DEMO
 echo ==================================================
 echo.
 
-REM --- Детект Python: .venv prefer, fallback system ---
+REM --- Python detection: .venv first, system fallback ---
 if exist ".venv\Scripts\python.exe" (
     set PYTHON=.venv\Scripts\python.exe
     for /f "delims=" %%V in ('".venv\Scripts\python.exe" --version 2^>^&1') do echo [.venv] %%V
@@ -24,7 +24,7 @@ if exist ".venv\Scripts\python.exe" (
     python --version >nul 2>&1
     if %errorlevel% neq 0 (
         echo [ERROR] Python not found.
-        echo   Запустите bootstrap.bat для автоматической установки.
+        echo   Run bootstrap.bat first to set up environment.
         pause
         exit /b 1
     )
@@ -33,21 +33,18 @@ if exist ".venv\Scripts\python.exe" (
 echo [OK] Python ready
 echo.
 
-REM --- Поиск LAMMPS (Windows-first) ---
+REM --- Create output directory ---
+if not exist output\ (mkdir output)
+
+REM --- LAMMPS detection ---
 call :find_lammps
 if errorlevel 1 (
-    echo [ERROR] LAMMPS не найден!
+    echo [ERROR] LAMMPS not found!
     echo.
-    echo Что делать:
-    echo   Вариант 1: Установите LAMMPS для Windows с lammps.org
-    echo             (https://packages.lammps.org/windows.html)
-    echo.
-    echo   Вариант 2: Если lmp.exe уже где-то лежит, задайте путь вручную:
-    echo             set LMP_EXE=C:\путь\к\lmp.exe
-    echo             и запустите run_demo.bat снова
-    echo.
-    echo   Вариант 3: Положите lmp.exe в папку bin\ проекта — его можно
-    echo             скопировать из установки LAMMPS для Windows
+    echo Options:
+    echo   1. Install LAMMPS from packages.lammps.org
+    echo   2. Set LMP_EXE to your lmp.exe path
+    echo   3. Copy lmp.exe + DLLs into bin\
     pause
     exit /b 1
 )
@@ -90,7 +87,7 @@ REM Generate CSV + plot from LAMMPS logs
 echo.
 echo [demo_report] Generating CSV and plot from raw logs...
 %PYTHON% scripts\demo_report.py
-if %errorlevel% equ 0 (echo [OK]) else (echo [WARN] demo_report.py — see output above)
+if %errorlevel% equ 0 (echo [OK]) else (echo [WARN] demo_report.py - see output above)
 
 echo.
 echo ==================================================
@@ -108,33 +105,32 @@ pause
 exit /b 0
 
 REM ============================================================
-REM Подпрограмма поиска LAMMPS
-REM Ищет строго Windows-native lmp.exe внутри папки проекта.
-REM Никакого WSL. Никаких других операционок.
+REM LAMMPS finder subroutine
+REM Searches: bin\, LMP_EXE, PATH, typical install paths
 REM ============================================================
 :find_lammps
 
-REM 1. lmp.exe в bin/ рядом с проектом (портативная сборка)
+REM 1. Portable lmp.exe in bin/ next to project
 if exist "%PROJ_DIR%\bin\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
     exit /b 0
 )
 
-REM 2. Переменная окружения LMP_EXE
+REM 2. Environment variable LMP_EXE
 if defined LMP_EXE (
     if exist "%LMP_EXE%" (
         exit /b 0
     )
 )
 
-REM 3. lmp.exe в PATH
+REM 3. lmp.exe in PATH
 where lmp.exe >nul 2>&1
 if %errorlevel% equ 0 (
     set LMP_EXE=lmp.exe
     exit /b 0
 )
 
-REM 4. lmp (без .exe) в PATH
+REM 4. lmp (without .exe) in PATH
 where lmp >nul 2>&1
 if %errorlevel% equ 0 (
     for /f "delims=" %%P in ('where lmp') do (
@@ -143,7 +139,7 @@ if %errorlevel% equ 0 (
     )
 )
 
-REM 5. Типовые пути установки LAMMPS на Windows
+REM 5. Typical Windows install paths
 set LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe"
 for %%P in (%LMP_PATHS%) do (
     if exist %%P (
@@ -152,11 +148,11 @@ for %%P in (%LMP_PATHS%) do (
     )
 )
 
-REM 6. lmp.exe рядом с проектом (на случай если в корне)
+REM 6. lmp.exe in project root
 if exist "%PROJ_DIR%\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\lmp.exe
     exit /b 0
 )
 
-REM Не нашли
+REM Not found
 exit /b 1
