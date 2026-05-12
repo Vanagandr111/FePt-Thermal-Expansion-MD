@@ -34,3 +34,7 @@ output_v2/logs/
 log.lammps
 test_run.py
 *.lmp
+
+# Phase 3: игнорируем логи и входные файлы, трекаем отчёты
+output_v3/logs/
+output_v3/in_*.lmp

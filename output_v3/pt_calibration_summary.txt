@@ -1,0 +1,47 @@
+====================================================================================================
+Pt CALIBRATION SUMMARY — Thermal Expansion Matrix
+Experimental: CTE(Pt) = 9.0×10⁻⁶ K⁻¹, a300 ≈ 3.92 Å
+Method: NPT (P=0), fcc 256 atoms, averaged over production steps
+====================================================================================================
+
+Key                              a300(Å)      a1200(Å)     Δa(Å)      CTE            CTE/exp    n300   n1200  std300 P300      
+-------------------------------------------------------------------------------------------------------------------------------
+eam_u3_long_pdamp1.0             3.929906     3.961797     0.031891   9.017e-06      1.002      1002   1002   0.0044 -217.7    
+eam_u3_long_pdamp10.0            3.929670     3.961912     0.032242   9.116e-06      1.013      1002   1002   0.0025 -3.6      
+eam_u3_short_pdamp0.5            3.925583     3.943322     0.017739   5.021e-06      0.558      502    502    0.0056 -3.4      
+eam_u3_short_pdamp1.0            3.925658     3.942484     0.016826   4.762e-06      0.529      502    502    0.0065 -155.2    
+eam_u3_short_pdamp10.0           3.925602     3.943280     0.017678   5.004e-06      0.556      502    502    0.0055 -55.8     
+eam_u3_short_pdamp2.0            3.925731     3.943259     0.017528   4.961e-06      0.551      502    502    0.0072 16.1      
+meam_long_pdamp1.0               3.929193     3.955960     0.026767   7.569e-06      0.841      1002   1002   0.0039 -136.5    
+meam_long_pdamp10.0              3.929227     3.956025     0.026798   7.578e-06      0.842      1002   1002   0.0035 -84.1     
+meam_short_pdamp0.5              3.924746     3.939935     0.015189   4.300e-06      0.478      502    502    0.0066 -21.1     
+meam_short_pdamp1.0              3.924097     3.939926     0.015829   4.482e-06      0.498      502    502    0.0071 1191.5    
+meam_short_pdamp10.0             3.924677     3.939945     0.015268   4.323e-06      0.480      502    502    0.0061 -113.1    
+meam_short_pdamp2.0              3.924592     3.939937     0.015345   4.344e-06      0.483      502    502    0.0066 58.2      
+-------------------------------------------------------------------------------------------------------------------------------
+
+BEST EAM u3: eam_u3_long_pdamp10.0            CTE=9.116e-06 (101.3% exp)
+BEST MEAM:   meam_long_pdamp10.0              CTE=7.578e-06 (84.2% exp)
+
+====================================================================================================
+INTERPRETATION
+====================================================================================================
+
+EAM u3 (Pt_u3.eam) — PURE Pt potential, no Fe-Pt cross interaction:
+  Long runs (50k eq + 100k prod): CTE = 9.116e-06 = 101.3% exp
+  Short runs (10k eq + 50k prod): CTE ≈ 5.0e-6 = 56% exp
+  → Long runs FIX the CTE for EAM u3, proving MD protocol works.
+  → CANNOT be used for Fe-Pt alloys (no Fe-Pt interaction in potential).
+  → USE as pure Pt benchmark only.
+
+MEAM (PtFe.meam) — Fe-Pt alloy potential with cross interaction:
+  Long runs (50k eq + 100k prod): CTE ≈ 7.578e-06 = 84.2% exp
+  Short runs (10k eq + 50k prod): CTE ≈ 4.3e-6 = 48% exp
+  → Long runs improve MEAM Pt CTE from 48% → 84% of exp.
+  → HAS Fe-Pt cross interaction (Ec(1,2)=5.86, ialloy=2 in PtFe.meam).
+  → Selected for Fe-Pt grid: the only available Fe-Pt alloy potential.
+
+LIMITATION NOTE:
+  MEAM underestimates Pt CTE by ~16% (7.58e-6 vs 9.0e-6 exp).
+  This will carry over to Fe-Pt results. The relative trend
+  of a(x_Pt, T) should be reliable; absolute values may be low.
