@@ -1,0 +1,28 @@
+# Fe-Pt MD Thermal Expansion — Git ignore
+# Создан 12 мая 2026
+
+# Виртуальное окружение (создаётся bootstrap.bat)
+.venv/
+venv/
+env/
+
+# Результаты расчётов (генерируются при запуске)
+output/
+
+# Python кэш
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные логи (не в output/)
+*.lmp

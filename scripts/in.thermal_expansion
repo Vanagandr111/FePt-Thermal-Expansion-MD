@@ -1,0 +1,48 @@
+# LAMMPS input script for thermal expansion at a SINGLE temperature.
+# Python wrapper runs this for each T.
+#
+# Usage: lmp -in in.thermal_expansion -var datafile data.lmp -var T 300 -var comp 1.0
+
+# --- Variables (overridden by command line) ---
+variable datafile index data.lmp
+variable T index 300
+variable comp index 1.0
+
+# --- Initialization ---
+units           metal
+boundary        p p p
+atom_style      atomic
+
+# --- Read structure ---
+read_data       ${datafile}
+
+# --- EAM potentials ---
+pair_style      eam/alloy
+pair_coeff      * * ../potentials/Fe_Zhou.eam.alloy ../potentials/Pt_Zhou.eam.alloy Fe Pt
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+thermo          100
+thermo_style    custom step temp pe ke press vol lx ly lz
+
+# --- Energy minimization ---
+minimize        1.0e-6 1.0e-8 1000 10000
+print "MINIMIZATION_DONE"
+
+# --- NPT relaxation ---
+fix             nptfix all npt temp ${T} ${T} 0.5 iso 0.0 0.0 1.0
+
+# Equilibrate
+thermo          1000
+run             10000
+
+# Production averaging
+thermo          500
+run             20000
+
+# --- Extract final lattice parameter ---
+variable        a_lat equal (4.0*vol/count(all))^(1.0/3.0)
+print           "RESULT_T=${T}_COMP=${comp}_VOL=${vol}_LX=${lx}_LY=${ly}_LZ=${lz}_NATOMS=${count(all)}_A=${a_lat}"
+
+print "ALL_DONE_AT_T_${T}"
