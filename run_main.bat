@@ -43,8 +43,8 @@ if errorlevel 1 (
     echo   Вариант 1: Установите LAMMPS для Windows с lammps.org
     echo   Вариант 2: Задайте LMP_EXE вручную, напр.:
     echo             set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
-    echo   Вариант 3: Запустите LAMMPS через WSL (если lmp.exe нет):
-    echo             set LMP_EXE=wsl.exe lmp
+    echo   Вариант 3: Положите lmp.exe в папку bin\ проекта — его можно
+    echo             скопировать из установки LAMMPS для Windows
     pause
     exit /b 1
 )
