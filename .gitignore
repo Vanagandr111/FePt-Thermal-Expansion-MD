@@ -26,3 +26,7 @@ Thumbs.db
 
 # Временные логи (не в output/)
 *.lmp
+
+# Portable LAMMPS (если положили lmp.exe в папку проекта)
+lmp.exe
+bin/lmp.exe

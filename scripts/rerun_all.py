@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Re-run ALL FePt LAMMPS simulations with FIXED MEAM potential."""
-import subprocess, os, re, sys, csv, time
+"""
+rerun_all.py — Re-run ALL FePt LAMMPS simulations with FIXED MEAM potential.
+Windows-first. Использует lmp_helper.
+"""
+import sys, os, csv, time
 
-PROJDIR = "/mnt/c/проекты/Nikolay"
-DATA_DIR = os.path.join(PROJDIR, "data")
-POT_DIR = os.path.join(PROJDIR, "potentials")
-OUTPUT = os.path.join(PROJDIR, "output")
-SCRIPTS = os.path.join(PROJDIR, "scripts")
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+import lmp_helper as lmp
 
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
 TEMPS = [300, 600, 900, 1200]
-# Reduced steps for quick run
 N_EQUIL = 5000
 N_PROD = 10000
 
 def make_infile(datafile, comp, T, outdir):
-    """Generate LAMMPS input file."""
     infile = os.path.join(outdir, f"in_{T}.lmp")
     lines = [
         f"# LAMMPS FePt MEAM T={T}K comp={comp:.2f}",
@@ -28,7 +28,7 @@ def make_infile(datafile, comp, T, outdir):
         "",
         "# MEAM 2NN (Kim-Koo-Lee 2006), fixed mapping: 1=Fe 2=Pt",
         "pair_style      meam",
-        f"pair_coeff      * * {POT_DIR}/library.meam Fe Pt {POT_DIR}/PtFe.meam Fe Pt",
+        f"pair_coeff      * * {lmp.POT_DIR}/library.meam Fe Pt {lmp.POT_DIR}/PtFe.meam Fe Pt",
         "",
         "neighbor        2.0 bin",
         "neigh_modify    every 1 delay 0 check yes",
@@ -60,108 +60,35 @@ def make_infile(datafile, comp, T, outdir):
     return infile
 
 def run_one(datafile, comp, T, outdir):
-    """Run single LAMMPS simulation."""
     infile = make_infile(datafile, comp, T, outdir)
     logfile = os.path.join(outdir, f"log_{T}.lmp")
-    
-    result = subprocess.run(
-        ["lmp", "-in", infile, "-log", logfile],
-        capture_output=True, text=True, timeout=300
-    )
-    
-    # Try stdout first
-    for line in (result.stdout or "").split('\n'):
-        if 'RESULT:' in line:
-            return parse_result(line)
-    
-    # Fallback: parse log
-    if os.path.exists(logfile):
-        with open(logfile) as f:
-            for line in f:
-                if 'RESULT:' in line:
-                    return parse_result(line)
-    
-    # Parse error info
+    result = lmp.run_lmp(infile, logfile=logfile, timeout=300)
+    r = lmp.extract_result_from_stdout(result)
+    if r:
+        return r
+    r = lmp.extract_result_from_log(logfile)
+    if r:
+        return r
     err = (result.stderr or "")[:300]
     out_last = ((result.stdout or "").split('\n')[-3:])
-    print(f"  ERROR! last stdout: {out_last}")
+    print(f"  ERROR! {out_last}")
     print(f"  stderr: {err}")
     return None
 
-def parse_result(line):
-    m = re.search(r'RESULT:\s+T=(\d+)', line)
-    if not m:
-        return None
-    return {
-        'T': int(m.group(1)),
-        'comp': float(re.search(r'COMP=([\d.]+)', line).group(1)),
-        'vol': float(re.search(r'VOL=([\d.]+)', line).group(1)),
-        'a': float(re.search(r'A=([\d.]+)', line).group(1)),
-        'natoms': int(re.search(r'NATOMS=(\d+)', line).group(1)),
-    }
-
-def main():
-    t0 = time.time()
-    
-    # Ensure fresh output dirs
-    results = {}
-    
-    for comp in COMPOSITIONS:
-        datafile = os.path.join(DATA_DIR, f"data.fept_c{comp:.2f}.lmp")
-        if not os.path.exists(datafile):
-            print(f"ERROR: {datafile} not found!")
-            continue
-        
-        outdir = os.path.join(OUTPUT, f"comp_{comp:.2f}")
-        os.makedirs(outdir, exist_ok=True)
-        
-        results[comp] = []
-        print(f"\n--- Pt={comp:.2f} ---")
-        
-        for T in TEMPS:
-            print(f"  T={T}K...", end="", flush=True)
-            r = run_one(datafile, comp, T, outdir)
-            if r:
-                print(f" a={r['a']:.4f}Å")
-                results[comp].append(r)
-            else:
-                print(" FAILED")
-    
-    # Write output
-    elapsed = (time.time() - t0) / 60
-    print(f"\n{'='*60}")
-    print(f"Total time: {elapsed:.1f} min")
-    
-    if not results:
-        print("NO RESULTS - aborting CSV/plot")
-        return
-    
-    write_csv(results)
-    plot_results(results)
-    print("\nDONE")
-    return results
-
 def write_csv(results):
-    """Write CSV files."""
-    outdir = OUTPUT
-    
-    # Individual composition CSVs
+    comps_sorted = sorted(results.keys())
     for comp, res in results.items():
         if not res:
             continue
-        csvfile = os.path.join(outdir, f"a_T_comp_{comp:.2f}.csv")
+        csvfile = os.path.join(lmp.OUTPUT, f"a_T_comp_{comp:.2f}.csv")
         with open(csvfile, 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(['T_K', 'a_Angstrom', 'Volume_Ang3'])
             for r in sorted(res, key=lambda x: x['T']):
                 w.writerow([r['T'], f"{r['a']:.4f}", f"{r['vol']:.4f}"])
         print(f"  Wrote {csvfile}")
-    
-    # Summary CSV: a_vs_comp
-    comps_sorted = sorted(results.keys())
     all_Ts = sorted(set(r['T'] for lst in results.values() for r in lst))
-    
-    csvfile = os.path.join(outdir, "a_vs_comp_summary.csv")
+    csvfile = os.path.join(lmp.OUTPUT, "a_vs_comp_summary.csv")
     with open(csvfile, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['T_K'] + [f"Pt_{c:.2f}" for c in comps_sorted])
@@ -169,15 +96,10 @@ def write_csv(results):
             row = [T]
             for comp in comps_sorted:
                 match = [r['a'] for r in results.get(comp, []) if r['T'] == T]
-                if match:
-                    row.append(f"{match[0]:.4f}")
-                else:
-                    row.append('')
+                row.append(f"{match[0]:.4f}" if match else '')
             w.writerow(row)
     print(f"  Wrote {csvfile}")
-    
-    # Full results CSV
-    csvfile = os.path.join(outdir, "all_results.csv")
+    csvfile = os.path.join(lmp.OUTPUT, "all_results.csv")
     with open(csvfile, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['Composition_Pt', 'T_K', 'a_Angstrom', 'Volume_Ang3', 'Natoms'])
@@ -187,24 +109,13 @@ def write_csv(results):
     print(f"  Wrote {csvfile}")
 
 def plot_results(results):
-    """Generate plots."""
-    try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-    except ImportError:
-        subprocess.run(["pip3", "install", "matplotlib", "-q"], timeout=60)
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-    
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
     import numpy as np
-    outdir = OUTPUT
     comps_sorted = sorted(results.keys())
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     markers = ['o', 's', '^', 'D', 'v']
-    
-    # 1. a(T) for each composition
     fig, ax = plt.subplots(figsize=(10, 6))
     for i, comp in enumerate(comps_sorted):
         res = results[comp]
@@ -214,46 +125,36 @@ def plot_results(results):
         av = [r['a'] for r in sorted(res, key=lambda x: x['T'])]
         ax.plot(Ts, av, marker=markers[i], color=colors[i],
                 label=f"Pt = {comp:.2f}", linewidth=1.5, markersize=8)
-    
     ax.set_xlabel('Temperature (K)')
     ax.set_ylabel('Lattice Parameter a (Å)')
     ax.set_title('Fe-Pt Thermal Expansion (MEAM Kim-Koo-Lee 2006)')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "a_vs_T_all.png"), dpi=150)
+    fig.savefig(os.path.join(lmp.OUTPUT, "a_vs_T_all.png"), dpi=150)
     plt.close(fig)
-    print(f"  Saved a_vs_T_all.png")
-    
-    # 2. a(comp) at fixed T
+    print("  Saved a_vs_T_all.png")
     fig, ax = plt.subplots(figsize=(10, 6))
     sel_Ts = [300, 600, 900, 1200]
     for i, T in enumerate(sel_Ts):
-        pts = [(c, r['a']) for c in comps_sorted 
-               for r in results.get(c, []) if r['T'] == T]
+        pts = [(c, r['a']) for c in comps_sorted for r in results.get(c, []) if r['T'] == T]
         if not pts or len(pts) < 2:
             continue
         comps_p, a_p = zip(*pts)
-        
-        # Interpolation for visual aid
         c_arr = np.linspace(min(comps_p), max(comps_p), 50)
         a_arr = np.interp(c_arr, list(comps_p), list(a_p))
         ax.plot(c_arr, a_arr, '-', color=colors[i], alpha=0.2)
-        
         ax.plot(comps_p, a_p, marker=markers[i], color=colors[i],
                 label=f"T = {T} K", linewidth=1.5, markersize=10)
-    
     ax.set_xlabel('Pt Composition (fraction)')
     ax.set_ylabel('Lattice Parameter a (Å)')
     ax.set_title('Fe-Pt Lattice Parameter vs Composition')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "a_vs_comp.png"), dpi=150)
+    fig.savefig(os.path.join(lmp.OUTPUT, "a_vs_comp.png"), dpi=150)
     plt.close(fig)
-    print(f"  Saved a_vs_comp.png")
-    
-    # 3. a(T) pure Pt and pure Fe (separate highlight)
+    print("  Saved a_vs_comp.png")
     fig, ax = plt.subplots(figsize=(8, 5))
     for comp in [0.0, 1.0]:
         res = results.get(comp, [])
@@ -261,19 +162,48 @@ def plot_results(results):
             continue
         Ts = sorted([r['T'] for r in res])
         av = [r['a'] for r in sorted(res, key=lambda x: x['T'])]
-        label = f"Pure Fe" if comp == 0.0 else f"Pure Pt"
+        label = "Pure Fe" if comp == 0.0 else "Pure Pt"
         ax.plot(Ts, av, marker='o', color='#1f77b4' if comp==0.0 else '#d62728',
                 label=label, linewidth=2, markersize=8)
-    
     ax.set_xlabel('Temperature (K)')
     ax.set_ylabel('Lattice Parameter a (Å)')
     ax.set_title('Thermal Expansion: Pure Fe and Pure Pt')
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "a_vs_T_pure.png"), dpi=150)
+    fig.savefig(os.path.join(lmp.OUTPUT, "a_vs_T_pure.png"), dpi=150)
     plt.close(fig)
-    print(f"  Saved a_vs_T_pure.png")
+    print("  Saved a_vs_T_pure.png")
+
+def main():
+    t0 = time.time()
+    results = {}
+    for comp in COMPOSITIONS:
+        datafile = os.path.join(lmp.DATA_DIR, f"data.fept_c{comp:.2f}.lmp")
+        if not os.path.exists(datafile):
+            print(f"ERROR: {datafile} not found!")
+            continue
+        outdir = os.path.join(lmp.OUTPUT, f"comp_{comp:.2f}")
+        os.makedirs(outdir, exist_ok=True)
+        results[comp] = []
+        print(f"\n--- Pt={comp:.2f} ---")
+        for T in TEMPS:
+            print(f"  T={T}K...", end="", flush=True)
+            r = run_one(datafile, comp, T, outdir)
+            if r:
+                print(f" a={r['a']:.4f}Å")
+                results[comp].append(r)
+            else:
+                print(" FAILED")
+    elapsed = (time.time() - t0) / 60
+    print(f"\n{'='*60}")
+    print(f"Total time: {elapsed:.1f} min")
+    if not results:
+        print("NO RESULTS - aborting CSV/plot")
+        return
+    write_csv(results)
+    plot_results(results)
+    print("\nDONE")
 
 if __name__ == "__main__":
     main()
