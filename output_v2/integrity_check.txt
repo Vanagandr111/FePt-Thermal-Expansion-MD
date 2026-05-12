@@ -1,0 +1,28 @@
+INTEGRITY CHECK — Phase 2 (MEAM, 50k prod, averaged)
+======================================================================
+Total: 20, Pass: 20, Fail: 0
+MD: 10000 eq + 50000 prod, averaged over production
+Potentials: MEAM (Kim-Koo-Lee 2006)
+----------------------------------------------------------------------
+x_Pt=0.00 T= 300K: log=True a_csv=3.6213 a_log=3.6213 n=502 ✓
+x_Pt=0.00 T= 600K: log=True a_csv=3.6296 a_log=3.6296 n=502 ✓
+x_Pt=0.00 T= 900K: log=True a_csv=3.6378 a_log=3.6378 n=502 ✓
+x_Pt=0.00 T=1200K: log=True a_csv=3.6463 a_log=3.6463 n=502 ✓
+x_Pt=0.25 T= 300K: log=True a_csv=3.7969 a_log=3.7969 n=502 ✓
+x_Pt=0.25 T= 600K: log=True a_csv=3.8094 a_log=3.8094 n=502 ✓
+x_Pt=0.25 T= 900K: log=True a_csv=3.8193 a_log=3.8193 n=502 ✓
+x_Pt=0.25 T=1200K: log=True a_csv=3.8286 a_log=3.8286 n=502 ✓
+x_Pt=0.50 T= 300K: log=True a_csv=3.8686 a_log=3.8686 n=502 ✓
+x_Pt=0.50 T= 600K: log=True a_csv=3.8748 a_log=3.8748 n=502 ✓
+x_Pt=0.50 T= 900K: log=True a_csv=3.8808 a_log=3.8808 n=502 ✓
+x_Pt=0.50 T=1200K: log=True a_csv=3.8867 a_log=3.8867 n=502 ✓
+x_Pt=0.75 T= 300K: log=True a_csv=3.9043 a_log=3.9043 n=502 ✓
+x_Pt=0.75 T= 600K: log=True a_csv=3.9101 a_log=3.9101 n=502 ✓
+x_Pt=0.75 T= 900K: log=True a_csv=3.9158 a_log=3.9158 n=502 ✓
+x_Pt=0.75 T=1200K: log=True a_csv=3.9211 a_log=3.9211 n=502 ✓
+x_Pt=1.00 T= 300K: log=True a_csv=3.9247 a_log=3.9247 n=502 ✓
+x_Pt=1.00 T= 600K: log=True a_csv=3.9304 a_log=3.9304 n=502 ✓
+x_Pt=1.00 T= 900K: log=True a_csv=3.9357 a_log=3.9357 n=502 ✓
+x_Pt=1.00 T=1200K: log=True a_csv=3.9399 a_log=3.9399 n=502 ✓
+
+All CSV values verified against raw LAMMPS logs.
