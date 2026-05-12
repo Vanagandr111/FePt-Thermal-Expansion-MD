@@ -3,8 +3,8 @@ chcp 65001 >nul
 
 REM === run_demo.bat - Quick Fe-Pt MD test (2 points) ===
 REM Windows-only. No WSL.
-REM Uses lmp.exe from: bin/, LMP_EXE, PATH, or typical install paths.
-REM Auto-detects .venv (created by bootstrap.bat) with system python fallback.
+REM Uses lmp.exe from: bin\, LMP_EXE, PATH, or typical install paths.
+REM Auto-detects .venv with system python fallback.
 
 setlocal
 cd /d "%~dp0"
@@ -15,7 +15,7 @@ echo Fe-Pt MD Thermal Expansion - DEMO
 echo ==================================================
 echo.
 
-REM --- Python detection: .venv first, system fallback ---
+REM --- Python ---
 if exist ".venv\Scripts\python.exe" (
     set PYTHON=.venv\Scripts\python.exe
     for /f "delims=" %%V in ('".venv\Scripts\python.exe" --version 2^>^&1') do echo [.venv] %%V
@@ -33,10 +33,10 @@ if exist ".venv\Scripts\python.exe" (
 echo [OK] Python ready
 echo.
 
-REM --- Create output directory ---
+REM --- output dir ---
 if not exist output\ (mkdir output)
 
-REM --- LAMMPS detection ---
+REM --- LAMMPS ---
 call :find_lammps
 if errorlevel 1 (
     echo [ERROR] LAMMPS not found!
@@ -67,90 +67,72 @@ echo.
 
 REM Pt=1.0, T=300K
 echo [1/2] Pt=1.0, T=300K...
-%LMP_EXE% -in scripts\in.thermal ^
-    -var datafile data\data.fept_demo.lmp ^
-    -var T 300 ^
-    -var comp 1.0 ^
-    -log output\log_demo_300.lmp
+%LMP_EXE% -in scripts\in.thermal -var datafile data\data.fept_demo.lmp -var T 300 -var comp 1.0 -log output\log_demo_300.lmp
 if %errorlevel% equ 0 (echo [OK]) else (echo [FAIL] T=300K)
 
 REM Pt=1.0, T=600K
 echo [2/2] Pt=1.0, T=600K...
-%LMP_EXE% -in scripts\in.thermal ^
-    -var datafile data\data.fept_demo.lmp ^
-    -var T 600 ^
-    -var comp 1.0 ^
-    -log output\log_demo_600.lmp
+%LMP_EXE% -in scripts\in.thermal -var datafile data\data.fept_demo.lmp -var T 600 -var comp 1.0 -log output\log_demo_600.lmp
 if %errorlevel% equ 0 (echo [OK]) else (echo [FAIL] T=600K)
 
-REM Generate CSV + plot from LAMMPS logs
+REM Report
 echo.
 echo [demo_report] Generating CSV and plot from raw logs...
 %PYTHON% scripts\demo_report.py
-if %errorlevel% equ 0 (echo [OK]) else (echo [WARN] demo_report.py - see output above)
+if %errorlevel% equ 0 (echo [OK]) else (echo [WARN] demo_report.py)
 
 echo.
 echo ==================================================
 echo DEMO COMPLETE!
 echo ==================================================
 echo.
-echo Files created:
-echo   output\log_demo_300.lmp    (LAMMPS log, T=300K)
-echo   output\log_demo_600.lmp    (LAMMPS log, T=600K)
-echo   output\demo_results.csv    (a(T) table)
-echo   output\demo_a_vs_T.png     (graph)
+echo Files:
+echo   output\log_demo_300.lmp
+echo   output\log_demo_600.lmp
+echo   output\demo_results.csv
+echo   output\demo_a_vs_T.png
 echo.
 endlocal
 pause
 exit /b 0
 
-REM ============================================================
-REM LAMMPS finder subroutine
-REM Searches: bin\, LMP_EXE, PATH, typical install paths
-REM ============================================================
 :find_lammps
 
-REM 1. Portable lmp.exe in bin/ next to project
+REM 1) Portable lmp.exe in bin/ next to project
 if exist "%PROJ_DIR%\bin\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
     exit /b 0
 )
 
-REM 2. Environment variable LMP_EXE
+REM 2) LMP_EXE env var
 if defined LMP_EXE (
     if exist "%LMP_EXE%" (
         exit /b 0
     )
 )
 
-REM 3. lmp.exe in PATH
+REM 3) lmp.exe in PATH
 where lmp.exe >nul 2>&1
 if %errorlevel% equ 0 (
     set LMP_EXE=lmp.exe
     exit /b 0
 )
 
-REM 4. lmp (without .exe) in PATH
-where lmp >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "delims=" %%P in ('where lmp') do (
-        set LMP_EXE=%%P
-        exit /b 0
-    )
-)
-
-REM 5. Typical Windows install paths
-set LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe"
-for %%P in (%LMP_PATHS%) do (
-    if exist %%P (
-        set LMP_EXE=%%~P
-        exit /b 0
-    )
-)
-
-REM 6. lmp.exe in project root
+REM 4) Typical install paths (one by one to avoid (x86) parsing)
 if exist "%PROJ_DIR%\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
     exit /b 0
 )
 

@@ -1,252 +1,152 @@
 @echo off
 chcp 65001 >nul
-
-REM === bootstrap.bat — Автоустановка + запуск Fe-Pt MD Demo ===
-REM Двойной клик — и всё работает. Не требует ручных действий.
-REM Создаёт .venv, ставит зависимости, запускает run_demo.bat
-REM
-REM Требуется Python 3.11 или 3.12 (x64).
-REM Python 3.13 и 3.14 НЕ поддерживаются — под них нет wheels для numpy.
+REM === bootstrap.bat - One-click setup + run ===
+REM Windows-only. No WSL.
 
 setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
 
 echo ==================================================
-echo  Fe-Pt MD — Установка окружения и запуск
+echo Fe-Pt MD Thermal Expansion - SETUP
 echo ==================================================
 echo.
 
 REM ===================================================================
-REM Шаг 1: Поиск подходящего Python (3.11 или 3.12)
+REM Step 1: Python
 REM ===================================================================
-echo [1/5] Поиск Python...
+echo [1/5] Checking Python...
 
-REM Сначала пробуем Python Launcher: py -3.12, py -3.11
-set PYTHON_CMD=
-
-where py >nul 2>&1
+py -3.12 --version >nul 2>&1
 if %errorlevel% equ 0 (
-    py -3.12 --version >nul 2>&1
-    if %errorlevel% equ 0 (
-        set PYTHON_CMD=py -3.12
-        for /f "delims=" %%V in ('py -3.12 --version 2^>^&1') do echo   [py -3.12] %%V
-        goto :found_python
-    )
-    py -3.11 --version >nul 2>&1
-    if %errorlevel% equ 0 (
-        set PYTHON_CMD=py -3.11
-        for /f "delims=" %%V in ('py -3.11 --version 2^>^&1') do echo   [py -3.11] %%V
-        goto :found_python
-    )
+    set PYTHON=py -3.12
+    for /f "delims=" %%V in ('py -3.12 --version 2^>^&1') do echo   Found: %%V
+    goto :python_ok
 )
 
-REM Python Launcher не помог — пробуем python
+py -3.11 --version >nul 2>&1
+if %errorlevel% equ 0 (
+    set PYTHON=py -3.11
+    for /f "delims=" %%V in ('py -3.11 --version 2^>^&1') do echo   Found: %%V
+    goto :python_ok
+)
+
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
-    set PYTHON_CMD=python
-    for /f "tokens=2" %%V in ('python --version 2^>^&1') do set PY_VER=%%V
-
-    REM Проверяем мажорную и минорную версию
-    for /f "tokens=1,2 delims=." %%A in ("%PY_VER%") do (
-        set PY_MAJOR=%%A
-        set PY_MINOR=%%B
-    )
-
-    if %PY_MAJOR% equ 3 (
-        if %PY_MINOR% leq 12 (
-            echo   [system] Python %PY_VER%
-            goto :found_python
-        )
-    )
-
-    REM Python 3.13/3.14 не подходит
-    echo   [WARN] Системный Python %PY_VER% слишком новый.
-    echo   numpy/matplotlib не имеют готовых wheels для этой версии.
-    echo   Требуется Python 3.11 или 3.12.
-    echo.
-    goto :try_py_launcher_again
-)
-
-:try_py_launcher_again
-REM Если python не подошёл, пробуем через launcher с fallback-сообщением
-where py >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "delims=" %%V in ('py --version 2^>^&1') do (
-        REM Проверяем, не 3.13/3.14 ли это
-        echo   [py] %%V — не подходит. Нужна версия 3.11 или 3.12.
+    python -c "import sys; ver=sys.version_info; exit(0 if (3,11) <= (ver.major,ver.minor) <= (3,12) else 1)" >nul 2>&1
+    if %errorlevel% equ 0 (
+        set PYTHON=python
+        for /f "delims=" %%V in ('python --version 2^>^&1') do echo   Found: %%V
+        goto :python_ok
     )
 )
 
-echo [ERROR] Не найден Python 3.11 или 3.12!
-echo.
-echo Решение:
-echo   1. Скачайте Python 3.12 с python.org:
-echo      https://www.python.org/downloads/release/python-3129/
-echo      (последняя 3.12.x стабильна)
-echo.
-echo   2. При установке ОБЯЗАТЕЛЬНО поставьте галочку
-echo      "Add Python to PATH" и "py launcher".
-echo.
-echo   3. Если у вас Python 3.13+ — он НЕ подходит.
-echo      Удалите его и поставьте 3.12.
-echo.
+echo [ERROR] Python 3.11 or 3.12 (x64) required.
+echo   https://www.python.org/downloads/release/python-3129/
 pause
 exit /b 1
 
-:found_python
-echo [OK] Python найден
+:python_ok
+echo [OK] Python ready
 echo.
 
 REM ===================================================================
-REM Шаг 2: Создание .venv
+REM Step 2: Virtual environment
 REM ===================================================================
-echo [2/5] Создание виртуального окружения...
+echo [2/5] Virtual environment...
 if exist ".venv\Scripts\python.exe" (
-    echo   .venv уже существует, пропускаем
+    echo   .venv exists, skipping
 ) else (
-    %PYTHON_CMD% -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [ERROR] Не удалось создать .venv
-        pause
-        exit /b 1
-    )
-    echo   .venv создан
+    echo   Creating .venv...
+    %PYTHON% -m venv .venv
+    if %errorlevel% neq 0 (echo [ERROR] Failed to create .venv & pause & exit /b 1)
+    echo   .venv created
 )
-echo [OK] Виртуальное окружение готово
+echo [OK]
 echo.
 
 REM ===================================================================
-REM Шаг 3: Обновление pip
+REM Step 3: Dependencies
 REM ===================================================================
-echo [3/5] Обновление pip...
-call .venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-if %errorlevel% neq 0 (
-    echo [WARN] Не удалось обновить pip, продолжаем...
-) else (
-    echo [OK]
-)
+echo [3/5] Installing dependencies...
+.venv\Scripts\python.exe -m pip install --upgrade pip -q
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if %errorlevel% neq 0 (echo [ERROR] pip install failed & pause & exit /b 1)
+echo [OK]
 echo.
 
 REM ===================================================================
-REM Шаг 4: Установка зависимостей (жёсткие версии)
+REM Step 4: LAMMPS
 REM ===================================================================
-echo [4/5] Установка зависимостей (numpy==1.26.4, matplotlib==3.8.4)...
-call .venv\Scripts\python.exe -m pip install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo [ERROR] Ошибка при установке зависимостей
-    echo.
-    echo Возможные причины:
-    echo   - Нет интернета
-    echo   - Нет прав на запись
-    echo   - Проблемы с SSL-сертификатами (попробуйте:
-    echo     .venv\Scripts\python -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt)
-    pause
-    exit /b 1
-)
-echo [OK] Зависимости установлены
-echo.
-
-REM ===================================================================
-REM Шаг 5: Поиск LAMMPS (Windows-native, bin\lmp.exe)
-REM ===================================================================
-echo [5/5] Поиск LAMMPS...
+echo [4/5] Checking LAMMPS...
 call :find_lammps
 if %errorlevel% neq 0 (
-    echo [WARN] LAMMPS не найден.
-    echo.
-    echo   Проект будет работать, но запуск симуляций невозможен.
-    echo   Установите LAMMPS для Windows с lammps.org:
-    echo     https://packages.lammps.org/windows.html
-    echo.
-    echo   Или убедитесь, что lmp.exe доступен в PATH.
-    echo   Либо задайте путь вручную: set LMP_EXE=C:\путь\к\lmp.exe
-    echo.
-    echo   Нажмите Enter, чтобы продолжить без LAMMPS (только установка Python).
-    pause
-    goto :boot_end
-)
-echo [OK] LAMMPS: %LMP_EXE%
-echo.
-
-:boot_end
-
-echo ==================================================
-echo  Всё готово! Запускаю DEMO...
-echo ==================================================
-echo.
-echo  После демо результаты появятся в папке output\
-echo  Для полного прогона (20 точек) откройте run_main.bat
-echo.
-
-REM --- Запуск demo ---
-call "%~dp0run_demo.bat"
-
-echo.
-echo ==================================================
-if %errorlevel% equ 0 (
-    echo  DEMO ЗАВЕРШЁН УСПЕШНО!
-    echo  Результаты: output\demo_results.csv
-    echo  График:     output\demo_a_vs_T.png
+    echo [WARN] LAMMPS not found.
+    echo Options:
+    echo   1. Install LAMMPS from packages.lammps.org
+    echo   2. Set LMP_EXE
+    echo   3. Copy lmp.exe + DLLs into bin\
 ) else (
-    echo  DEMO завершён с ошибками (см. выше)
+    echo [OK] LAMMPS: %LMP_EXE%
 )
+echo.
+
+REM ===================================================================
+REM Step 5: Run demo
+REM ===================================================================
+echo [5/5] Starting DEMO...
+echo.
+call run_demo.bat
+
+echo.
+echo ==================================================
+echo SETUP COMPLETE!
 echo ==================================================
 echo.
-pause
+echo Next: run_main.bat for full 20-point run
+echo.
 endlocal
+pause
 
-REM ============================================================
-REM Подпрограмма поиска LAMMPS
-REM Ищет строго Windows-native lmp.exe внутри папки проекта.
-REM Никакого WSL. Никаких других операционок.
-REM ============================================================
 :find_lammps
 
-REM 1. lmp.exe в bin/ рядом с проектом (портативная сборка)
+REM 1) Portable lmp.exe in bin/ next to project
 if exist "%PROJ_DIR%\bin\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
     exit /b 0
 )
 
-REM 2. Переменная окружения LMP_EXE
+REM 2) LMP_EXE env var
 if defined LMP_EXE (
     if exist "%LMP_EXE%" (
         exit /b 0
     )
 )
 
-REM 3. lmp.exe в PATH
+REM 3) lmp.exe in PATH
 where lmp.exe >nul 2>&1
 if %errorlevel% equ 0 (
     set LMP_EXE=lmp.exe
     exit /b 0
 )
 
-REM 4. lmp (без .exe) в PATH
-where lmp >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "delims=" %%P in ('where lmp') do (
-        set LMP_EXE=%%P
-        exit /b 0
-    )
-)
-
-REM 5. Типовые пути установки LAMMPS на Windows
-set "LMP_PATHS="C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" "C:\Program Files\LAMMPS 64-bit\lmp.exe" "C:\Program Files\LAMMPS\lmp.exe" "C:\Program Files (x86)\LAMMPS\lmp.exe" "C:\LAMMPS\lmp.exe""
-for %%P in (%LMP_PATHS%) do (
-    if exist %%P (
-        set LMP_EXE=%%~P
-        exit /b 0
-    )
-)
-
-REM 6. lmp.exe рядом с проектом (на случай если в корне)
+REM 4) Typical install paths (one by one to avoid (x86) parsing)
 if exist "%PROJ_DIR%\lmp.exe" (
     set LMP_EXE=%PROJ_DIR%\lmp.exe
     exit /b 0
 )
+if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
+    exit /b 0
+)
+if exist "C:\Program Files\LAMMPS\lmp.exe" (
+    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
+    exit /b 0
+)
 
-REM Не нашли
-pause
+REM Not found
 exit /b 1
