@@ -16,7 +16,7 @@
 │  2. Дважды кликните на bootstrap.bat                                    │
 │                                                                         │
 │  Всё! Скрипт сам:                                                       │
-│   • проверит Python                                                     │
+│   • проверит Python (нужна версия 3.11 или 3.12)                        │
 │   • создаст изолированное окружение (.venv)                             │
 │   • установит numpy и matplotlib                                        │
 │   • проверит LAMMPS в WSL                                               │
@@ -27,10 +27,14 @@
 1. ЧТО НУЖНО УСТАНОВИТЬ (если bootstrap.bat выдал ошибку)
 ---------------------------------------------------------------------------
 
- 1.1. Python 3 (любая версия 3.8+)
-       - Скачать: https://www.python.org/downloads/
+ 1.1. Python 3.11 или 3.12 (x64)
+       - Скачать (3.12 — рекомендуется):
+         https://www.python.org/downloads/release/python-3129/
+       - Или 3.11: https://www.python.org/downloads/release/python-31111/
        - При установке ОБЯЗАТЕЛЬНО поставить галочку
-         "Add Python to PATH"
+         "Add Python to PATH" и "py launcher"
+       - ВАЖНО: Python 3.13+ НЕ ПОДХОДИТ — под него нет wheels
+         для numpy/matplotlib, проект собирается из исходников и падает.
        - После установки перезапустите bootstrap.bat
 
  1.2. WSL + LAMMPS (требуется один раз)
@@ -88,7 +92,8 @@
 
   Ошибка                              | Решение
   ------------------------------------|----------------------------------------
-  "Python не найден"                  | Установите Python 3 с python.org
+  "Не найден Python 3.11 или 3.12"    | Установите Python 3.12 (ссылка в п.1.1)
+  "Python не найден"                  | Установите Python 3.12 с python.org
   "LAMMPS не найден"                  | sudo apt install lammps (в WSL)
   "Не удалось создать .venv"          | Попробуйте python -m venv .venv вручную
   "No module named matplotlib"        | bootstrap.bat не запускался или прерван

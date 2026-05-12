@@ -1,6 +1,6 @@
 # Fe-Pt MD Thermal Expansion — Python dependencies
-# Используется bootstrap.bat для автоматической установки в .venv
-# Пинованные минорные версии для воспроизводимости на любом ПК
-
-numpy>=1.24,<1.27
-matplotlib>=3.7,<3.9
+# Протестировано на Python 3.11 / 3.12
+# Требует Python ≤ 3.12 (bootstrap.bat проверяет)
+# Жёсткие версии — pre-built wheels, без сборки из исходников
+numpy==1.26.4
+matplotlib==3.8.4
