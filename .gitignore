@@ -28,5 +28,5 @@ Thumbs.db
 *.lmp
 
 # Portable LAMMPS (если положили lmp.exe в папку проекта)
-lmp.exe
-bin/lmp.exe
+# LAMMPS portable binary (~50 MB)
+bin/

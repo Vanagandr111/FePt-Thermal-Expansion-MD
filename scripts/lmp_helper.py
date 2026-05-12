@@ -25,12 +25,18 @@ SCRIPTS  = os.path.join(PROJDIR, 'scripts')
 def find_lmp():
     """
     Поиск LAMMPS. Порядок:
-      1. env var LMP_EXE (если задана пользователем вручную)
-      2. lmp.exe / lmp в PATH или рядом с проектом
-      3. Типовые пути установки LAMMPS на Windows
-      4. wsl lmp (fallback — если WSL установлен и lmp есть там)
+      1. PROJDIR/bin/lmp.exe (портативная сборка в папке проекта)
+      2. env var LMP_EXE (если задана пользователем вручную)
+      3. lmp.exe / lmp в PATH
+      4. Типовые пути установки LAMMPS на Windows
+      5. lmp.exe в корне проекта (на случай если вручную положили)
     Возвращает команду (список строк) для subprocess, либо None.
     """
+    # 0. lmp.exe рядом с проектом в bin/ (портативная сборка)
+    bin_lmp = os.path.join(PROJDIR, 'bin', 'lmp.exe')
+    if os.path.isfile(bin_lmp):
+        return [bin_lmp]
+
     # 1. Переменная окружения
     env_lmp = os.environ.get('LMP_EXE')
     if env_lmp:
@@ -52,17 +58,10 @@ def find_lmp():
         r'C:\LAMMPS\lmp.exe',
         # Возможна установка вручную рядом с проектом
         os.path.join(PROJDIR, 'lmp.exe'),
-        os.path.join(PROJDIR, 'bin', 'lmp.exe'),
     ]
     for p in typical_paths:
         if os.path.isfile(p):
             return [p]
-
-    # 4. WSL fallback
-    for wsl_candidate in ('wsl lmp', 'wsl.exe lmp'):
-        wsl_path = shutil.which(wsl_candidate.split()[0])
-        if wsl_path:
-            return wsl_candidate.split()
 
     return None
 
@@ -72,8 +71,6 @@ def find_lmp_display():
     cmd = find_lmp()
     if cmd is None:
         return None
-    if cmd[0] == 'wsl' or cmd[0] == 'wsl.exe':
-        return 'WSL: ' + ' '.join(cmd)
     if os.path.isfile(cmd[0]):
         return cmd[0]
     return 'PATH: ' + cmd[0]
