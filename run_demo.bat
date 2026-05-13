@@ -3,12 +3,23 @@ chcp 65001 >nul
 
 REM === run_demo.bat - Quick Fe-Pt MD test (2 points) ===
 REM Windows-only. No WSL.
-REM Uses lmp.exe from: bin\, LMP_EXE, PATH, or typical install paths.
-REM Auto-detects .venv with system python fallback.
+REM Используем ТОЛЬКО bunded bin\lmp.exe — никакого PATH / системных LAMMPS
 
 setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
+
+REM Очищаем внешние LAMMPS-переменные (helloplugin.so fix)
+set "LAMMPS_PLUGIN_PATH="
+set "LAMMPS_POTENTIALS="
+
+REM Используем только наш портативный LAMMPS
+set "LMP_EXE=%PROJ_DIR%\bin\lmp.exe"
+if not exist "%LMP_EXE%" (
+    echo [ERROR] bundled lmp.exe not found at bin\lmp.exe
+    pause
+    exit /b 1
+)
 
 echo ==================================================
 echo Fe-Pt MD Thermal Expansion - DEMO
@@ -37,17 +48,6 @@ REM --- output dir ---
 if not exist output\ (mkdir output)
 
 REM --- LAMMPS ---
-call :find_lammps
-if errorlevel 1 (
-    echo [ERROR] LAMMPS not found!
-    echo.
-    echo Options:
-    echo   1. Install LAMMPS from packages.lammps.org
-    echo   2. Set LMP_EXE to your lmp.exe path
-    echo   3. Copy lmp.exe + DLLs into bin\
-    pause
-    exit /b 1
-)
 echo [OK] LAMMPS: %LMP_EXE%
 echo.
 
@@ -86,55 +86,14 @@ echo ==================================================
 echo DEMO COMPLETE!
 echo ==================================================
 echo.
+
 echo Files:
 echo   output\log_demo_300.lmp
 echo   output\log_demo_600.lmp
 echo   output\demo_results.csv
 echo   output\demo_a_vs_T.png
 echo.
+
 endlocal
 pause
 exit /b 0
-
-:find_lammps
-
-REM 1) Portable lmp.exe in bin/ next to project
-if exist "%PROJ_DIR%\bin\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
-    exit /b 0
-)
-
-REM 2) LMP_EXE env var
-if defined LMP_EXE (
-    if exist "%LMP_EXE%" (
-        exit /b 0
-    )
-)
-
-REM 3) lmp.exe in PATH
-where lmp.exe >nul 2>&1
-if %errorlevel% equ 0 (
-    set LMP_EXE=lmp.exe
-    exit /b 0
-)
-
-REM 4) Typical install paths (one by one to avoid (x86) parsing)
-if exist "%PROJ_DIR%\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
-    exit /b 0
-)
-
-REM Not found
-exit /b 1

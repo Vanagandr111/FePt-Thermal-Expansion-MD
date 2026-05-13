@@ -2,10 +2,18 @@
 chcp 65001 >nul
 REM === env_check.bat - Diagnostics ===
 REM Windows-only. No WSL.
+REM Используем ТОЛЬКО bunded bin\lmp.exe
 
 setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
+
+REM Очищаем внешние LAMMPS-переменные (helloplugin.so fix)
+set "LAMMPS_PLUGIN_PATH="
+set "LAMMPS_POTENTIALS="
+
+REM Используем только наш портативный LAMMPS
+set "LMP_EXE=%PROJ_DIR%\bin\lmp.exe"
 
 echo ==================================================
 echo Fe-Pt MD - Environment Check
@@ -25,12 +33,14 @@ echo.
 
 REM --- LAMMPS ---
 echo [2/4] LAMMPS:
-call :find_lammps
-if not errorlevel 1 (
-    echo   LMP_EXE=%LMP_EXE%
+echo   LAMMPS_PLUGIN_PATH=%LAMMPS_PLUGIN_PATH%
+echo   LAMMPS_POTENTIALS=%LAMMPS_POTENTIALS%
+echo   LMP_EXE=%LMP_EXE%
+if exist "%LMP_EXE%" (
+    echo   bin\lmp.exe - OK
     "%LMP_EXE%" -h 2>&1 | findstr "LAMMPS"
 ) else (
-    echo   NOT FOUND
+    echo   bin\lmp.exe - MISSING
 )
 echo.
 
@@ -60,46 +70,3 @@ echo ==================================================
 endlocal
 pause
 exit /b 0
-
-:find_lammps
-
-REM 1) Portable lmp.exe in bin/ next to project
-if exist "%PROJ_DIR%\bin\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
-    exit /b 0
-)
-
-REM 2) LMP_EXE env var
-if defined LMP_EXE (
-    if exist "%LMP_EXE%" (
-        exit /b 0
-    )
-)
-
-REM 3) lmp.exe in PATH
-where lmp.exe >nul 2>&1
-if %errorlevel% equ 0 (
-    set LMP_EXE=lmp.exe
-    exit /b 0
-)
-
-REM 4) Typical install paths (one by one to avoid (x86) parsing)
-if exist "%PROJ_DIR%\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
-    exit /b 0
-)
-
-REM Not found
-exit /b 1

@@ -7,6 +7,13 @@ setlocal
 cd /d "%~dp0"
 set PROJ_DIR=%CD%
 
+REM Очищаем внешние LAMMPS-переменные (helloplugin.so fix)
+set "LAMMPS_PLUGIN_PATH="
+set "LAMMPS_POTENTIALS="
+
+REM Используем только наш портативный LAMMPS
+set "LMP_EXE=%PROJ_DIR%\bin\lmp.exe"
+
 echo ==================================================
 echo Fe-Pt MD Thermal Expansion - SETUP
 echo ==================================================
@@ -88,7 +95,10 @@ if %errorlevel% neq 0 (
     echo   3. Copy lmp.exe + DLLs into bin\
 ) else (
     echo [OK] LAMMPS: %LMP_EXE%
+    where lmp.exe >nul 2>&1 && echo [OK] LMP in PATH also: lmp.exe || echo [OK] LMP only in bin\
 )
+echo   LAMMPS_PLUGIN_PATH=%LAMMPS_PLUGIN_PATH%
+echo   LAMMPS_POTENTIALS=%LAMMPS_POTENTIALS%
 echo.
 
 REM ===================================================================
