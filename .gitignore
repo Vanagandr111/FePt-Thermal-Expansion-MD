@@ -1,11 +1,11 @@
-# Fe-Pt MD Thermal Expansion — Git ignore
+# FePt-Thermal-Expansion-MD — Git ignore
 
-# Виртуальное окружение
+# Virtual environment
 .venv/
 venv/
 env/
 
-# Python кэш
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
@@ -20,21 +20,27 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Архивы
+# Archives
 *.zip
 
-# Portable LAMMPS (бинарник ~50 МБ)
+# Portable LAMMPS binary (~50 MB, must be obtained separately)
 bin/
 
-# Phase 1 output (устаревший)
+# Legacy Phase 1 output
 output/
 output_v2/logs/
 
-# Временные файлы
+# Temporary files
 log.lammps
 test_run.py
 *.lmp
 
-# Phase 3: игнорируем логи и входные файлы, трекаем отчёты
+# Phase 3 raw logs
 output_v3/logs/
 output_v3/in_*.lmp
+
+# Phase 4 raw logs (reproduced by run_main.bat)
+output_v4/logs/
+
+# Temporary scripts not part of the pipeline
+generate_figures.py
