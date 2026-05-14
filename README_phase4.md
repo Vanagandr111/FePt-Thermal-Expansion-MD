@@ -53,6 +53,27 @@ Relative thermal expansion Δa/a₀(%) vs temperature.
 
 ---
 
+## Source of Truth: `output_v4/all_results.csv`
+
+The **single validated final dataset** for the scientific result is `output_v4/all_results.csv`.  
+Whether the data was produced by `run_main.bat` (sequential accurate) or `run_main_parallel.bat` (parallel accurate) does not matter — once a run mode is confirmed as the official scientific result, it writes to this file.
+
+MATLAB and Python analysis scripts read **only** this file — no alternative or comparison datasets (`*_turbo.csv`, `*_reduced.csv`) are used, to avoid confusion.
+
+If the dataset is regenerated (e.g. by a parallel accurate run), all plots and summary tables automatically update.
+
+### Columns used by MATLAB
+
+- `x_Pt`, `T_K`, `a_mean_Angstrom`, `a_std_Angstrom`
+
+### CTE formula
+
+```
+α_eff = (a(1200K) − a(300K)) / (a(300K) × 900K)
+```
+
+---
+
 ## How to Run
 
 ### Preferred: MATLAB R2022b+
