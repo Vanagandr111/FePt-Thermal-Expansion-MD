@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 demo_report.py — парсит логи run_demo.bat и создаёт CSV + графики.
 Windows-first. Использует lmp_helper для путей.

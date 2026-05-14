@@ -160,12 +160,15 @@ All figures are available in the [`figures/`](figures/) directory.
 - A pre-compiled LAMMPS executable placed in `bin/lmp.exe`
 
 > No WSL is required. The pipeline runs natively on Windows.
+>
+> **Active runtime is Windows-only.** WSL is not required and not supported for final runtime.
+> Old development scripts have been moved to `legacy_DO_NOT_RUN/` — do not use for production runs.
 
 ### Steps
 
 1. **Clone the repository**
 
-   ```bash
+   ```cmd
    git clone https://github.com/USERNAME/FePt-Thermal-Expansion-MD.git
    cd FePt-Thermal-Expansion-MD
    ```
@@ -222,7 +225,7 @@ run on a target machine with MATLAB available.
 
 1. Clone the repository:
 
-   ```bash
+   ```cmd
    git clone https://github.com/USERNAME/FePt-Thermal-Expansion-MD.git
    cd FePt-Thermal-Expansion-MD
    ```
@@ -316,10 +319,14 @@ The script reads `output_v4/all_results.csv` and creates:
 FePt-Thermal-Expansion-MD/
 ├── scripts/
 │   ├── phase4_analysis.m          ← MATLAB analysis script
-│   ├── run_fept_grid_v4.py        ← Phase 4 LAMMPS runner
-│   ├── analyze_pt_calibration_v3.py
-│   ├── build_final_artifacts.py
+│   ├── run_phase4.py              ← Phase 4 long-protocol runner (from run_main.bat)
+│   ├── lmp_helper.py              ← LAMMPS path detection and launcher
+│   ├── check_no_wsl_refs.py       ← WSL dependency guard
 │   └── ...                        ← Additional analysis and utility scripts
+├── legacy_DO_NOT_RUN/             ← Legacy development scripts (DO NOT RUN)
+│   ├── README_DO_NOT_RUN.md       ← Legacy isolation notice
+│   ├── run_all_short_protocol.py  ← Old short-protocol pipeline (Phase 2/3)
+│   └── wsl_old/                   ← WSL-only scripts (reference only)
 ├── figures/
 │   ├── a_vs_T_all.png
 │   ├── a_vs_T_facets.png

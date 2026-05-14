@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 rebuild_phase4.py — Regenerate Phase 4 artifacts from existing logs.
 All 20 production runs already exist in output_v4/logs/.

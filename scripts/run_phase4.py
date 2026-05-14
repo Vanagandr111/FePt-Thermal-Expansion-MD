@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 run_phase4.py — Phase 4 Long Protocol main run.
 Windows-first. Output → output_v4/.

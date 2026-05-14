@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Build complete Pt calibration matrix from parsed logs."""
 import sys, glob, json, math
 
