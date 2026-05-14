@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-check_no_wsl_refs.py — Automated WSL dependency guard for Windows-only release.
+check_no_wsl_refs.py - Automated WSL dependency guard for Windows-only release.
 
 Scans active runtime files for forbidden Linux/WSL patterns and fails if any found
 outside legacy_DO_NOT_RUN/ directory.
 
 Exit codes:
-  0 — all clean, no WSL refs in active runtime
-  1 — forbidden patterns found in active runtime files
+  0 - all clean, no WSL refs in active runtime
+  1 - forbidden patterns found in active runtime files
 
 Usage:
     python scripts/check_no_wsl_refs.py          # scan project
@@ -55,7 +55,7 @@ SKIP_DIRS = [
 ]
 
 # Files to skip (self-exclusion for checker itself)
-SKIP_FILES = ['check_no_wsl_refs.py']
+SKIP_FILES = ['check_no_wsl_refs.py', 'check_shebangs.py']
 
 
 def should_skip(dirpath):
@@ -68,7 +68,7 @@ def should_skip(dirpath):
 
 
 def is_binary(filepath):
-    """Quick binary detection — check first 8KB for null bytes."""
+    """Quick binary detection - check first 8KB for null bytes."""
     try:
         with open(filepath, 'rb') as f:
             chunk = f.read(8192)
@@ -149,13 +149,13 @@ def scan_active_runtime():
                     if matched_text == 'python3' and fname.endswith('.bat'):
                         continue  # .bat file mentioning python3 is validation text, not usage
                     if re.match(r'/mnt/[cdefgh]', matched_text):
-                        # Comment documenting the scanner itself — skip
+                        # Comment documenting the scanner itself - skip
                         if 'forbidden patterns' in lower_line or 'WSL paths' in lower_line:
                             continue
                         if 'no hardcoded /mnt/c/' in lower_line:
                             continue
-                        if 'никаких хардкоженых /mnt/c/' in lower_line:
-                            continue
+                        if 'no hardcoded /mnt/c/' in lower_line:
+                            continue  # false positive in comments
 
                     findings.append((relpath, i, matched_text, line_stripped[:100]))
 
@@ -163,8 +163,13 @@ def scan_active_runtime():
 
 
 def main():
+    # Ensure UTF-8 stdout for Windows console
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
     print("=" * 60)
-    print("Fe-Pt MD — WSL Dependency Check")
+    print("Fe-Pt MD - WSL Dependency Check")
     print("=" * 60)
     print()
 
@@ -172,15 +177,15 @@ def main():
     print()
 
     findings, files_scanned = scan_active_runtime()
-    print(f"Files scanned: {files_scanned}")
-    print(f"Findings: {len(findings)}")
+    print("Files scanned: {}".format(files_scanned))
+    print("Findings: {}".format(len(findings)))
     print()
 
     if not findings:
-        print("✅ ALL CLEAN — No WSL/Linux dependencies in active runtime!")
+        print("== ALL CLEAN - No WSL/Linux dependencies in active runtime! ==")
         return 0
 
-    print("❌ Forbidden patterns found in active runtime files:")
+    print("!! Forbidden patterns found in active runtime files:")
     print()
 
     for relpath, lineno, pattern, context in findings:
@@ -192,7 +197,7 @@ def main():
     print("Files in legacy_DO_NOT_RUN/ are exempt from this check.")
     print("To fix: update the files listed above to use Windows-native equivalents.")
     print()
-    print("❌ FAIL")
+    print("!! FAIL")
     return 1
 
 
