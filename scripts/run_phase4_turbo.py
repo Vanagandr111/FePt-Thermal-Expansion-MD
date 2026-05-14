@@ -13,6 +13,8 @@ Usage:
     python scripts/run_phase4_turbo.py --turbo            # parallel + neighbor fix
     python scripts/run_phase4_turbo.py --turbo-plus       # parallel + neighbor + shorter steps
     python scripts/run_phase4_turbo.py --turbo --force    # force rerun all
+    python scripts/run_phase4_turbo.py --output-dir DIR --turbo  # custom output dir
+    python scripts/run_phase4_turbo.py --help             # show this help
 """
 import sys
 import os
@@ -36,8 +38,26 @@ COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
 TEMPS = [300, 600, 900, 1200]
 NATOMS = 256
 PDAMP = 10.0
-OUT = os.path.join(_PROJ_DIR, 'output_v4')
+
+# ── Output dir: use --output-dir if provided ──
+_output_dir_arg = None
+for i, arg in enumerate(sys.argv):
+    if arg == '--output-dir' and i + 1 < len(sys.argv):
+        _output_dir_arg = sys.argv[i + 1]
+        break
+if _output_dir_arg:
+    if os.path.isabs(_output_dir_arg):
+        OUT = _output_dir_arg
+    else:
+        OUT = os.path.join(_PROJ_DIR, _output_dir_arg)
+else:
+    OUT = os.path.join(_PROJ_DIR, 'output_v4')
 LOGS = os.path.join(OUT, 'logs')
+
+# ── Help flag ──
+if '--help' in sys.argv or '-h' in sys.argv:
+    print(__doc__.strip())
+    sys.exit(0)
 
 # ── Mode flags ──
 IS_TURBO = '--turbo' in sys.argv
@@ -552,8 +572,11 @@ def main():
                         import shutil
                         shutil.copy2(log_src, log_dst)
                     run_results[(comp, T)] = r
-                    print("  ✓ x_Pt={:.2f} T={}K → a={:.6f}Å [{:.0f}s]".format(
-                        comp, T, r['a'], r['time']))
+                    # Parse log for mean a over production
+                    _p = parse_production(log_dst)
+                    _mean_a = _p.get('a_mean') if _p and _p.get('a_mean') is not None else r['a']
+                    print("  ✓ x_Pt={:.2f} T={}K: last a={:.6f}Å mean a={:.6f}Å [{:.0f}s]".format(
+                        comp, T, r['a'], _mean_a, r['time']))
                 else:
                     print("  ✗ x_Pt={:.2f} T={}K → {}".format(comp, T, error or "FAILED"))
 

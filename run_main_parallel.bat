@@ -3,19 +3,21 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 REM ================================================================
-REM run_turbo_main.bat — Phase 4 Accurate Parallel
+REM run_main_parallel.bat — Phase 4 Accurate Parallel (alias)
 REM
-REM Same validated protocol as run_main.bat but parallel:
+REM Same validated protocol as run_main.bat, but runs 20 points
+REM in parallel using auto-detected CPU cores.
 REM   • 50k equilibration + 100k production (NO quality loss)
 REM   • neighbor 1.0 bin (safe for 256 atoms)
-REM   • Auto-detects CPU cores → parallel execution
 REM   • Output: output_v4_parallel/ — SEPARATE from final
+REM
+REM Equivalent to: run_turbo_main.bat
 REM ================================================================
 
 echo.
 echo ================================================================
 echo   Fe-Pt Phase 4 — ACCURATE PARALLEL MODE
-echo   Same protocol as main: 50k eq + 100k prod + MEAM PtFe.meam
+echo   Protocol: 50k eq + 100k prod + MEAM PtFe.meam
 echo   Parallel execution (NO quality loss)
 echo ================================================================
 echo.
