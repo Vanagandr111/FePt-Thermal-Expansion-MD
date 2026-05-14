@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 # ── Автоопределение корня проекта ──────────────────────────────────
 def get_projdir():
@@ -79,17 +80,29 @@ def find_lmp_display():
 # ── Запуск LAMMPS ──────────────────────────────────────────────────
 _RUN_LMP_BAT = os.path.join(PROJDIR, '_run_lmp.bat')
 
-def run_lmp(infile, logfile=None, timeout=300, **kwargs):
+def run_lmp(infile, logfile=None, timeout=900, lmp_label="", **kwargs):
     """
     Запуск LAMMPS через _run_lmp.bat (helper с %~dp0).
     Пути относительные от PROJDIR.
+
+    Returns: dict with keys:
+        'ok': bool — True if LAMMPS exited with code 0
+        'stdout': str — stdout output
+        'stderr': str — stderr output (decoded cp1251 → utf-8)
+        'exit_code': int
+        'cmd': str — command that was run
+        'timeout': bool — True if timed out
     """
     cmd = find_lmp()
     if cmd is None:
-        raise RuntimeError(
-            "LAMMPS not found. Install LAMMPS for Windows or\n"
-            "set LMP_EXE environment variable."
-        )
+        return {
+            'ok': False,
+            'stdout': '',
+            'stderr': 'LAMMPS not found',
+            'exit_code': -1,
+            'cmd': 'N/A',
+            'timeout': False,
+        }
 
     # Use relative paths (no cyrillic in the cmd.exe command string)
     infile_rel = os.path.relpath(infile, PROJDIR)
@@ -100,15 +113,46 @@ def run_lmp(infile, logfile=None, timeout=300, **kwargs):
 
     # Windows-only: запуск через cmd.exe /c с _run_lmp.bat
     shell_cmd = subprocess.list2cmdline(bat_args)
-    result = subprocess.run(
-        ['cmd.exe', '/c', shell_cmd],
-        capture_output=True, text=False, timeout=timeout,
-        cwd=PROJDIR,
-        **kwargs
-    )
-    result.stdout = result.stdout.decode('cp1251', errors='replace') if result.stdout else ''
-    result.stderr = result.stderr.decode('cp1251', errors='replace') if result.stderr else ''
-    return result
+
+    start = time.time()
+    timed_out = False
+    try:
+        proc = subprocess.Popen(
+            ['cmd.exe', '/c', shell_cmd],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=PROJDIR,
+            **kwargs
+        )
+        try:
+            stdout_b, stderr_b = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout_b, stderr_b = proc.communicate(timeout=5)
+            timed_out = True
+    except Exception as e:
+        return {
+            'ok': False,
+            'stdout': '',
+            'stderr': 'EXCEPTION: {}'.format(e),
+            'exit_code': -1,
+            'cmd': shell_cmd,
+            'timeout': False,
+        }
+
+    elapsed = time.time() - start
+    stdout_text = stdout_b.decode('cp1251', errors='replace') if stdout_b else ''
+    stderr_text = stderr_b.decode('cp1251', errors='replace') if stderr_b else ''
+
+    return {
+        'ok': proc.returncode == 0 and not timed_out,
+        'stdout': stdout_text,
+        'stderr': stderr_text,
+        'exit_code': proc.returncode,
+        'cmd': shell_cmd,
+        'timeout': timed_out,
+        'elapsed': elapsed,
+        'label': lmp_label,
+    }
 
 
 def parse_result_line(line):
@@ -165,8 +209,11 @@ def extract_result_from_log(logfile):
 
 
 def extract_result_from_stdout(result):
-    """Извлекает RESULT из stdout CompletedProcess."""
-    for line in (result.stdout or '').split('\n'):
+    """Извлекает RESULT из stdout (dict с ключом 'stdout' или объект с атрибутом .stdout)."""
+    stdout_text = result.get('stdout') if isinstance(result, dict) else getattr(result, 'stdout', None)
+    if not stdout_text:
+        return None
+    for line in stdout_text.split('\n'):
         if line.startswith('RESULT:'):
             r = parse_result_line(line)
             if r:

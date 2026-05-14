@@ -22,4 +22,4 @@ Protocol: 50000 eq + 100000 prod, Pdamp=10.0
   ✓ x_Pt=1.00 T=900: a=3.947812 n=1002 csv_match
   ✓ x_Pt=1.00 T=1200: a=3.956025 n=1002 csv_match
 ============================================================
-✓ 20 verified / Failures: 0 / Total: 20
+✓ 20 verified / Failures: 0 / Total: 20
