@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 integrity_build.py — Integrity Builder + Anti-Cheat Check for FePt MD.
 Windows-first. Использует lmp_helper.

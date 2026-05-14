@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Parse all existing LAMMPS logs and build calibration table."""
 import sys, glob, json
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Generate fcc Fe-Pt solid solution LAMMPS data file.
 Creates a supercell with random substitution for given composition.

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 lmp_helper.py — общий модуль для Fe-Pt MD проекта.
 Windows-first, никаких хардкоженых /mnt/c/ путей.

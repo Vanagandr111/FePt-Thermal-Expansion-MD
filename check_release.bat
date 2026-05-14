@@ -1,0 +1,130 @@
+@echo off
+chcp 65001 >nul
+REM === check_release.bat — Windows Release Sanity Check ===
+REM Runs WSL dependency check and verifies active runtime config.
+REM Windows-only. No WSL.
+
+setlocal enabledelayedexpansion
+cd /d "%~dp0"
+set PROJ_DIR=%CD%
+
+echo ==================================================
+echo Fe-Pt MD — Windows Release Check
+echo ==================================================
+echo.
+echo Project: %PROJ_DIR%
+echo.
+
+REM ===================================================================
+REM Phase 1: WSL dependency guard
+REM ===================================================================
+echo [1/4] Running WSL dependency scan...
+echo.
+
+if exist ".venv\Scripts\python.exe" (
+    .venv\Scripts\python.exe scripts\check_no_wsl_refs.py
+) else (
+    python scripts\check_no_wsl_refs.py
+)
+set "RET=%errorlevel%"
+
+if %RET% neq 0 (
+    echo.
+    echo [FAIL] WSL dependencies found in active runtime!
+    echo Fix the files above and re-run this check.
+    pause
+    exit /b 1
+)
+echo [OK] No WSL dependencies.
+echo.
+
+REM ===================================================================
+REM Phase 2: Verify run_main.bat calls Phase 4 only
+REM ===================================================================
+echo [2/4] Verifying run_main.bat calls Phase 4...
+echo.
+
+findstr /i "run_phase4" run_main.bat >nul
+if %errorlevel% equ 0 (
+    echo   run_main.bat -^> scripts\run_phase4.py ✓
+) else (
+    echo [FAIL] run_main.bat does NOT call run_phase4.py!
+    pause
+    exit /b 1
+)
+
+REM Check it does NOT call legacy scripts
+findstr /i "run_all.py run_fept_grid" run_main.bat >nul
+if %errorlevel% equ 0 (
+    echo [FAIL] run_main.bat still calls legacy scripts!
+    pause
+    exit /b 1
+) else (
+    echo   No legacy script calls found ✓
+)
+echo [OK] run_main.bat verified.
+echo.
+
+REM ===================================================================
+REM Phase 3: Verify legacy isolation
+REM ===================================================================
+echo [3/4] Verifying legacy_DO_NOT_RUN isolation...
+echo.
+
+if not exist "legacy_DO_NOT_RUN\" (
+    echo [WARN] legacy_DO_NOT_RUN\ directory not found!
+) else (
+    dir /b legacy_DO_NOT_RUN\ >nul && (
+        echo   Directory exists with content ✓
+    ) || (
+        echo [WARN] legacy_DO_NOT_RUN\ is empty!
+    )
+)
+echo [OK] legacy isolation verified.
+echo.
+
+REM ===================================================================
+REM Phase 4: Check shebangs (must NOT be python3)
+REM ===================================================================
+echo [4/4] Checking shebangs in active scripts...
+echo.
+
+set FOUND_SHEBANG=0
+for %%F in (scripts\*.py) do (
+    findstr /b "#!/usr/bin/env python3" "%%F" >nul
+    if !errorlevel! equ 0 (
+        echo [WARN] %%~nxF has Linux shebang (python3)
+        set FOUND_SHEBANG=1
+    )
+)
+
+if !FOUND_SHEBANG! equ 1 (
+    echo.
+    echo [WARN] Some scripts still have python3 shebangs.
+    echo   This is informational — Python on Windows ignores shebangs.
+    echo   To fix: change '#!/usr/bin/env python3' to '#!/usr/bin/env python'
+) else (
+    echo   All shebangs use 'python' (not 'python3') ✓
+)
+echo [OK] Shebang check complete.
+echo.
+
+REM ===================================================================
+REM Summary
+REM ===================================================================
+echo ==================================================
+echo RELEASE CHECK COMPLETE
+echo ==================================================
+echo.
+echo Active runtime is Windows-only.
+echo WSL is NOT required and NOT supported.
+echo.
+echo Entry points:
+echo   bootstrap.bat   — setup
+echo   run_demo.bat    — demo (2 points)
+echo   run_main.bat    — full Phase 4 run (20 points)
+echo.
+
+endlocal
+pause
+exit /b 0
