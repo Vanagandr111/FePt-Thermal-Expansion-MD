@@ -1,12 +1,15 @@
-Fe-Pt Phase 4 — run_main Protocol Log
+Fe-Pt Phase 4 — run_turbo Protocol Log
 ==================================================
-Timestamp: 2026-05-14 18:09:04
-Script: run_phase4.py
-Pipeline: Phase 4 (Long Protocol)
+Timestamp: 2026-05-14 22:44:45
+Script: run_phase4_turbo.py
+Mode: Turbo Plus
+Pipeline: Phase 4 (Turbo)
 Potential: MEAM PtFe.meam
-Equilibration steps: 50000
-Production steps: 100000
+Equilibration steps: 20000
+Production steps: 50000
 Pdamp: 10.0
+Neighbor: 1.0 bin
+Parallel workers: 20
 Compositions: [0.0, 0.25, 0.5, 0.75, 1.0]
 Temperatures: [300, 600, 900, 1200]
 Output dir: output_v4
