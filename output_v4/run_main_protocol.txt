@@ -1,0 +1,13 @@
+Fe-Pt Phase 4 — run_main Protocol Log
+==================================================
+Timestamp: 2026-05-14 18:09:04
+Script: run_phase4.py
+Pipeline: Phase 4 (Long Protocol)
+Potential: MEAM PtFe.meam
+Equilibration steps: 50000
+Production steps: 100000
+Pdamp: 10.0
+Compositions: [0.0, 0.25, 0.5, 0.75, 1.0]
+Temperatures: [300, 600, 900, 1200]
+Output dir: output_v4
+==================================================
