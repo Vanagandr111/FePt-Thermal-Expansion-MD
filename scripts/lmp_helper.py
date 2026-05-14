@@ -112,21 +112,36 @@ def run_lmp(infile, logfile=None, timeout=300, **kwargs):
 
 
 def parse_result_line(line):
-    """Парсит RESULT-строку из LAMMPS."""
+    """Парсит RESULT-строку из LAMMPS. Гибкий формат — ищет по обязательным полям."""
     import re
-    m = re.search(r'RESULT:\s*T=(\d+)', line)
-    if not m:
+    # Check only for the essential fields we actually print
+    m_T = re.search(r'T=(\d+)', line)
+    m_A = re.search(r'A=([\d.]+)', line)
+    if not (m_T and m_A):
         return None
     fields = {
-        'T': int(m.group(1)),
-        'comp': float(re.search(r'COMP=([\d.]+)', line).group(1)),
-        'vol': float(re.search(r'VOL=([\d.]+)', line).group(1)),
-        'lx': float(re.search(r'LX=([\d.]+)', line).group(1)),
-        'ly': float(re.search(r'LY=([\d.]+)', line).group(1)),
-        'lz': float(re.search(r'LZ=([\d.]+)', line).group(1)),
-        'a': float(re.search(r'A=([\d.]+)', line).group(1)),
-        'natoms': int(re.search(r'NATOMS=(\d+)', line).group(1)),
+        'T': int(m_T.group(1)),
+        'a': float(m_A.group(1)),
     }
+    # Optional fields — may or may not be present
+    m_comp = re.search(r'COMP=([\d.]+)', line)
+    if m_comp:
+        fields['comp'] = float(m_comp.group(1))
+    m_vol = re.search(r'VOL=([\d.]+)', line)
+    if m_vol:
+        fields['vol'] = float(m_vol.group(1))
+    m_lx = re.search(r'LX=([\d.]+)', line)
+    if m_lx:
+        fields['lx'] = float(m_lx.group(1))
+    m_ly = re.search(r'LY=([\d.]+)', line)
+    if m_ly:
+        fields['ly'] = float(m_ly.group(1))
+    m_lz = re.search(r'LZ=([\d.]+)', line)
+    if m_lz:
+        fields['lz'] = float(m_lz.group(1))
+    m_natoms = re.search(r'NATOMS=(\d+)', line)
+    if m_natoms:
+        fields['natoms'] = int(m_natoms.group(1))
     return fields
 
 

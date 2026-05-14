@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 """
-run_phase4.py — Phase 4 Long Protocol main run.
-Windows-first. Output → output_v4/.
+run_phase4_turbo.py — Parallel Phase 4 run with auto-detect CPU cores.
 
-Protocol: 50k equilibration + 100k production, Pdamp=10.
+TURBO mode:      parallel + neighbor 1.0 bin (50k eq + 100k prod) — NO QUALITY LOSS
+TURBO-PLUS mode: parallel + neighbor 1.0 bin + 20k eq + 50k prod — FASTER, slight quality risk
+
+Windows-first. Output → output_v4/.
 Potential: MEAM PtFe.meam.
 Grid: 5 comps × 4 temps = 20 points.
-Production averaging for final a(T).
 
 Usage:
-    python scripts/run_phase4.py          # run missing points only
-    python scripts/run_phase4.py --force   # rerun all 20 points
+    python scripts/run_phase4_turbo.py --turbo            # parallel + neighbor fix
+    python scripts/run_phase4_turbo.py --turbo-plus       # parallel + neighbor + shorter steps
+    python scripts/run_phase4_turbo.py --turbo --force    # force rerun all
 """
 import sys
 import os
@@ -18,6 +20,7 @@ import time
 import csv
 import math
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Project root from scripts/ ──
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,16 +35,35 @@ import lmp_helper as lmp
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
 TEMPS = [300, 600, 900, 1200]
 NATOMS = 256
-EQ_STEPS = 50000
-PROD_STEPS = 100000
 PDAMP = 10.0
 OUT = os.path.join(_PROJ_DIR, 'output_v4')
 LOGS = os.path.join(OUT, 'logs')
 
+# ── Mode flags ──
+IS_TURBO = '--turbo' in sys.argv
+IS_TURBO_PLUS = '--turbo-plus' in sys.argv
+FORCE = '--force' in sys.argv
+
+if not (IS_TURBO or IS_TURBO_PLUS):
+    print("❌ Specify --turbo or --turbo-plus")
+    print("  python scripts/run_phase4_turbo.py --turbo")
+    print("  python scripts/run_phase4_turbo.py --turbo-plus")
+    sys.exit(1)
+
+if IS_TURBO_PLUS:
+    EQ_STEPS = 20000
+    PROD_STEPS = 50000
+else:
+    EQ_STEPS = 50000
+    PROD_STEPS = 100000
+
+# Auto-detect CPU cores — safe for single-core machines
+N_WORKERS = max(1, os.cpu_count() or 1)
+
 # ── LAMMPS input generation ──
 POT_LINE = "pair_coeff      * * potentials{0}library.meam Fe Pt potentials{0}PtFe.meam Fe Pt".format(os.sep)
 
-def write_input(datafile, comp, T):
+def write_input(datafile, comp, T, neighbor_radius):
     """Generate LAMMPS input for Phase 4 protocol."""
     os.makedirs(os.path.join(OUT, 'in'), exist_ok=True)
     fname = "in_phase4_{:.2f}_{}.lmp".format(comp, T)
@@ -60,7 +82,7 @@ def write_input(datafile, comp, T):
         "pair_style      meam",
         POT_LINE,
         "",
-        "neighbor        2.0 bin",
+        "neighbor        {} bin".format(neighbor_radius),
         "neigh_modify    every 1 delay 0 check yes",
         "",
         "thermo          100",
@@ -95,37 +117,38 @@ def write_input(datafile, comp, T):
     return infile
 
 
-def run_point(datafile, comp, T, subdir):
-    """Run LAMMPS at single T using lmp_helper."""
+def run_point(datafile, comp, T, subdir, neighbor_radius):
+    """Run LAMMPS at single T using lmp_helper. Returns (comp, T, result_dict)."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-    infile = write_input(datafile, comp, T)
+    infile = write_input(datafile, comp, T, neighbor_radius)
 
-    print("  T={}K...".format(T), end="", flush=True)
     t0 = time.time()
-    result = lmp.run_lmp(infile, logfile=logfile, timeout=900)
+    try:
+        result = lmp.run_lmp(infile, logfile=logfile, timeout=900)
+    except Exception as e:
+        dt = time.time() - t0
+        return (comp, T, None, "EXCEPTION: {}".format(e))
+
     dt = time.time() - t0
 
     # Try stdout first
     r = lmp.extract_result_from_stdout(result)
     if r:
-        print(" a={:.6f}A [{:.0f}s]".format(r['a'], dt))
         r['time'] = dt
-        return r
+        return (comp, T, r, None)
 
     # Fallback: parse log
     r = lmp.extract_result_from_log(logfile)
     if r:
-        print(" a={:.6f}A (log) [{:.0f}s]".format(r['a'], dt))
         r['time'] = dt
-        return r
+        return (comp, T, r, None)
 
-    print(" FAILED [{}s]".format(dt))
-    return None
+    return (comp, T, None, "FAILED after {:.0f}s".format(dt))
 
 
 def parse_production(logpath):
-    """Parse production phase for mean a(std), same as original run_fept_grid_v4."""
+    """Parse production phase for mean a(std)."""
     if not os.path.exists(logpath) or os.path.getsize(logpath) < 100:
         return {'n_points': 0}
 
@@ -213,17 +236,19 @@ def parse_production(logpath):
     }
 
 
-def write_csv(all_results, parsed_all):
+def write_csv(parsed_all):
     """Write Phase 4 CSVs."""
     os.makedirs(OUT, exist_ok=True)
 
     # Main results CSV
-    csv_path = os.path.join(OUT, "all_results.csv")
+    csv_path = os.path.join(OUT, "all_results_v4_turbo.csv")
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
                      'result_last_point', 'drift', 'n_points',
-                     'mean_press_bar', 'std_press_bar', 'runtime_s'])
+                     'mean_press_bar', 'std_press_bar', 'runtime_s', 'mode',
+                     'eq_steps', 'prod_steps'])
+        mode_label = "turbo_plus" if IS_TURBO_PLUS else "turbo"
         for comp in COMPOSITIONS:
             for T in TEMPS:
                 p = parsed_all.get((comp, T), {})
@@ -238,12 +263,15 @@ def write_csv(all_results, parsed_all):
                         "{:.1f}".format(p.get('mean_press', 0) or 0),
                         "{:.1f}".format(p.get('std_press', 0) or 0),
                         p.get('runtime', 0),
+                        mode_label,
+                        EQ_STEPS,
+                        PROD_STEPS,
                     ])
     print("  CSV: {}".format(csv_path))
 
     # Per-composition CSVs
     for comp in COMPOSITIONS:
-        comp_csv = os.path.join(OUT, "a_T_comp_{:.2f}.csv".format(comp))
+        comp_csv = os.path.join(OUT, "a_T_comp_{:.2f}_turbo.csv".format(comp))
         with open(comp_csv, 'w', newline='') as f:
             w = csv.writer(f)
             w.writerow(['x_Pt', 'T_K', 'a_mean_Angstrom'])
@@ -270,6 +298,7 @@ def plot_v4(parsed_all):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
 
+    mode_label = "Turbo Plus" if IS_TURBO_PLUS else "Turbo"
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
 
     # 1. a(T) all comps
@@ -290,13 +319,14 @@ def plot_v4(parsed_all):
                             alpha=0.15, color=colors[ci])
     ax.set_xlabel("Temperature (K)")
     ax.set_ylabel("Lattice parameter a (Å)")
-    ax.set_title("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol)")
+    ax.set_title("Fe-Pt Thermal Expansion — Phase 4 {} ({}+{} steps)".format(
+        mode_label, EQ_STEPS, PROD_STEPS))
     ax.legend(fontsize=10, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    fig.savefig(os.path.join(OUT, "a_vs_T_all_v4.png"), dpi=150)
+    fig.savefig(os.path.join(OUT, "a_vs_T_all_v4_turbo.png"), dpi=150)
     plt.close(fig)
-    print("  Plot: a_vs_T_all_v4.png")
+    print("  Plot: a_vs_T_all_v4_turbo.png")
 
     # 2. a(comp) at fixed T
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -311,17 +341,18 @@ def plot_v4(parsed_all):
             ax.plot(xs, avs, 'o-', label="T={}K".format(T), markersize=8, linewidth=2)
     ax.set_xlabel("Pt fraction x_Pt")
     ax.set_ylabel("Lattice parameter a (Å)")
-    ax.set_title("Fe-Pt a(comp) at fixed temperatures — Phase 4")
+    ax.set_title("Fe-Pt a(comp) at fixed temperatures — Phase 4 {}".format(mode_label))
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     plt.tight_layout()
-    fig.savefig(os.path.join(OUT, "a_vs_comp_v4.png"), dpi=150)
+    fig.savefig(os.path.join(OUT, "a_vs_comp_v4_turbo.png"), dpi=150)
     plt.close(fig)
-    print("  Plot: a_vs_comp_v4.png")
+    print("  Plot: a_vs_comp_v4_turbo.png")
 
     # 3. Facets 2x3
     fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-    fig.suptitle("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol)", fontsize=14, fontweight='bold')
+    fig.suptitle("Fe-Pt Thermal Expansion — Phase 4 {} ({}+{} steps)".format(
+        mode_label, EQ_STEPS, PROD_STEPS), fontsize=14, fontweight='bold')
     axes_flat = axes.flatten()
     for ci, comp in enumerate(COMPOSITIONS):
         ax = axes_flat[ci]
@@ -344,20 +375,22 @@ def plot_v4(parsed_all):
     for i in range(len(COMPOSITIONS), len(axes_flat)):
         axes_flat[i].set_visible(False)
     plt.tight_layout()
-    fig.savefig(os.path.join(OUT, "a_vs_T_facets_v4.png"), dpi=150)
+    fig.savefig(os.path.join(OUT, "a_vs_T_facets_v4_turbo.png"), dpi=150)
     plt.close(fig)
-    print("  Plot: a_vs_T_facets_v4.png")
+    print("  Plot: a_vs_T_facets_v4_turbo.png")
 
 
-def integrity_check(parsed_all, csv_path):
+def integrity_check(parsed_all):
     """Write integrity check report."""
-    integrity_path = os.path.join(OUT, "integrity_check_v4.txt")
+    mode_label = "Turbo Plus" if IS_TURBO_PLUS else "Turbo"
+    integrity_path = os.path.join(OUT, "integrity_check_v4_turbo.txt")
     lines = [
-        "Fe-Pt Phase 4 — Integrity Check",
+        "Fe-Pt Phase 4 — Integrity Check ({})".format(mode_label),
         "Protocol: {} eq + {} prod, Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP),
         "MEAM potential: PtFe.meam (Fe-Pt cross interaction)",
         "Grid: {} comps × {} temps = {} points".format(
             len(COMPOSITIONS), len(TEMPS), len(COMPOSITIONS) * len(TEMPS)),
+        "Parallel workers: {}".format(N_WORKERS),
         "=" * 60,
     ]
     ok_count = 0
@@ -405,29 +438,6 @@ def integrity_check(parsed_all, csv_path):
     return ok_count, fail_count
 
 
-def write_protocol_log():
-    """Write protocol log to output_v4/."""
-    proto_path = os.path.join(OUT, "run_main_protocol.txt")
-    lines = [
-        "Fe-Pt Phase 4 — run_main Protocol Log",
-        "=" * 50,
-        "Timestamp: {}".format(time.strftime('%Y-%m-%d %H:%M:%S')),
-        "Script: run_phase4.py",
-        "Pipeline: Phase 4 (Long Protocol)",
-        "Potential: MEAM PtFe.meam",
-        "Equilibration steps: {}".format(EQ_STEPS),
-        "Production steps: {}".format(PROD_STEPS),
-        "Pdamp: {}".format(PDAMP),
-        "Compositions: {}".format(COMPOSITIONS),
-        "Temperatures: {}".format(TEMPS),
-        "Output dir: output_v4",
-        "=" * 50,
-    ]
-    with open(proto_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(lines) + '\n')
-    print("  Protocol log: {}".format(proto_path))
-
-
 def print_trends(parsed_all):
     """Print a(T) trends."""
     print("\n" + "=" * 60)
@@ -451,15 +461,19 @@ def print_trends(parsed_all):
 
 
 def main():
-    force = '--force' in sys.argv
+    mode_label = "TURBO PLUS" if IS_TURBO_PLUS else "TURBO"
+    neighbor_radius = "1.0" if IS_TURBO else "1.0"  # both use 1.0
+    # Note: both modes use neighbor 1.0 bin — it's safe for 256 atoms
 
     print("=" * 70)
-    print("Fe-Pt THERMAL EXPANSION — Phase 4 (LONG PROTOCOL)")
+    print("Fe-Pt THERMAL EXPANSION — Phase 4 ({})".format(mode_label))
     print("=" * 70)
     print("  Protocol: {} eq + {} prod, Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP))
     print("  Potential: MEAM PtFe.meam (Fe-Pt cross interaction)")
     print("  Grid: {} comps × {} temps = {} points".format(
         len(COMPOSITIONS), len(TEMPS), len(COMPOSITIONS) * len(TEMPS)))
+    print("  Parallel workers: {} (auto-detected: {} CPU cores)".format(N_WORKERS, os.cpu_count() or "unknown"))
+    print("  Neighbor: {} bin".format(neighbor_radius))
     print("  Output: {}".format(OUT))
     print("  LAMMPS: {}".format(lmp.find_lmp_display() or "NOT FOUND"))
     print("=" * 70)
@@ -489,13 +503,13 @@ def main():
         else:
             missing.append((comp, T))
 
-    if force:
+    if FORCE:
         print("  --force: rerunning ALL 20 points")
         missing = [(comp, T) for comp in COMPOSITIONS for T in TEMPS]
         valid_complete = []
     else:
-        print("  Already done (valid): {}".format(len(valid_complete)))
-        print("  Need to run: {}".format(len(missing)))
+        print("  Already done (valid): {}/20".format(len(valid_complete)))
+        print("  Need to run: {}/20".format(len(missing)))
 
     # Generate structures for missing points
     if missing:
@@ -504,34 +518,48 @@ def main():
             lmp.gen_structure(comp)
         print("  Structures ready ✓")
 
-    # Run missing points
+    # ── PARALLEL RUN ──
     run_results = {}
     if missing:
         total_start = time.time()
-        for i, (comp, T) in enumerate(missing):
-            print("\n  [{}/{}] x_Pt={:.2f} T={}K".format(
-                i + 1, len(missing), comp, T))
+        print("\n  Running {} points in parallel ({} workers)...".format(
+            len(missing), min(N_WORKERS, len(missing))))
+
+        # Prepare tasks
+        tasks = []
+        for comp, T in missing:
             subdir = os.path.join(LOGS, "comp_{:.2f}".format(comp))
             datafile = os.path.join(
                 lmp.DATA_DIR,
                 "data.fept_c{:.2f}.lmp".format(comp))
-            r = run_point(datafile, comp, T, subdir)
-            if r:
-                # Copy log to LOGS
-                log_src = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-                log_dst = os.path.join(LOGS, "log_{:.2f}_{}.lmp".format(comp, T))
-                if os.path.exists(log_src) and log_src != log_dst:
-                    import shutil
-                    shutil.copy2(log_src, log_dst)
-                # Also check default log.lammps
-                default_log = os.path.join(_PROJ_DIR, "log.lammps")
-                if os.path.exists(default_log) and not os.path.exists(log_dst):
-                    import shutil
-                    shutil.copy2(default_log, log_dst)
-            run_results[(comp, T)] = r
+            tasks.append((datafile, comp, T, subdir, neighbor_radius))
+
+        # Run in parallel
+        with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
+            futures = {
+                executor.submit(run_point, *task): (task[1], task[2])
+                for task in tasks
+            }
+
+            for future in as_completed(futures):
+                comp, T, r, error = future.result()
+                if r:
+                    # Copy log to LOGS
+                    subdir = os.path.join(LOGS, "comp_{:.2f}".format(comp))
+                    log_src = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
+                    log_dst = os.path.join(LOGS, "log_{:.2f}_{}.lmp".format(comp, T))
+                    if os.path.exists(log_src) and log_src != log_dst:
+                        import shutil
+                        shutil.copy2(log_src, log_dst)
+                    run_results[(comp, T)] = r
+                    print("  ✓ x_Pt={:.2f} T={}K → a={:.6f}Å [{:.0f}s]".format(
+                        comp, T, r['a'], r['time']))
+                else:
+                    print("  ✗ x_Pt={:.2f} T={}K → {}".format(comp, T, error or "FAILED"))
 
         elapsed = time.time() - total_start
-        print("\n  Runs completed in {:.1f} min".format(elapsed / 60))
+        print("\n  All runs completed in {:.1f} min (parallel: {} workers)".format(
+            elapsed / 60, N_WORKERS))
 
     # Parse all points
     parsed_all = {}
@@ -547,7 +575,7 @@ def main():
 
     # ── Print results table ──
     print("\n\n" + "=" * 100)
-    print("PHASE 4 RESULTS — Mean a(T) averaged over production MD")
+    print("PHASE 4 {} RESULTS — Mean a(T) averaged over production MD".format(mode_label))
     print("Protocol: {} eq + {} prod, MEAM Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP))
     print("=" * 100)
     hdr = "{:>6} {:>5} {:>11} {:>9} {:>6} {:>9} {:>9} {:>6}".format(
@@ -574,7 +602,7 @@ def main():
     print_trends(parsed_all)
 
     # ── CSV ──
-    csv_path = write_csv({}, parsed_all)
+    csv_path = write_csv(parsed_all)
 
     # ── Plots ──
     try:
@@ -586,16 +614,43 @@ def main():
     write_protocol_log()
 
     # ── Integrity check ──
-    ok_count, fail_count = integrity_check(parsed_all, csv_path)
+    ok_count, fail_count = integrity_check(parsed_all)
 
     print("\n" + "=" * 60)
     if fail_count == 0:
-        print("✅ PHASE 4 COMPLETE — All {} points verified".format(ok_count))
+        print("✅ PHASE 4 {} COMPLETE — All {} points verified".format(mode_label, ok_count))
     else:
-        print("⚠️  PHASE 4 COMPLETE — {} verified, {} failures".format(ok_count, fail_count))
+        print("⚠️  PHASE 4 {} COMPLETE — {} verified, {} failures".format(mode_label, ok_count, fail_count))
     print("   Output: {}".format(OUT))
 
     return 0 if fail_count == 0 else 1
+
+
+def write_protocol_log():
+    """Write protocol log to output_v4/."""
+    mode_label = "Turbo Plus" if IS_TURBO_PLUS else "Turbo"
+    proto_path = os.path.join(OUT, "run_turbo_protocol.txt")
+    lines = [
+        "Fe-Pt Phase 4 — run_turbo Protocol Log",
+        "=" * 50,
+        "Timestamp: {}".format(time.strftime('%Y-%m-%d %H:%M:%S')),
+        "Script: run_phase4_turbo.py",
+        "Mode: {}".format(mode_label),
+        "Pipeline: Phase 4 (Turbo)",
+        "Potential: MEAM PtFe.meam",
+        "Equilibration steps: {}".format(EQ_STEPS),
+        "Production steps: {}".format(PROD_STEPS),
+        "Pdamp: {}".format(PDAMP),
+        "Neighbor: 1.0 bin",
+        "Parallel workers: {}".format(N_WORKERS),
+        "Compositions: {}".format(COMPOSITIONS),
+        "Temperatures: {}".format(TEMPS),
+        "Output dir: output_v4",
+        "=" * 50,
+    ]
+    with open(proto_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+    print("  Protocol log: {}".format(proto_path))
 
 
 if __name__ == '__main__':
