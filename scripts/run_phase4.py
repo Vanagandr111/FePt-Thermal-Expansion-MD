@@ -69,6 +69,10 @@ def write_input(datafile, comp, T):
         "minimize        1.0e-6 1.0e-8 1000 10000",
         'print           "MINIMIZATION_DONE"',
         "",
+        # Velocity initialization: CRITICAL — without this the NPT thermostat
+        # has to heat the system from 0K, which takes forever and diverges at high T
+        "velocity        all create {} 12345".format(T),
+        "",
         "fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}".format(T, T, PDAMP, PDAMP),
         "",
         "thermo          1000",
