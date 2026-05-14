@@ -3,12 +3,29 @@
 % Lattice parameter analysis vs temperature and composition
 % Output: 5 publication-ready figures + summary CSV
 %
+% SOURCE OF TRUTH:
+%   This script analyses ONLY output_v4/all_results.csv — the single
+%   validated final dataset for the scientific result. Whether the data
+%   was produced by sequential or parallel accurate runs doesn't matter;
+%   the official scientific mode writes its results to this file.
+%
+%   If the dataset is regenerated (e.g. by a parallel accurate run), this
+%   script automatically picks up the new values — no modifications needed.
+%
+% Columns used:
+%   x_Pt, T_K, a_mean_Angstrom, a_std_Angstrom
+%
+% CTE formula:
+%   α_eff = (a(1200K) − a(300K)) / (a(300K) * 900K)
+%
 % Run from project root: C:\проекты\Nikolay\
 %   >> cd C:\проекты\Nikolay
 %   >> phase4_analysis
 %
 % Input:  output_v4/all_results.csv
 % Output: output_v4/ (5 PNGs + phase4_summary.csv)
+%
+% STATUS: Prepared — runtime test pending
 % ===========================================================================
 
 clear; close all; clc;
