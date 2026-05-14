@@ -9,8 +9,9 @@ Grid: 5 comps × 4 temps = 20 points.
 Production averaging for final a(T).
 
 Usage:
-    python scripts/run_phase4.py          # run missing points only
-    python scripts/run_phase4.py --force   # rerun all 20 points
+    python scripts/run_phase4.py               # run missing points only
+    python scripts/run_phase4.py --force        # clean 20/20 rerun all
+    python scripts/run_phase4.py --help         # show this help
 """
 import sys
 import os

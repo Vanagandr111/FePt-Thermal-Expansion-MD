@@ -164,6 +164,20 @@ All figures are available in the [`figures/`](figures/) directory.
 > **Active runtime is Windows-only.** WSL is not required and not supported for final runtime.
 > Old development scripts have been moved to `legacy_DO_NOT_RUN/` — do not use for production runs.
 
+### Run Modes
+
+The project provides four run modes for different purposes:
+
+| Mode | .bat file | Protocol | Output dir | Purpose |
+|------|-----------|----------|------------|---------|
+| **Demo / Smoke Test** | `run_demo.bat` | 2 points (Pt 300K+600K), `in.thermal` input | `output/` | Quick environment verification — not scientific |
+| **Main / Accurate** | `run_main.bat` | 50k eq + 100k prod, MEAM PdFe.meam, **sequential** | `output_v4/` | **Final validated scientific result**. Clean 20/20 run via `--force` |
+| **Accurate Parallel** | `run_main_parallel.bat` | **Same validated protocol** (50k eq + 100k prod, MEAM), but parallel | `output_v4_parallel/` | Cross-validation — same physics, parallel execution |
+| **Reduced / Approximate** | `run_turbo_plus_main.bat` | 20k eq + 50k prod (reduced), parallel | `output_v4_reduced/` | ⚠️ **NOT for final results.** Faster prototyping only |
+
+**For a final scientific result, always use `run_main.bat`.**
+The parallel and reduced modes are for validation and prototyping only.
+
 ### Steps
 
 1. **Clone the repository**
@@ -194,14 +208,36 @@ All figures are available in the [`figures/`](figures/) directory.
    ```
 
    This runs a single MD simulation for pure Fe at 300 K and produces a quick plot.
+   **This is not a scientific result.**
 
-4. **Run the full Phase 4 calculation**
+4. **Run the full Phase 4 calculation (final result)**
 
    ```cmd
    run_main.bat
    ```
 
-   This executes all 20 MD simulations (this may take several hours depending on hardware).
+   This executes all 20 MD simulations with the full validated protocol (50k eq + 100k prod).
+   The run is forced clean (`--force`), ignoring any cached results.
+   May take several hours depending on hardware.
+
+5. **Run the accurate parallel mode (cross-validation)**
+
+   ```cmd
+   run_main_parallel.bat
+   ```
+
+   Same protocol as `run_main.bat`, but runs points in parallel.
+   Output goes to `output_v4_parallel/` — separate from the final run.
+   Useful for faster iteration or cross-validation.
+
+6. **Run the reduced mode (prototyping only)**
+
+   ```cmd
+   run_turbo_plus_main.bat
+   ```
+
+   20k eq + 50k prod. ⚠️ **Not a final scientific result.**
+   Output goes to `output_v4_reduced/` — separate from both main and parallel outputs.
 
 ### Output Files
 
@@ -349,8 +385,11 @@ FePt-Thermal-Expansion-MD/
 │   ├── Pt_u3.eam                  ← Pt EAM benchmark
 │   └── library.meam               ← MEAM library file
 ├── bootstrap.bat                  ← Environment setup (Windows)
-├── run_demo.bat                   ← Quick demo run
-├── run_main.bat                   ← Full Phase 4 pipeline
+├── run_demo.bat                   ← Quick smoke test (NOT scientific)
+├── run_main.bat                   ← Full Phase 4 accurate (sequential, final result)
+├── run_main_parallel.bat          ← Full Phase 4 accurate parallel (cross-validation)
+├── run_turbo_main.bat             ← Alias for run_main_parallel.bat
+├── run_turbo_plus_main.bat        ← ⚠️  Reduced protocol (NOT for final results)
 ├── requirements.txt               ← Python dependencies
 ├── INSTALL_AND_RUN.txt            ← Quick-start instructions
 ├── README_phase4.md               ← MATLAB-specific documentation

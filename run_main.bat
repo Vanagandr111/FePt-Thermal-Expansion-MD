@@ -1,9 +1,11 @@
 @echo off
 chcp 65001 >nul
 
-REM === run_main.bat - Fe-Pt MD Phase 4 (Long Protocol) ===
+REM === run_main.bat - Fe-Pt MD Phase 4 (Accurate Long Protocol) ===
 REM Windows-only. No WSL.
-REM Используем ТОЛЬКО bunded bin\lmp.exe — никакого PATH / системных LAMMPS
+REM FINAL ACCURATE MODE.
+REM Protocol: 50k equilibration + 100k production, sequential.
+REM Output: output_v4/ — clean 20/20 run (no cache).
 
 setlocal
 cd /d "%~dp0"
@@ -48,7 +50,7 @@ echo.
 REM === Phase 4 Long Protocol Run ===
 echo Running Phase 4 long protocol...
 echo.
-%PYTHON% scripts\run_phase4.py
+%PYTHON% scripts\run_phase4.py --force
 if %errorlevel% neq 0 (
     echo [ERROR] Phase 4 run failed
     pause
