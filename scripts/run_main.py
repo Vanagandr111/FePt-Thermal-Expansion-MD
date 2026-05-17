@@ -5,6 +5,11 @@ Protocol: 50k equilibration + 100k production, Pdamp=10
 Potential: MEAM PtFe.meam
 Grid: 5 compositions x 4 temperatures = 20 points
 Windows-only. No WSL. No hardcoded Linux paths.
+
+Usage:
+    python scripts/run_main.py                       # auto seed
+    python scripts/run_main.py --seed 12345           # manual seed
+    python scripts/run_main.py --seed                 # re-use last seed
 """
 
 import sys, os, time, csv, math, re, shutil, subprocess
@@ -32,6 +37,25 @@ LMP_BAT = os.path.join(_PROJ, '_run_lmp.bat')
 os.makedirs(LOGS, exist_ok=True)
 os.makedirs(PLOTS, exist_ok=True)
 os.makedirs(INS, exist_ok=True)
+
+# ── Seed management ──
+sys.path.insert(0, _THIS)
+import seed_manager as seed_mgr
+
+# Parse --seed
+SEED_ARG = None
+for i, arg in enumerate(sys.argv):
+    if arg == '--seed' and i + 1 < len(sys.argv):
+        try:
+            SEED_ARG = int(sys.argv[i + 1])
+        except ValueError:
+            # --seed without value = re-use
+            SEED_ARG = -1
+        break
+
+SEED, SEED_SOURCE = seed_mgr.get_or_create_seed(_PROJ, OUT, manual_seed=SEED_ARG)
+# Write seed info
+seed_mgr.write_seed_info(OUT, SEED, "main", SEED_SOURCE)
 
 # ── Helpers ──
 
@@ -63,7 +87,7 @@ def write_input(datafile, comp, T):
     fname = 'in_phase4_{:.2f}_{}.lmp'.format(comp, T)
     infile = os.path.join(INS, fname)
     lines = [
-        '# Phase 4 Fe-Pt MEAM T={}K comp={:.2f}'.format(T, comp),
+        '# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}'.format(T, comp, SEED),
         'units           metal',
         'boundary        p p p',
         'atom_style      atomic',
@@ -82,7 +106,7 @@ def write_input(datafile, comp, T):
         'minimize        1.0e-6 1.0e-8 1000 10000',
         'print           "MINIMIZATION_DONE"',
         '',
-        'velocity        all create {} 12345'.format(T),
+        'velocity        all create {} {}'.format(T, SEED),
         '',
         'fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}'.format(T, T, PDAMP, PDAMP),
         '',
@@ -238,7 +262,7 @@ def write_csv(data):
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['x_Pt', 'T_K', 'a_Angstrom', 'a_std_Angstrom',
-                     'n_points', 'drift', 'p_bar', 'p_std_bar'])
+                     'n_points', 'drift', 'p_bar', 'p_std_bar', 'seed'])
         for comp in COMP:
             for T in TEMPS:
                 p = data.get((comp, T), {})
@@ -251,6 +275,7 @@ def write_csv(data):
                         '{:.2e}'.format(p.get('drift', 0)),
                         '{:.1f}'.format(p.get('mean_press', 0) or 0),
                         '{:.1f}'.format(p.get('std_press', 0) or 0),
+                        SEED,
                     ])
     print('  CSV: ' + csv_path)
 
@@ -259,12 +284,12 @@ def write_csv(data):
         path = os.path.join(OUT, 'results_{:.2f}.csv'.format(comp))
         with open(path, 'w', newline='') as f:
             w = csv.writer(f)
-            w.writerow(['x_Pt', 'T_K', 'a_Angstrom'])
+            w.writerow(['x_Pt', 'T_K', 'a_Angstrom', 'seed'])
             for T in TEMPS:
                 p = data.get((comp, T), {})
                 if p and p.get('a_mean') is not None:
                     w.writerow(['{:.2f}'.format(comp), T,
-                                '{:.6f}'.format(p['a_mean'])])
+                                '{:.6f}'.format(p['a_mean']), SEED])
     print('  Per-composition CSVs OK')
 
 
@@ -300,7 +325,7 @@ def make_plots(data):
                             alpha=0.15, color=colors[ci])
     ax.set_xlabel('Temperature (K)')
     ax.set_ylabel('Lattice parameter a (Angstrom)')
-    ax.set_title('Fe-Pt Thermal Expansion')
+    ax.set_title('Fe-Pt Thermal Expansion (seed={})'.format(SEED))
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -320,7 +345,7 @@ def make_plots(data):
                     'o-', label='T={}K'.format(T), markersize=8, linewidth=2)
     ax.set_xlabel('Pt fraction x_Pt')
     ax.set_ylabel('Lattice parameter a (Angstrom)')
-    ax.set_title('Fe-Pt a(comp) at fixed temperatures')
+    ax.set_title('Fe-Pt a(comp) at fixed temperatures (seed={})'.format(SEED))
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -330,7 +355,7 @@ def make_plots(data):
 
     # 3. Facets 2x3
     fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-    fig.suptitle('Fe-Pt Thermal Expansion', fontsize=14, fontweight='bold')
+    fig.suptitle('Fe-Pt Thermal Expansion (seed={})'.format(SEED), fontsize=14, fontweight='bold')
     for ci, comp in enumerate(COMP):
         ax = axes.flatten()[ci]
         pts = [(T, data[(comp, T)]) for T in TEMPS
@@ -364,6 +389,7 @@ def main():
     print('=' * 60)
     print('  Fe-Pt MD Thermal Expansion')
     print('  Protocol: {} eq + {} prod, Pdamp={}'.format(EQ, PROD, PDAMP))
+    print('  Seed: {} ({})'.format(SEED, SEED_SOURCE))
     print('  Grid: {} comps x {} temps = {} points'.format(
         len(COMP), len(TEMPS), len(COMP) * len(TEMPS)))
     print('  Output: ' + OUT)
@@ -415,7 +441,7 @@ def main():
 
     # Print results table
     print('\n' + '=' * 95)
-    print('  RESULTS')
+    print('  RESULTS (seed={})'.format(SEED))
     print('=' * 95)
     hdr = '{:>6} {:>5} {:>11} {:>9} {:>6} {:>9} {:>9}'.format(
         'x_Pt', 'T', 'a_mean', 'a_std', 'n', 'drift', 'time')
@@ -432,7 +458,7 @@ def main():
                 print('{:>6.2f} {:>5} {:>11}'.format(comp, T, 'NO DATA'))
 
     # Trends
-    print('\n  --- a(T) Trends ---')
+    print('\n  --- a(T) Trends (seed={}) ---'.format(SEED))
     for comp in COMP:
         vals = [(T, results[(comp, T)]['a_mean'])
                 for T in TEMPS if (comp, T) in results and results[(comp, T)].get('a_mean')]
@@ -450,7 +476,7 @@ def main():
     pt1200 = results.get((1.0, 1200), {})
     if pt300.get('a_mean') and pt1200.get('a_mean'):
         alpha_pt = (pt1200['a_mean'] - pt300['a_mean']) / pt300['a_mean'] / 900
-        print('\n  --- Pt Benchmark ---')
+        print('\n  --- Pt Benchmark (seed={}) ---'.format(SEED))
         print('  a(300K) = {:.6f} (expected ~3.929)'.format(pt300['a_mean']))
         print('  a(1200K) = {:.6f} (expected ~3.956)'.format(pt1200['a_mean']))
         print('  a_Pt = {:.3e} (expected ~7.5e-6)'.format(alpha_pt))
@@ -469,10 +495,11 @@ def main():
     fail = 20 - ok
     print('\n' + '=' * 60)
     if fail == 0:
-        print('  COMPLETE — All {} points verified'.format(ok))
+        print('  COMPLETE — All {} points verified (seed={})'.format(ok, SEED))
     else:
-        print('  {} OK, {} FAILURES'.format(ok, fail))
+        print('  {} OK, {} FAILURES (seed={})'.format(ok, fail, SEED))
     print('  Output: ' + OUT)
+    print('  Seed info: seed_info.txt')
     print('=' * 60)
 
     return 0 if fail == 0 else 1
