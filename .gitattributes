@@ -1,0 +1,24 @@
+# Normalize to CRLF on checkout for Windows
+* text=auto
+
+# Windows batch files — force CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Python
+*.py text eol=crlf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Markdown / text
+*.md text eol=crlf
+*.txt text eol=crlf
+*.csv text eol=crlf
+
+# LAMMPS data files — keep as-is (LAMMPS reads both)
+*.lmp binary
+*.meam binary
+*.eam binary
+*.eam.alloy binary
+*.eam.fs binary
