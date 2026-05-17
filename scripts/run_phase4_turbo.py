@@ -32,6 +32,7 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 import lmp_helper as lmp
+import seed_manager as seed_mgr
 
 # ── Phase 4 Parameters ──
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -53,6 +54,19 @@ if _output_dir_arg:
 else:
     OUT = os.path.join(_PROJ_DIR, 'output_v4')
 LOGS = os.path.join(OUT, 'logs')
+
+# ── Global seed holder (set in main) ──
+SEED_FINAL = 12345
+
+# ── Seed management ──
+SEED_ARG = None
+for i, arg in enumerate(sys.argv):
+    if arg == '--seed' and i + 1 < len(sys.argv):
+        try:
+            SEED_ARG = int(sys.argv[i + 1])
+        except ValueError:
+            SEED_ARG = -1
+        break
 
 # ── Help flag ──
 if '--help' in sys.argv or '-h' in sys.argv:
@@ -83,7 +97,7 @@ N_WORKERS = max(1, os.cpu_count() or 1)
 # ── LAMMPS input generation ──
 POT_LINE = "pair_coeff      * * potentials{0}library.meam Fe Pt potentials{0}PtFe.meam Fe Pt".format(os.sep)
 
-def write_input(datafile, comp, T, neighbor_radius):
+def write_input(datafile, comp, T, neighbor_radius, **kwargs):
     """Generate LAMMPS input for Phase 4 protocol."""
     os.makedirs(os.path.join(OUT, 'in'), exist_ok=True)
     fname = "in_phase4_{:.2f}_{}.lmp".format(comp, T)
@@ -92,7 +106,7 @@ def write_input(datafile, comp, T, neighbor_radius):
     data_rel = os.path.relpath(datafile, _PROJ_DIR)
 
     lines = [
-        "# Phase 4 Fe-Pt MEAM T={}K comp={:.2f}".format(T, comp),
+        "# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}".format(T, comp, kwargs.get("seed", 12345)),
         "units           metal",
         "boundary        p p p",
         "atom_style      atomic",
@@ -113,7 +127,7 @@ def write_input(datafile, comp, T, neighbor_radius):
         "",
         # Velocity initialization: CRITICAL — without this the NPT thermostat
         # has to heat the system from 0K, which takes forever and diverges at high T
-        "velocity        all create {} 12345".format(T),
+        "velocity        all create {} {}".format(T, kwargs.get("seed", 12345)),
         "",
         "fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}".format(T, T, PDAMP, PDAMP),
         "",
@@ -141,7 +155,7 @@ def run_point(datafile, comp, T, subdir, neighbor_radius):
     """Run LAMMPS at single T using lmp_helper. Returns (comp, T, result_dict)."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-    infile = write_input(datafile, comp, T, neighbor_radius)
+    infile = write_input(datafile, comp, T, neighbor_radius, seed=SEED_FINAL)
 
     t0 = time.time()
     try:
@@ -267,7 +281,7 @@ def write_csv(parsed_all):
         w.writerow(['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
                      'result_last_point', 'drift', 'n_points',
                      'mean_press_bar', 'std_press_bar', 'runtime_s', 'mode',
-                     'eq_steps', 'prod_steps'])
+                     'eq_steps', 'prod_steps', 'seed'])
         mode_label = "turbo_plus" if IS_TURBO_PLUS else "turbo"
         for comp in COMPOSITIONS:
             for T in TEMPS:
@@ -286,6 +300,7 @@ def write_csv(parsed_all):
                         mode_label,
                         EQ_STEPS,
                         PROD_STEPS,
+                        SEED_FINAL,
                     ])
     print("  CSV: {}".format(csv_path))
 
@@ -496,6 +511,13 @@ def main():
     print("  Neighbor: {} bin".format(neighbor_radius))
     print("  Output: {}".format(OUT))
     print("  LAMMPS: {}".format(lmp.find_lmp_display() or "NOT FOUND"))
+
+    # ── Resolve seed ──
+    seed_local, seed_source = seed_mgr.get_or_create_seed(_PROJ_DIR, OUT, manual_seed=SEED_ARG if SEED_ARG != -1 else None)
+    seed_mgr.write_seed_info(OUT, seed_local, mode_label.lower(), seed_source)
+    global SEED_FINAL
+    SEED_FINAL = seed_local
+    print("  Seed: {} ({})".format(SEED_FINAL, seed_source))
     print("=" * 70)
 
     os.makedirs(LOGS, exist_ok=True)

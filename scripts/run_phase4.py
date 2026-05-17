@@ -9,9 +9,11 @@ Grid: 5 comps × 4 temps = 20 points.
 Production averaging for final a(T).
 
 Usage:
-    python scripts/run_phase4.py               # run missing points only
-    python scripts/run_phase4.py --force        # clean 20/20 rerun all
-    python scripts/run_phase4.py --help         # show this help
+    python scripts/run_phase4.py                  # auto seed
+    python scripts/run_phase4.py --seed 12345     # manual seed
+    python scripts/run_phase4.py --seed           # re-use last seed
+    python scripts/run_phase4.py --force          # clean 20/20 rerun all
+    python scripts/run_phase4.py --help           # show this help
 """
 import sys
 import os
@@ -28,6 +30,20 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 import lmp_helper as lmp
+import seed_manager as seed_mgr
+
+# ── Global seed holder ──
+SEED_FINAL = 12345
+
+# ── Seed arg ──
+SEED_ARG = None
+for i, arg in enumerate(sys.argv):
+    if arg == '--seed' and i + 1 < len(sys.argv):
+        try:
+            SEED_ARG = int(sys.argv[i + 1])
+        except ValueError:
+            SEED_ARG = -1
+        break
 
 # ── Phase 4 Parameters ──
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -42,7 +58,7 @@ LOGS = os.path.join(OUT, 'logs')
 # ── LAMMPS input generation ──
 POT_LINE = "pair_coeff      * * potentials{0}library.meam Fe Pt potentials{0}PtFe.meam Fe Pt".format(os.sep)
 
-def write_input(datafile, comp, T):
+def write_input(datafile, comp, T, **kwargs):
     """Generate LAMMPS input for Phase 4 protocol."""
     os.makedirs(os.path.join(OUT, 'in'), exist_ok=True)
     fname = "in_phase4_{:.2f}_{}.lmp".format(comp, T)
@@ -51,7 +67,7 @@ def write_input(datafile, comp, T):
     data_rel = os.path.relpath(datafile, _PROJ_DIR)
 
     lines = [
-        "# Phase 4 Fe-Pt MEAM T={}K comp={:.2f}".format(T, comp),
+        "# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}".format(T, comp, kwargs.get("seed", 12345)),
         "units           metal",
         "boundary        p p p",
         "atom_style      atomic",
@@ -72,7 +88,7 @@ def write_input(datafile, comp, T):
         "",
         # Velocity initialization: CRITICAL — without this the NPT thermostat
         # has to heat the system from 0K, which takes forever and diverges at high T
-        "velocity        all create {} 12345".format(T),
+        "velocity        all create {} {}".format(T, kwargs.get("seed", 12345)),
         "",
         "fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}".format(T, T, PDAMP, PDAMP),
         "",
@@ -100,7 +116,7 @@ def run_point(datafile, comp, T, subdir):
     """Run LAMMPS at single T using lmp_helper."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-    infile = write_input(datafile, comp, T)
+    infile = write_input(datafile, comp, T, seed=SEED_FINAL)
 
     print("  T={}K...".format(T), end="", flush=True)
     t0 = time.time()
@@ -224,7 +240,7 @@ def write_csv(all_results, parsed_all):
         w = csv.writer(f)
         w.writerow(['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
                      'result_last_point', 'drift', 'n_points',
-                     'mean_press_bar', 'std_press_bar', 'runtime_s'])
+                     'mean_press_bar', 'std_press_bar', 'runtime_s', 'seed'])
         for comp in COMPOSITIONS:
             for T in TEMPS:
                 p = parsed_all.get((comp, T), {})
@@ -239,6 +255,7 @@ def write_csv(all_results, parsed_all):
                         "{:.1f}".format(p.get('mean_press', 0) or 0),
                         "{:.1f}".format(p.get('std_press', 0) or 0),
                         p.get('runtime', 0),
+                        SEED_FINAL,
                     ])
     print("  CSV: {}".format(csv_path))
 
@@ -291,7 +308,7 @@ def plot_v4(parsed_all):
                             alpha=0.15, color=colors[ci])
     ax.set_xlabel("Temperature (K)")
     ax.set_ylabel("Lattice parameter a (Å)")
-    ax.set_title("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol)")
+    ax.set_title("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol, seed={})".format(SEED_FINAL))
     ax.legend(fontsize=10, loc='upper left')
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -312,7 +329,7 @@ def plot_v4(parsed_all):
             ax.plot(xs, avs, 'o-', label="T={}K".format(T), markersize=8, linewidth=2)
     ax.set_xlabel("Pt fraction x_Pt")
     ax.set_ylabel("Lattice parameter a (Å)")
-    ax.set_title("Fe-Pt a(comp) at fixed temperatures — Phase 4")
+    ax.set_title("Fe-Pt a(comp) at fixed temperatures — Phase 4 (seed={})".format(SEED_FINAL))
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     plt.tight_layout()
@@ -322,7 +339,7 @@ def plot_v4(parsed_all):
 
     # 3. Facets 2x3
     fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-    fig.suptitle("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol)", fontsize=14, fontweight='bold')
+    fig.suptitle("Fe-Pt Thermal Expansion — Phase 4 (Long Protocol, seed={})".format(SEED_FINAL), fontsize=14, fontweight='bold')
     axes_flat = axes.flatten()
     for ci, comp in enumerate(COMPOSITIONS):
         ax = axes_flat[ci]
@@ -338,7 +355,7 @@ def plot_v4(parsed_all):
                         capsize=4, markersize=6)
             rise = avs[-1] - avs[0]
             alpha_eff = rise / avs[0] / 900
-            ax.set_title("x_Pt={:.2f}\nΔa={:.4f}Å α={:.2e}".format(comp, rise, alpha_eff), fontsize=10)
+            ax.set_title("x_Pt={:.2f}\nDa={:.4f}A a={:.2e} (s={})".format(comp, rise, alpha_eff, SEED_FINAL), fontsize=10)
             ax.set_xlabel("T (K)")
             ax.set_ylabel("a (Å)")
             ax.grid(alpha=0.3)
@@ -355,9 +372,10 @@ def integrity_check(parsed_all, csv_path):
     integrity_path = os.path.join(OUT, "integrity_check_v4.txt")
     lines = [
         "Fe-Pt Phase 4 — Integrity Check",
+        "Seed: {}".format(SEED_FINAL),
         "Protocol: {} eq + {} prod, Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP),
         "MEAM potential: PtFe.meam (Fe-Pt cross interaction)",
-        "Grid: {} comps × {} temps = {} points".format(
+        "Grid: {} comps x {} temps = {} points".format(
             len(COMPOSITIONS), len(TEMPS), len(COMPOSITIONS) * len(TEMPS)),
         "=" * 60,
     ]
@@ -369,14 +387,14 @@ def integrity_check(parsed_all, csv_path):
             p = parsed_all.get((comp, T), {})
             if p and p.get('a_mean') is not None:
                 ok_count += 1
-                lines.append("  ✓ x_Pt={:.2f} T={}: a={:.6f} n={} drift={:.2e}".format(
+                lines.append("  \u2713 x_Pt={:.2f} T={}: a={:.6f} n={} drift={:.2e}".format(
                     comp, T, p['a_mean'], p.get('n_points', 0), p.get('drift', 0)))
             else:
                 fail_count += 1
-                lines.append("  ✗ x_Pt={:.2f} T={}: NO DATA".format(comp, T))
+                lines.append("  \u2717 x_Pt={:.2f} T={}: NO DATA".format(comp, T))
 
     lines.append("=" * 60)
-    lines.append("✓ {} verified / Failures: {} / Total: {}".format(
+    lines.append("\u2713 {} verified / Failures: {} / Total: {}".format(
         ok_count, fail_count, ok_count + fail_count))
 
     # Pt benchmark
@@ -387,21 +405,21 @@ def integrity_check(parsed_all, csv_path):
         a1200 = pt_1200['a_mean']
         alpha = (a1200 - a300) / a300 / 900
         lines.append("")
-        lines.append("Pt benchmark:")
-        lines.append("  a(300K) = {:.6f} Å  (expected ~3.929)".format(a300))
-        lines.append("  a(1200K) = {:.6f} Å  (expected ~3.956)".format(a1200))
-        lines.append("  α_eff = {:.3e}  (expected ~7.5e-6)".format(alpha))
+        lines.append("Pt benchmark (seed={}):".format(SEED_FINAL))
+        lines.append("  a(300K) = {:.6f} A  (expected ~3.929)".format(a300))
+        lines.append("  a(1200K) = {:.6f} A  (expected ~3.956)".format(a1200))
+        lines.append("  a_eff = {:.3e}  (expected ~7.5e-6)".format(alpha))
         delta_a300 = abs(a300 - 3.929)
-        lines.append("  Δa300 = {:.6f} Å from expected".format(delta_a300))
+        lines.append("  Da300 = {:.6f} A from expected".format(delta_a300))
 
     with open(integrity_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
     print("  Integrity: {}".format(integrity_path))
 
     # Also print Pt benchmark
-    print("\n  --- Pt Benchmark ---")
-    print("  a(300K) = {:.6f} Å (expected ~3.929)".format(a300 if pt_300.get('a_mean') else 0))
-    print("  a(1200K) = {:.6f} Å (expected ~3.956)".format(a1200 if pt_1200.get('a_mean') else 0))
+    print("\n  --- Pt Benchmark (seed={}) ---".format(SEED_FINAL))
+    print("  a(300K) = {:.6f} A (expected ~3.929)".format(a300 if pt_300.get('a_mean') else 0))
+    print("  a(1200K) = {:.6f} A (expected ~3.956)".format(a1200 if pt_1200.get('a_mean') else 0))
 
     return ok_count, fail_count
 
@@ -410,7 +428,7 @@ def write_protocol_log():
     """Write protocol log to output_v4/."""
     proto_path = os.path.join(OUT, "run_main_protocol.txt")
     lines = [
-        "Fe-Pt Phase 4 — run_main Protocol Log",
+        "Fe-Pt Phase 4 -- run_main Protocol Log",
         "=" * 50,
         "Timestamp: {}".format(time.strftime('%Y-%m-%d %H:%M:%S')),
         "Script: run_phase4.py",
@@ -422,6 +440,7 @@ def write_protocol_log():
         "Compositions: {}".format(COMPOSITIONS),
         "Temperatures: {}".format(TEMPS),
         "Output dir: output_v4",
+        "Seed: {}".format(SEED_FINAL),
         "=" * 50,
     ]
     with open(proto_path, 'w', encoding='utf-8') as f:
@@ -432,7 +451,7 @@ def write_protocol_log():
 def print_trends(parsed_all):
     """Print a(T) trends."""
     print("\n" + "=" * 60)
-    print("TRENDS: a(T) per composition")
+    print("TRENDS: a(T) per composition (seed={})".format(SEED_FINAL))
     print("=" * 60)
     for comp in COMPOSITIONS:
         a_vals = []
@@ -445,8 +464,8 @@ def print_trends(parsed_all):
             rise = vals[3] - vals[0]
             mono = all(vals[i + 1] >= vals[i] for i in range(3))
             alpha_eff = rise / vals[0] / 900
-            print("  x_Pt={:.2f}: a300={:.6f} a1200={:.6f} Δa={:.6f}Å α_eff={:.3e} {}".format(
-                comp, vals[0], vals[3], rise, alpha_eff, '✓' if mono else '✗'))
+            print("  x_Pt={:.2f}: a300={:.6f} a1200={:.6f} Da={:.6f}A a_eff={:.3e} {}".format(
+                comp, vals[0], vals[3], rise, alpha_eff, '\u2713' if mono else '\u2717'))
         else:
             print("  x_Pt={:.2f}: INCOMPLETE ({}/4)".format(comp, len(a_vals)))
 
@@ -459,10 +478,17 @@ def main():
     print("=" * 70)
     print("  Protocol: {} eq + {} prod, Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP))
     print("  Potential: MEAM PtFe.meam (Fe-Pt cross interaction)")
-    print("  Grid: {} comps × {} temps = {} points".format(
+    print("  Grid: {} comps x {} temps = {} points".format(
         len(COMPOSITIONS), len(TEMPS), len(COMPOSITIONS) * len(TEMPS)))
     print("  Output: {}".format(OUT))
     print("  LAMMPS: {}".format(lmp.find_lmp_display() or "NOT FOUND"))
+
+    # Resolve seed
+    seed_local, seed_source = seed_mgr.get_or_create_seed(_PROJ_DIR, OUT, manual_seed=SEED_ARG if SEED_ARG != -1 else None)
+    seed_mgr.write_seed_info(OUT, seed_local, "long", seed_source)
+    global SEED_FINAL
+    SEED_FINAL = seed_local
+    print("  Seed: {} ({})".format(SEED_FINAL, seed_source))
     print("=" * 70)
 
     os.makedirs(LOGS, exist_ok=True)
@@ -503,100 +529,60 @@ def main():
         print("\n  Generating structures...")
         for comp in COMPOSITIONS:
             lmp.gen_structure(comp)
-        print("  Structures ready ✓")
+        print("  Structures ready \u2713")
 
     # Run missing points
-    run_results = {}
-    if missing:
-        total_start = time.time()
-        for i, (comp, T) in enumerate(missing):
-            print("\n  [{}/{}] x_Pt={:.2f} T={}K".format(
-                i + 1, len(missing), comp, T))
-            subdir = os.path.join(LOGS, "comp_{:.2f}".format(comp))
-            datafile = os.path.join(
-                lmp.DATA_DIR,
-                "data.fept_c{:.2f}.lmp".format(comp))
-            r = run_point(datafile, comp, T, subdir)
-            if r:
-                # Copy log to LOGS
-                log_src = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-                log_dst = os.path.join(LOGS, "log_{:.2f}_{}.lmp".format(comp, T))
-                if os.path.exists(log_src) and log_src != log_dst:
-                    import shutil
-                    shutil.copy2(log_src, log_dst)
-                # Also check default log.lammps
-                default_log = os.path.join(_PROJ_DIR, "log.lammps")
-                if os.path.exists(default_log) and not os.path.exists(log_dst):
-                    import shutil
-                    shutil.copy2(default_log, log_dst)
-            run_results[(comp, T)] = r
-
-        elapsed = time.time() - total_start
-        print("\n  Runs completed in {:.1f} min".format(elapsed / 60))
-
-    # Parse all points
     parsed_all = {}
-    for comp in COMPOSITIONS:
-        for T in TEMPS:
-            logpath = os.path.join(LOGS, "log_{:.2f}_{}.lmp".format(comp, T))
-            p = parse_production(logpath)
-            if (comp, T) in run_results and run_results[(comp, T)]:
-                p['runtime'] = run_results[(comp, T)].get('time', 0)
-            else:
-                p['runtime'] = 0
-            parsed_all[(comp, T)] = p
+    for comp, T in valid_complete:
+        logpath = os.path.join(LOGS, "log_{:.2f}_{}.lmp".format(comp, T))
+        parsed_all[(comp, T)] = parse_production(logpath)
 
-    # ── Print results table ──
-    print("\n\n" + "=" * 100)
-    print("PHASE 4 RESULTS — Mean a(T) averaged over production MD")
-    print("Protocol: {} eq + {} prod, MEAM Pdamp={}".format(EQ_STEPS, PROD_STEPS, PDAMP))
-    print("=" * 100)
-    hdr = "{:>6} {:>5} {:>11} {:>9} {:>6} {:>9} {:>9} {:>6}".format(
-        'x_Pt', 'T', 'a_mean', 'a_std', 'n', 'Press', 'drift', 'time')
-    print(hdr)
-    print("-" * 100)
+    if missing:
+        print("\n  Running {} points...".format(len(missing)))
+        for comp, T in missing:
+            print("\n    x_Pt={:.2f} T={}K".format(comp, T))
+            datafile = os.path.join(_PROJ_DIR, 'data',
+                                    'data.fept_c{:.2f}.lmp'.format(comp))
+            subdir = LOGS
+            result = run_point(datafile, comp, T, subdir)
+            if result:
+                logpath = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
+                p = parse_production(logpath)
+                if p and p.get('a_mean') is not None:
+                    print("      a_mean={:.6f} n={}".format(p['a_mean'], p.get('n_points', 0)))
+                    parsed_all[(comp, T)] = p
 
-    all_valid = True
-    for comp in COMPOSITIONS:
-        for T in TEMPS:
-            p = parsed_all.get((comp, T), {})
-            if p and p.get('a_mean') is not None:
-                pm = p.get('mean_press', None)
-                ps = "{:.0f}".format(pm) if pm is not None else "N/A"
-                print("{:>6.2f} {:>5} {:>11.6f} {:>9.6f} {:>6} {:>9} {:>9.2e} {:>5.0f}s".format(
-                    comp, T, p['a_mean'], p.get('a_std', 0),
-                    p.get('n_points', 0), ps, p.get('drift', 0),
-                    p.get('runtime', 0)))
-            else:
-                print("{:>6.2f} {:>5} {:>11}".format(comp, T, 'NO DATA'))
-                all_valid = False
+    # Write protocol log
+    write_protocol_log()
 
-    # ── Trends ──
+    # CSV
+    write_csv(None, parsed_all)
+
+    # Integrity
+    csv_path = os.path.join(OUT, "all_results.csv")
+    integrity_check(parsed_all, csv_path)
+
+    # Trends
     print_trends(parsed_all)
 
-    # ── CSV ──
-    csv_path = write_csv({}, parsed_all)
-
-    # ── Plots ──
+    # Plots
     try:
         plot_v4(parsed_all)
     except Exception as e:
-        print("  Plotting error: {}".format(e))
+        print("  Plot error: " + str(e))
 
-    # ── Protocol log ──
-    write_protocol_log()
-
-    # ── Integrity check ──
-    ok_count, fail_count = integrity_check(parsed_all, csv_path)
-
+    # Summary
+    ok = sum(1 for p in parsed_all.values() if p and p.get('a_mean') is not None)
+    fail = 20 - ok
     print("\n" + "=" * 60)
-    if fail_count == 0:
-        print("✅ PHASE 4 COMPLETE — All {} points verified".format(ok_count))
+    if fail == 0:
+        print("  COMPLETE — All {} points verified (seed={})".format(ok, SEED_FINAL))
     else:
-        print("⚠️  PHASE 4 COMPLETE — {} verified, {} failures".format(ok_count, fail_count))
-    print("   Output: {}".format(OUT))
+        print("  {} OK, {} FAILURES (seed={})".format(ok, fail, SEED_FINAL))
+    print("  Output: {}".format(OUT))
+    print("=" * 60)
 
-    return 0 if fail_count == 0 else 1
+    return 0 if fail == 0 else 1
 
 
 if __name__ == '__main__':
