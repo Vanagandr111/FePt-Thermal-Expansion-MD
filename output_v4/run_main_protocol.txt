@@ -1,6 +1,6 @@
 Fe-Pt Phase 4 — run_main Protocol Log
 ==================================================
-Timestamp: 2026-05-14 18:09:04
+Timestamp: 2026-05-17 18:49:13
 Script: run_phase4.py
 Pipeline: Phase 4 (Long Protocol)
 Potential: MEAM PtFe.meam
