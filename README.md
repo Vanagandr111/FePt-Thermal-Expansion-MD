@@ -110,7 +110,6 @@ may still underestimate the absolute value to some degree.
 
 Full calibration details are available in:
 - [`docs/PHYSICAL_VALIDATION.md`](docs/PHYSICAL_VALIDATION.md)
-- [`physical_validation.txt`](physical_validation.txt)
 
 ---
 
@@ -161,7 +160,7 @@ Generated plots are placed alongside the output data (seed number is shown in th
 > **No WSL is required.** The pipeline runs natively on Windows.
 >
 > **Active runtime is Windows-only.** WSL is not required and not supported for final runtime.
-> Legacy WSL scripts have been moved to `legacy_DO_NOT_RUN/` — do not use for production runs.
+> Legacy WSL development scripts have been cleaned from the repository.
 
 ### Quick Start
 
@@ -313,40 +312,32 @@ FePt-Thermal-Expansion-MD/
 │   ├── run_phase4.py              ← Long protocol (sequential, output_v4/)
 │   ├── run_phase4_turbo.py        ← Turbo protocol (parallel, output_v4_parallel/)
 │   ├── run_main.py                ← MAIN protocol (sequential, results/)
-│   ├── lmp_helper.py              ← LAMMPS path detection and launcher
+│   ├── lmp_helper.py              ← Core LAMMPS helper (launcher, parser, plotting, CSV/XLSX)
 │   ├── seed_manager.py            ← Seed generation and persistence
 │   ├── gen_structure.py           ← Supercell generator (fcc Fe-Pt)
 │   ├── rebuild_phase4.py          ← Rebuild results from raw logs
-│   ├── parse_all_logs.py          ← Bulk log parser
-│   ├── integrity_build.py         ← Integrity check builder
-│   ├── build_calibration_table.py ← Calibration table generator
-│   ├── check_no_wsl_refs.py       ← WSL dependency guard
-│   ├── check_shebangs.py          ← Script consistency checker
-│   ├── demo_report.py             ← Demo result reporter
 │   ├── phase4_analysis.m          ← MATLAB analysis script (experimental)
 │   ├── in.thermal                 ← Demo LAMMPS input template
 │   └── in.thermal_expansion       ← Production LAMMPS input template
-├── legacy_DO_NOT_RUN/             ← Legacy development scripts (DO NOT RUN)
-│   ├── README_DO_NOT_RUN.md
-│   ├── run_all_short_protocol.py  ← Old short-protocol pipeline
-│   └── wsl_old/                   ← WSL-only scripts (reference only)
 ├── data/
 │   ├── *.lmp                      ← Generated supercell data files
 │   └── data.fept_demo.lmp         ← Demo supercell
 ├── output_v4/                     ← Phase 4 Long results
-│   ├── all_results.csv
+│   ├── all_results.csv / .xlsx    ← CSV + Excel with numeric type formatting
+│   ├── cte_report.csv             ← CTE metrics per composition
 │   ├── integrity_check_v4.txt
 │   ├── a_vs_T_all_v4.png
 │   ├── a_vs_comp_v4.png
 │   ├── a_vs_T_facets_v4.png
 │   └── logs/                      ← Raw LAMMPS output
 ├── output_v4_parallel/            ← Phase 4 Turbo results
-│   ├── all_results_v4_turbo.csv
+│   ├── all_results_v4_turbo.csv / .xlsx
+│   ├── cte_report.csv
 │   ├── integrity_check_v4_turbo.txt
 │   ├── a_vs_T_all_v4_turbo.png
 │   └── logs/                      ← Raw LAMMPS output
 ├── results/                       ← MAIN mode results
-│   ├── results.csv
+│   ├── results.csv / .xlsx
 │   ├── plots/
 │   └── logs/
 ├── potentials/
@@ -361,18 +352,14 @@ FePt-Thermal-Expansion-MD/
 │   ├── PHYSICAL_VALIDATION.md     ← Protocol validation details
 │   └── REPORT.md                  ← MATLAB script status
 ├── bin/
-│   └── lmp.exe                    ← LAMMPS executable (not included in repo)
+│   └── lmp.exe                    ← LAMMPS executable (user-provided)
 ├── run.bat                        ← ★ INTERACTIVE LAUNCHER (recommended entry)
 ├── run_main.bat                   ← Direct MAIN mode launcher
 ├── run_turbo.bat                  ← Direct TURBO mode launcher
 ├── run_demo.bat                   ← Demo launcher
 ├── _run_lmp.bat                   ← LAMMPS wrapper (used by Python scripts)
 ├── bootstrap.bat                  ← Environment setup (Windows)
-├── INSTALL_AND_RUN.txt            ← Quick-start instructions
 ├── README_phase4.md               ← Legacy reference docs
-├── REPORT.txt                     ← Calibration report
-├── physical_validation.txt        ← Physical validation report
-├── fix_parser_and_velocity.patch  ← Patch for log parser
 ├── requirements.txt               ← Python dependencies
 ├── seed.txt                       ← Last used seed
 ├── .gitattributes
