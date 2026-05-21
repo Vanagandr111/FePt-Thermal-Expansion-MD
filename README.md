@@ -2,11 +2,10 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![LAMMPS](https://img.shields.io/badge/LAMMPS-2Aug2023-orange)](https://www.lammps.org/)
-[![MATLAB](https://img.shields.io/badge/MATLAB-R2022b%2B-green)](https://www.mathworks.com/)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 This repository contains the complete pipeline for computing lattice parameters and
-thermal expansion coefficients of face-centred cubic (fcc) Fe–Pt binary alloys using
+thermal expansion coefficients (CTE) of face-centred cubic (fcc) Fe–Pt binary alloys using
 molecular dynamics (MD) simulations with LAMMPS. The project spans **20 independent MD
 simulations** across the full composition range at four temperatures, with a long
 equilibration and production protocol for converged results.
@@ -22,7 +21,7 @@ for each composition.
 - Compute lattice parameter $a(T)$ for pure Pt at the fcc structure.
 - Compute lattice parameter $a(T)$ for Fe–Pt alloys at four Pt concentrations.
 - Determine the composition dependence $a(x_{\mathrm{Pt}})$ at fixed temperatures.
-- Validate the thermal expansion protocol against the Pt reference CTE.
+- Validate the thermal expansion protocol against the Pt reference CTE ($9.5 \times 10^{-6}$ K$^{-1}$).
 - Ensure all results originate from raw MD output, not empirical fitting.
 
 ---
@@ -41,9 +40,10 @@ volume:
 
 $$a = \left(\frac{4 V}{N_{\text{atoms}}}\right)^{1/3}$$
 
-for a cubic fcc cell. Pure Pt is used as a **benchmark system** because its CTE is well
-known from experiment ($9.0 \times 10^{-6}$ K$^{-1}$ at 300 K), allowing us to validate
-the protocol before applying it to Fe–Pt alloys.
+Pure Pt is used as a **benchmark system** because its CTE is well
+known from experiment ($9.5 \times 10^{-6}$ K$^{-1}$, mean over 300–1200 K range from
+Kirby, 1991 / Touloukian, NBS),
+allowing us to validate the protocol before applying it to Fe–Pt alloys.
 
 ---
 
@@ -53,7 +53,6 @@ the protocol before applying it to Fe–Pt alloys.
 
 - **LAMMPS** (2 Aug 2023) — molecular dynamics engine
 - **Python 3.10+** — pipeline orchestration, data analysis, plotting
-- **MATLAB R2022b+** — alternative analysis pipeline (see below)
 
 ### Simulation Protocol
 
@@ -65,7 +64,8 @@ the protocol before applying it to Fe–Pt alloys.
 | Production | 100 000 steps |
 | Thermo output | Every 100 steps → 1002 data points per run |
 | Averaging | Mean over all production thermo lines |
-| Potentials | MEAM (Fe–Pt cross-interaction) for alloy grid; EAM u3 for Pt benchmark |
+| Potential (alloy grid) | **MEAM** (Kim, Koo, Lee, 2006) — `PtFe.meam` |
+| Potential (Pt benchmark) | **EAM u3** (Zhou _et al._) — `Pt_u3.eam` |
 
 ### Compositions and Temperatures
 
@@ -83,7 +83,9 @@ giving **20 independent MD runs**.
 ### Potentials
 
 - **MEAM** (Kim, Koo, Lee, 2006) — used for the full Fe–Pt composition grid. This potential
-  includes Fe–Pt cross-interactions, which are essential for modelling alloy thermal expansion.
+  includes explicit Fe–Pt cross-interactions (`Ec(1,2)=5.86`, `re(1,2)=2.7181`, `alpha(1,2)=5.97`,
+  plus 9 `Cmin/Cmax` pairs for angular screening). It is **not** a linear interpolation of
+  the pure-element EAM potentials.
 - **EAM u3** (Zhou _et al._) — used only as a pure Pt benchmark for protocol validation.
   This potential is **not** used for Fe–Pt alloys.
 
@@ -95,12 +97,12 @@ An earlier short protocol (10 000 eq + 50 000 prod) underestimated the Pt CT
 The **long protocol** (50 000 eq + 100 000 prod) brings the computed CTE much closer to the
 experimental reference.
 
-| Potential | Protocol | CTE (300–1200 K) | Fraction of exp. |
-|-----------|----------|-------------------|------------------|
-| EAM u3 | Short | $4.32 \times 10^{-6}$ K$^{-1}$ | 48% |
-| MEAM | Short | — | ~50% |
-| EAM u3 | Long | $9.12 \times 10^{-6}$ K$^{-1}$ | 101% |
-| MEAM | Long | $7.58 \times 10^{-6}$ K$^{-1}$ | 84% |
+| Potential | Protocol | CTE (300–1200 K) | Fraction of exp. ($9.5 \times 10^{-6}$ K$^{-1}$) |
+|-----------|----------|-------------------|----------------------------------------------|
+| EAM u3 | Short | $4.32 \times 10^{-6}$ K$^{-1}$ | 45% |
+| MEAM | Short | $4.3 \times 10^{-6}$ K$^{-1}$ | ~45% |
+| **EAM u3** | **Long** | **$9.12 \times 10^{-6}$ K$^{-1}$** | **96%** |
+| **MEAM** | **Long** | **$7.58 \times 10^{-6}$ K$^{-1}$** | **80%** |
 
 The Fe–Pt alloy grid uses **MEAM** because Fe–Pt cross-interactions are required. The long
 protocol substantially improves the Pt CTE compared with the short protocol, although MEAM
@@ -108,7 +110,7 @@ may still underestimate the absolute value to some degree.
 
 Full calibration details are available in:
 - [`docs/PHYSICAL_VALIDATION.md`](docs/PHYSICAL_VALIDATION.md)
-- [`output_v3/pt_calibration_summary.txt`](output_v3/pt_calibration_summary.txt)
+- [`physical_validation.txt`](physical_validation.txt)
 
 ---
 
@@ -135,23 +137,20 @@ Full calibration details are available in:
 4. **Error bars** ($a_{\mathrm{std}}$) are consistent across all runs (0.003–0.010 Å),
    confirming converged production trajectories.
 
----
+### Figures
 
-## Figures
+Generated plots are placed alongside the output data (seed number is shown in the title):
 
-All figures are available in the [`figures/`](figures/) directory.
-
-| Figure | Description |
-|--------|-------------|
-| [`figures/a_vs_T_all.png`](figures/a_vs_T_all.png) | Lattice parameter $a(T)$ for all five compositions with error bars |
-| [`figures/a_vs_T_facets.png`](figures/a_vs_T_facets.png) | Individual subplots per composition |
-| [`figures/a_vs_xPt.png`](figures/a_vs_xPt.png) | Isothermal cross-sections $a(x_{\mathrm{Pt}})$ |
-| [`figures/cte_vs_xPt.png`](figures/cte_vs_xPt.png) | CTE vs Pt fraction with annotated values |
-| [`figures/delta_a_percent.png`](figures/delta_a_percent.png) | Relative thermal expansion $\Delta a / a_0$ (%) |
+| Output path | Description |
+|-------------|-------------|
+| `output_v4/a_vs_T_all_v4.png` | Lattice parameter $a(T)$ for all five compositions with error bands |
+| `output_v4/a_vs_T_facets_v4.png` | Individual subplots per composition |
+| `output_v4/a_vs_comp_v4.png` | Isothermal cross-sections $a(x_{\mathrm{Pt}})$ |
+| `output_v4/integrity_check_v4.txt` | Cross-check of CSV vs raw logs |
 
 ---
 
-## How to Run — Python / Windows Pipeline
+## How to Run — Windows Pipeline
 
 ### Requirements
 
@@ -159,35 +158,21 @@ All figures are available in the [`figures/`](figures/) directory.
 - **Python 3.10 or newer**
 - A pre-compiled LAMMPS executable placed in `bin/lmp.exe`
 
-> No WSL is required. The pipeline runs natively on Windows.
+> **No WSL is required.** The pipeline runs natively on Windows.
 >
 > **Active runtime is Windows-only.** WSL is not required and not supported for final runtime.
-> Old development scripts have been moved to `legacy_DO_NOT_RUN/` — do not use for production runs.
+> Legacy WSL scripts have been moved to `legacy_DO_NOT_RUN/` — do not use for production runs.
 
-### Run Modes
-
-The project provides four run modes for different purposes:
-
-| Mode | .bat file | Protocol | Output dir | Purpose |
-|------|-----------|----------|------------|---------|
-| **Demo / Smoke Test** | `run_demo.bat` | 2 points (Pt 300K+600K), `in.thermal` input | `output/` | Quick environment verification — not scientific |
-| **Main / Accurate** | `run_main.bat` | 50k eq + 100k prod, MEAM PdFe.meam, **sequential** | `output_v4/` | **Final validated scientific result**. Clean 20/20 run via `--force` |
-| **Accurate Parallel** | `run_main_parallel.bat` | **Same validated protocol** (50k eq + 100k prod, MEAM), but parallel | `output_v4_parallel/` | Cross-validation — same physics, parallel execution |
-| **Reduced / Approximate** | `run_turbo_plus_main.bat` | 20k eq + 50k prod (reduced), parallel | `output_v4_reduced/` | ⚠️ **NOT for final results.** Faster prototyping only |
-
-**For a final scientific result, always use `run_main.bat`.**
-The parallel and reduced modes are for validation and prototyping only.
-
-### Steps
+### Quick Start
 
 1. **Clone the repository**
 
    ```cmd
-   git clone https://github.com/USERNAME/FePt-Thermal-Expansion-MD.git
+   git clone <repo-url>
    cd FePt-Thermal-Expansion-MD
    ```
 
-2. **Run bootstrap**
+2. **Bootstrap the environment**
 
    Double-click `bootstrap.bat`, or run from Command Prompt:
 
@@ -197,9 +182,8 @@ The parallel and reduced modes are for validation and prototyping only.
 
    This script:
    - Creates a Python virtual environment (`.venv`)
-   - Installs required packages (`numpy`, `matplotlib`, `pandas`)
+   - Installs required packages (`numpy`, `matplotlib`)
    - Checks that `bin/lmp.exe` exists
-   - Runs a quick demo to verify the environment
 
 3. **Run the demo**
 
@@ -207,100 +191,67 @@ The parallel and reduced modes are for validation and prototyping only.
    run_demo.bat
    ```
 
-   This runs a single MD simulation for pure Fe at 300 K and produces a quick plot.
-   **This is not a scientific result.**
+   Runs 2 MD simulations (pure Pt at 300 K and 600 K). Quick environment verification.
 
-4. **Run the full Phase 4 calculation (final result)**
-
-   ```cmd
-   run_main.bat
-   ```
-
-   This executes all 20 MD simulations with the full validated protocol (50k eq + 100k prod).
-   The run is forced clean (`--force`), ignoring any cached results.
-   May take several hours depending on hardware.
-
-5. **Run the accurate parallel mode (cross-validation)**
+4. **Run the full calculation**
 
    ```cmd
-   run_main_parallel.bat
+   run.bat
    ```
 
-   Same protocol as `run_main.bat`, but runs points in parallel.
-   Output goes to `output_v4_parallel/` — separate from the final run.
-   Useful for faster iteration or cross-validation.
+   Interactive menu with 4 modes. See below for details.
 
-6. **Run the reduced mode (prototyping only)**
+### Run Modes
 
-   ```cmd
-   run_turbo_plus_main.bat
-   ```
+The project provides four calculation modes. The easiest way is to use `run.bat`
+which presents an interactive menu for seed, resume/force, and mode selection.
 
-   20k eq + 50k prod. ⚠️ **Not a final scientific result.**
-   Output goes to `output_v4_reduced/` — separate from both main and parallel outputs.
+| Mode | `.bat` file | Script | Protocol | Output dir | Purpose |
+|------|------------|--------|----------|------------|---------|
+| **M** MAIN | `run_main.bat` | `run_main.py` | 50k eq + 100k prod, **sequential** | `results/` | Single clean run with separate output |
+| **T** TURBO | `run_turbo.bat` | `run_phase4_turbo.py --turbo` | 50k eq + 100k prod, **parallel** | `output_v4_parallel/` | High-accuracy parallel (cross-validation) |
+| **P** TURBO-PLUS | `run_turbo.bat` | `run_phase4_turbo.py --turbo-plus` | 20k eq + 50k prod, **parallel** | `output_v4_parallel/` | Fast prototyping (⚠️ NOT final) |
+| **L** LONG | `run.bat [L]` | `run_phase4.py` | 50k eq + 100k prod, **sequential** | `output_v4/` | Full validated protocol (main result) |
+
+**For the final scientific result in `output_v4/`, select mode `L` (Long).**
+
+All modes support `--seed`, `--resume`, and `--force` flags. The interactive `run.bat`
+handles seed configuration (auto / manual / re-use) and asks whether to resume or
+recalculate when existing log files are found.
+
+#### Direct script invocation
+
+```cmd
+REM MAIN mode (results/)
+python scripts\run_main.py [--seed N | --reuse-seed] [--resume | --force]
+
+REM LONG mode (output_v4/)
+python scripts\run_phase4.py [--seed N | --reuse-seed] [--resume | --force]
+
+REM TURBO mode (output_v4_parallel/)
+python scripts\run_phase4_turbo.py [--turbo | --turbo-plus] [--seed N | --reuse-seed] [--resume | --force]
+```
+
+### Seed Management
+
+- **Auto (default):** a new random seed is generated for each run
+- **Manual (`--seed 12345`):** specify a particular seed for reproducibility
+- **Re-use (`--reuse-seed` or `--seed` without value):** uses the last seed from `seed.txt`
+- On **resume (`--resume`)**, the seed from existing output is automatically re-used
+- On **fresh run (`--force`)**, old logs and PNGs are deleted before starting
+
+All output files include the seed number in their titles and metadata.
 
 ### Output Files
 
-| Path | Description |
-|------|-------------|
-| `output_v4/all_results.csv` | Master table of all 20 runs |
-| `output_v4/integrity_check_v4.txt` | Cross-check of CSV vs raw logs |
-| `figures/*.png` | Publication-quality PNG figures |
+| Script mode | Output directory | Key files |
+|-------------|-----------------|-----------|
+| MAIN (`run_main.py`) | `results/` | `results.csv`, `plots/a_vs_T.png`, `plots/a_vs_comp.png`, `plots/a_vs_T_facets.png` |
+| LONG (`run_phase4.py`) | `output_v4/` | `all_results.csv`, `integrity_check_v4.txt`, `a_vs_T_all_v4.png`, `a_vs_comp_v4.png`, `a_vs_T_facets_v4.png` |
+| TURBO (`run_phase4_turbo.py`) | `output_v4_parallel/` | `all_results_v4_turbo.csv`, `integrity_check_v4_turbo.txt`, `a_vs_T_all_v4_turbo.png`, `a_vs_comp_v4_turbo.png`, `a_vs_T_facets_v4_turbo.png` |
 
----
-
-## How to Run — MATLAB Analysis
-
-**Status:** ⚠️ Prepared — runtime test pending
-
-The MATLAB script `scripts/phase4_analysis.m` was written and logically verified but
-**not executed** on the development machine (MATLAB was not installed). It should be
-run on a target machine with MATLAB available.
-
-### Steps
-
-1. Clone the repository:
-
-   ```cmd
-   git clone https://github.com/USERNAME/FePt-Thermal-Expansion-MD.git
-   cd FePt-Thermal-Expansion-MD
-   ```
-
-2. Open **MATLAB R2022b or newer** on Windows.
-
-3. Set the **Current Folder** to the project root:
-
-   ```matlab
-   >> cd('C:\path\to\FePt-Thermal-Expansion-MD')
-   ```
-
-4. Run the analysis:
-
-   ```matlab
-   >> scripts\phase4_analysis
-   ```
-
-   or in MATLAB:
-
-   ```matlab
-   >> run('scripts/phase4_analysis.m')
-   ```
-
-### MATLAB Output
-
-The script reads `output_v4/all_results.csv` and creates:
-
-| File | Description |
-|------|-------------|
-| `output_v4/a_vs_T_all.png` | a(T) for all compositions with error bars |
-| `output_v4/a_vs_T_facets.png` | Faceted subplots |
-| `output_v4/a_vs_xPt.png` | Isothermal cross-sections |
-| `output_v4/cte_vs_xPt.png` | CTE vs Pt fraction |
-| `output_v4/delta_a_percent.png` | Relative thermal expansion |
-| `output_v4/phase4_summary.csv` | Summary table |
-
-> If MATLAB is not available, equivalent Python-generated figures are already available
-> in [`figures/`](figures/).
+Raw LAMMPS log files are in `*/logs/`. A `seed_info.txt` in the output directory
+records the seed and its source.
 
 ---
 
@@ -310,13 +261,16 @@ The script reads `output_v4/all_results.csv` and creates:
   LAMMPS thermo output. No manual fitting, scaling, or interpolation is applied.
 - **Integrity check:** An automated cross-check verifies that every row in the CSV
   corresponds to a valid, completed LAMMPS log file. See
-  [`output_v4/integrity_check_v4.txt`](output_v4/integrity_check_v4.txt).
+  `output_v4/integrity_check_v4.txt` or `output_v4_parallel/integrity_check_v4_turbo.txt`.
+- **Seed tracking:** Every run records its seed. Re-running with `--reuse-seed` gives
+  bit-identical results.
 - **No Vegard-law fitting:** The composition dependence $a(x_{\mathrm{Pt}})$ is computed
   directly from MD trajectories, not from an empirical mixing rule.
 - **Reference CTE:** The experimental Pt CTE is used only for validation — it does not
   enter the MD simulation or the data analysis pipeline.
 - **Structures regenerated per run:** Each simulation starts from a freshly generated
-  supercell (fixed seed 42) to avoid metastable traps from restarted data files.
+  supercell (fixed seed 42 for structure generation) to avoid metastable traps from
+  restarted data files.
 
 ---
 
@@ -335,13 +289,15 @@ The script reads `output_v4/all_results.csv` and creates:
 5. **Finite MD time** — Although the long protocol significantly improves convergence,
    the 100 000-step production run may not fully sample all anharmonic degrees of freedom
    at high temperatures.
+6. **Single seed** — All runs currently use one seed per composition. Multiple independent
+   seeds with ensemble averaging would reduce statistical noise.
 
 ---
 
 ## Future Work
 
 - Larger supercells ($8 \times 8 \times 8$ or larger) for reduced finite-size effects.
-- Multiple random seeds per composition to assess statistical uncertainty.
+- Multiple random seeds per composition for ensemble averaging.
 - Nanoparticle and slab geometries for surface-related thermal expansion.
 - Comparison with density functional theory (DFT) quasi-harmonic calculations.
 - Alternative interatomic potentials (EAM, ML-IAP, second-nearest-neighbour MEAM).
@@ -354,46 +310,73 @@ The script reads `output_v4/all_results.csv` and creates:
 ```
 FePt-Thermal-Expansion-MD/
 ├── scripts/
-│   ├── phase4_analysis.m          ← MATLAB analysis script
-│   ├── run_phase4.py              ← Phase 4 long-protocol runner (from run_main.bat)
+│   ├── run_phase4.py              ← Long protocol (sequential, output_v4/)
+│   ├── run_phase4_turbo.py        ← Turbo protocol (parallel, output_v4_parallel/)
+│   ├── run_main.py                ← MAIN protocol (sequential, results/)
 │   ├── lmp_helper.py              ← LAMMPS path detection and launcher
+│   ├── seed_manager.py            ← Seed generation and persistence
+│   ├── gen_structure.py           ← Supercell generator (fcc Fe-Pt)
+│   ├── rebuild_phase4.py          ← Rebuild results from raw logs
+│   ├── parse_all_logs.py          ← Bulk log parser
+│   ├── integrity_build.py         ← Integrity check builder
+│   ├── build_calibration_table.py ← Calibration table generator
 │   ├── check_no_wsl_refs.py       ← WSL dependency guard
-│   └── ...                        ← Additional analysis and utility scripts
+│   ├── check_shebangs.py          ← Script consistency checker
+│   ├── demo_report.py             ← Demo result reporter
+│   ├── phase4_analysis.m          ← MATLAB analysis script (experimental)
+│   ├── in.thermal                 ← Demo LAMMPS input template
+│   └── in.thermal_expansion       ← Production LAMMPS input template
 ├── legacy_DO_NOT_RUN/             ← Legacy development scripts (DO NOT RUN)
-│   ├── README_DO_NOT_RUN.md       ← Legacy isolation notice
-│   ├── run_all_short_protocol.py  ← Old short-protocol pipeline (Phase 2/3)
+│   ├── README_DO_NOT_RUN.md
+│   ├── run_all_short_protocol.py  ← Old short-protocol pipeline
 │   └── wsl_old/                   ← WSL-only scripts (reference only)
-├── figures/
-│   ├── a_vs_T_all.png
-│   ├── a_vs_T_facets.png
-│   ├── a_vs_xPt.png
-│   ├── cte_vs_xPt.png
-│   └── delta_a_percent.png
-├── docs/
-│   ├── REPORT.md                  ← MATLAB script status
-│   └── PHYSICAL_VALIDATION.md     ← Protocol validation details
-├── output_v4/
-│   ├── all_results.csv            ← Phase 4 master data
-│   ├── integrity_check_v4.txt     ← Integrity verification
+├── data/
+│   ├── *.lmp                      ← Generated supercell data files
+│   └── data.fept_demo.lmp         ← Demo supercell
+├── output_v4/                     ← Phase 4 Long results
+│   ├── all_results.csv
+│   ├── integrity_check_v4.txt
+│   ├── a_vs_T_all_v4.png
+│   ├── a_vs_comp_v4.png
+│   ├── a_vs_T_facets_v4.png
 │   └── logs/                      ← Raw LAMMPS output
-├── output_v3/                     ← Pt calibration (Phase 3)
-├── output_v2/                     ← Short protocol (Phase 2, replaced)
+├── output_v4_parallel/            ← Phase 4 Turbo results
+│   ├── all_results_v4_turbo.csv
+│   ├── integrity_check_v4_turbo.txt
+│   ├── a_vs_T_all_v4_turbo.png
+│   └── logs/                      ← Raw LAMMPS output
+├── results/                       ← MAIN mode results
+│   ├── results.csv
+│   ├── plots/
+│   └── logs/
 ├── potentials/
 │   ├── PtFe.meam                  ← MEAM alloy potential
-│   ├── Fe_Zhou.eam.alloy          ← Fe EAM
-│   ├── Pt_Zhou.eam.alloy          ← Pt EAM
+│   ├── library.meam               ← MEAM library file
+│   ├── Fe_Zhou.eam.alloy          ← Fe EAM (Zhou _et al._)
+│   ├── Pt_Zhou.eam.alloy          ← Pt EAM (Zhou _et al._)
 │   ├── Pt_u3.eam                  ← Pt EAM benchmark
-│   └── library.meam               ← MEAM library file
+│   ├── Fe_mm.eam.fs               ← Fe EAM (Mendelev, 2007)
+│   └── ...                        ← Additional EAM variants
+├── docs/
+│   ├── PHYSICAL_VALIDATION.md     ← Protocol validation details
+│   └── REPORT.md                  ← MATLAB script status
+├── bin/
+│   └── lmp.exe                    ← LAMMPS executable (not included in repo)
+├── run.bat                        ← ★ INTERACTIVE LAUNCHER (recommended entry)
+├── run_main.bat                   ← Direct MAIN mode launcher
+├── run_turbo.bat                  ← Direct TURBO mode launcher
+├── run_demo.bat                   ← Demo launcher
+├── _run_lmp.bat                   ← LAMMPS wrapper (used by Python scripts)
 ├── bootstrap.bat                  ← Environment setup (Windows)
-├── run_demo.bat                   ← Quick smoke test (NOT scientific)
-├── run_main.bat                   ← Full Phase 4 accurate (sequential, final result)
-├── run_main_parallel.bat          ← Full Phase 4 accurate parallel (cross-validation)
-├── run_turbo_main.bat             ← Alias for run_main_parallel.bat
-├── run_turbo_plus_main.bat        ← ⚠️  Reduced protocol (NOT for final results)
-├── requirements.txt               ← Python dependencies
 ├── INSTALL_AND_RUN.txt            ← Quick-start instructions
-├── README_phase4.md               ← MATLAB-specific documentation
-└── README.md                      ← This file
+├── README_phase4.md               ← Legacy reference docs
+├── REPORT.txt                     ← Calibration report
+├── physical_validation.txt        ← Physical validation report
+├── fix_parser_and_velocity.patch  ← Patch for log parser
+├── requirements.txt               ← Python dependencies
+├── seed.txt                       ← Last used seed
+├── .gitattributes
+└── .gitignore
 ```
 
 ---

@@ -1,7 +1,8 @@
+#!/usr/bin/env python
 """
-Fe-Pt MD Thermal Expansion — single calculation engine.
+run_main.py -- Fe-Pt MD Thermal Expansion single calculation engine.
 Output: results/  (one folder, full 1002-point production logs)
-Protocol: 50k equilibration + 100k production, Pdamp=10
+Protocol: 50k equilibration + 100k production, Tdamp=1.0, Pdamp=10.0
 Potential: MEAM PtFe.meam
 Grid: 5 compositions x 4 temperatures = 20 points
 Windows-only. No WSL. No hardcoded Linux paths.
@@ -10,402 +11,121 @@ Usage:
     python scripts/run_main.py                       # auto seed
     python scripts/run_main.py --seed 12345           # manual seed
     python scripts/run_main.py --seed                 # re-use last seed
+
+# module-purpose: Main sequential MD runner (results/ output dir)
+# entry-points: main()
+# main-flows:
+#   1. resolve seed -> generate structures -> run 20 points -> parse -> report
+#   2. write CSV + CTE report + plots to results/
+# related-modules: lmp_helper, seed_manager
 """
+import os
+import sys
+import time
+import math
 
-import sys, os, time, csv, math, re, shutil, subprocess
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# ── Project root ──
 _THIS = os.path.dirname(os.path.abspath(__file__))
 _PROJ = os.path.dirname(_THIS)
 
-# ── Parameters ──
+if _THIS not in sys.path:
+    sys.path.insert(0, _THIS)
+
+import lmp_helper as lmp
+import seed_manager as seed_mgr
+
+# -- Parameters --
+# intent: MD simulation parameters for the main sequential runner
+# sidefx: none
+# purity: pure
 COMP = [0.0, 0.25, 0.5, 0.75, 1.0]
 TEMPS = [300, 600, 900, 1200]
 NATOMS = 256
 EQ = 50000
 PROD = 100000
+TDAMP = 1.0
 PDAMP = 10.0
 
 OUT = os.path.join(_PROJ, 'results')
 LOGS = os.path.join(OUT, 'logs')
 PLOTS = os.path.join(OUT, 'plots')
 INS = os.path.join(OUT, 'input')
-
-POT_LINE = r"pair_coeff      * * potentials\library.meam Fe Pt potentials\PtFe.meam Fe Pt"
-LMP_BAT = os.path.join(_PROJ, '_run_lmp.bat')
+POT_LINE = "pair_coeff      * * potentials\\library.meam Fe Pt potentials\\PtFe.meam Fe Pt"
 
 os.makedirs(LOGS, exist_ok=True)
 os.makedirs(PLOTS, exist_ok=True)
 os.makedirs(INS, exist_ok=True)
 
-# ── Seed management ──
-sys.path.insert(0, _THIS)
-import seed_manager as seed_mgr
-
-# Parse --seed
+# -- Seed management --
 SEED_ARG = None
 for i, arg in enumerate(sys.argv):
-    if arg == '--seed' and i + 1 < len(sys.argv):
+    if arg == '--seed':
+        if i + 1 >= len(sys.argv):
+            SEED_ARG = -1
+            break
         try:
             SEED_ARG = int(sys.argv[i + 1])
         except ValueError:
-            # --seed without value = re-use
             SEED_ARG = -1
         break
+REUSE_SEED = '--reuse-seed' in sys.argv
+RESUME = '--resume' in sys.argv
 
-SEED, SEED_SOURCE = seed_mgr.get_or_create_seed(_PROJ, OUT, manual_seed=SEED_ARG)
-# Write seed info
+SEED, SEED_SOURCE = seed_mgr.get_or_create_seed(
+    _PROJ, OUT,
+    manual_seed=SEED_ARG if SEED_ARG not in (None, -1) else None,
+    reuse_last=REUSE_SEED or SEED_ARG == -1,
+    resume=RESUME,
+)
 seed_mgr.write_seed_info(OUT, SEED, "main", SEED_SOURCE)
 
-# ── Helpers ──
-
-def find_lmp():
-    """Find lmp.exe: bundled first, then PATH."""
-    bundled = os.path.join(_PROJ, 'bin', 'lmp.exe')
-    if os.path.isfile(bundled):
-        return bundled
-    for name in ('lmp.exe', 'lmp'):
-        p = shutil.which(name)
-        if p:
-            return p
-    return None
-
-
-def gen_structure(comp):
-    """Generate LAMMPS data file. Skip if exists."""
-    data = os.path.join(_PROJ, 'data', 'data.fept_c{:.2f}.lmp'.format(comp))
-    if os.path.exists(data):
-        return data
-    gen = os.path.join(_PROJ, 'scripts', 'gen_structure.py')
-    subprocess.run([sys.executable, gen, '4', '4', '4', str(comp), data],
-                   capture_output=True, timeout=30)
-    return data
-
-
-def write_input(datafile, comp, T):
-    """Write LAMMPS input for one (comp, T) point."""
-    fname = 'in_phase4_{:.2f}_{}.lmp'.format(comp, T)
-    infile = os.path.join(INS, fname)
-    lines = [
-        '# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}'.format(T, comp, SEED),
-        'units           metal',
-        'boundary        p p p',
-        'atom_style      atomic',
-        '',
-        'read_data       ' + datafile,
-        '',
-        'pair_style      meam',
-        POT_LINE,
-        '',
-        'neighbor        2.0 bin',
-        'neigh_modify    every 1 delay 0 check yes',
-        '',
-        'thermo          100',
-        'thermo_style    custom step temp pe ke press vol lx ly lz',
-        '',
-        'minimize        1.0e-6 1.0e-8 1000 10000',
-        'print           "MINIMIZATION_DONE"',
-        '',
-        'velocity        all create {} {}'.format(T, SEED),
-        '',
-        'fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}'.format(T, T, PDAMP, PDAMP),
-        '',
-        'thermo          1000',
-        'print           "EQ_START"',
-        'run             {}'.format(EQ),
-        'print           "EQ_DONE"',
-        '',
-        'thermo          100',
-        'print           "PRODUCTION_START"',
-        'run             {}'.format(PROD),
-        'print           "PRODUCTION_DONE"',
-        '',
-        'variable myvol  equal vol',
-        'variable mya    equal (4.0*vol/count(all))^(1.0/3.0)',
-        'print           "RESULT: COMP={:.2f} T={} A=${{mya}} VOL=${{myvol}}"'.format(comp, T),
-        'print           "DONE"',
-    ]
-    with open(infile, 'w', newline='\n') as f:
-        f.write('\n'.join(lines) + '\n')
-    return infile
-
-
-def run_lammps(infile, logfile, timeout=900):
-    """Run LAMMPS via _run_lmp.bat. Returns dict with stdout/stderr/log."""
-    result = {'ok': False, 'stdout': '', 'stderr': '', 'log': logfile}
-    lmp = find_lmp()
-    if not lmp:
-        print('    ERROR: lmp.exe not found')
-        return result
-    # Run via cmd.exe /c with _run_lmp.bat
-    infile_rel = os.path.relpath(infile, _PROJ)
-    log_rel = os.path.relpath(logfile, _PROJ)
-    cmd = [LMP_BAT, '-in', infile_rel, '-log', log_rel]
-    shell = subprocess.list2cmdline(cmd)
-    try:
-        proc = subprocess.Popen(
-            ['cmd.exe', '/c', shell],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=_PROJ
-        )
-        try:
-            so, se = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            so, se = proc.communicate(timeout=5)
-            result['timeout'] = True
-        result['ok'] = proc.returncode == 0 and not result.get('timeout', False)
-        result['stdout'] = so.decode('cp1251', errors='replace') if so else ''
-        result['stderr'] = se.decode('cp1251', errors='replace') if se else ''
-        result['exit_code'] = proc.returncode
-    except Exception as e:
-        result['stderr'] = str(e)
-    return result
-
-
-def parse_log(logpath):
-    """Parse production thermo from a LAMMPS log file.
-    Returns dict with a_mean, a_std, n_points, drift, etc.
-    """
-    if not os.path.exists(logpath) or os.path.getsize(logpath) < 100:
-        return {'n_points': 0}
-
-    with open(logpath, 'r', encoding='utf-8', errors='replace') as f:
-        text = f.read()
-
-    result_a = None
-    for line in text.split('\n'):
-        if 'RESULT:' in line and 'A=' in line:
-            m = re.search(r'A=([\d.]+)', line)
-            if m:
-                result_a = float(m.group(1))
-
-    in_prod = False
-    a_vals = []
-    vol_vals = []
-    press_vals = []
-    temp_vals = []
-
-    for line in text.split('\n'):
-        s = line.strip()
-        if 'PRODUCTION_START' in s:
-            in_prod = True
-            continue
-        if 'PRODUCTION_DONE' in s:
-            in_prod = False
-            break
-        if in_prod and s and s[0].isdigit():
-            parts = s.split()
-            if len(parts) >= 9:
-                try:
-                    temp = float(parts[1])
-                    press = float(parts[4])
-                    vol = float(parts[5])
-                    a = (vol * 4 / NATOMS) ** (1 / 3)
-                    a_vals.append(a)
-                    vol_vals.append(vol)
-                    press_vals.append(press)
-                    temp_vals.append(temp)
-                except Exception:
-                    pass
-
-    if not a_vals:
-        # Fallback: between EQ_DONE and RESULT
-        in_prod = False
-        for line in text.split('\n'):
-            s = line.strip()
-            if 'EQ_DONE' in s:
-                in_prod = True
-                continue
-            if 'RESULT:' in s:
-                break
-            if in_prod and s and s[0].isdigit():
-                parts = s.split()
-                if len(parts) >= 9:
-                    try:
-                        vol = float(parts[5])
-                        a = (vol * 4 / NATOMS) ** (1 / 3)
-                        a_vals.append(a)
-                    except Exception:
-                        pass
-
-    if not a_vals:
-        return {'n_points': 0, 'result_a': result_a}
-
-    n = len(a_vals)
-    mean_a = sum(a_vals) / n
-    std_a = math.sqrt(sum((x - mean_a) ** 2 for x in a_vals) / max(n - 1, 1))
-    mean_vol = sum(vol_vals) / n if vol_vals else 0
-    mean_press = sum(press_vals) / n if press_vals else None
-    std_press = math.sqrt(sum((p - mean_press) ** 2 for p in press_vals) / max(len(press_vals) - 1, 1)) if press_vals else None
-    half = n // 2
-    drift = (sum(a_vals[half:]) / max(n - half, 1) -
-             sum(a_vals[:half]) / max(half, 1))
-    mean_temp = sum(temp_vals) / n if temp_vals else None
-
-    return {
-        'a_mean': mean_a,
-        'a_std': std_a,
-        'drift': drift,
-        'n_points': n,
-        'result_a': result_a,
-        'mean_vol': mean_vol,
-        'mean_press': mean_press,
-        'std_press': std_press,
-        'mean_temp': mean_temp,
-    }
-
-
-def write_csv(data):
-    """Write results.csv and per-composition CSVs."""
-    csv_path = os.path.join(OUT, 'results.csv')
-    with open(csv_path, 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['x_Pt', 'T_K', 'a_Angstrom', 'a_std_Angstrom',
-                     'n_points', 'drift', 'p_bar', 'p_std_bar', 'seed'])
-        for comp in COMP:
-            for T in TEMPS:
-                p = data.get((comp, T), {})
-                if p and p.get('a_mean') is not None:
-                    w.writerow([
-                        '{:.2f}'.format(comp), T,
-                        '{:.6f}'.format(p['a_mean']),
-                        '{:.6f}'.format(p.get('a_std', 0)),
-                        p.get('n_points', 0),
-                        '{:.2e}'.format(p.get('drift', 0)),
-                        '{:.1f}'.format(p.get('mean_press', 0) or 0),
-                        '{:.1f}'.format(p.get('std_press', 0) or 0),
-                        SEED,
-                    ])
-    print('  CSV: ' + csv_path)
-
-    # Per-composition
-    for comp in COMP:
-        path = os.path.join(OUT, 'results_{:.2f}.csv'.format(comp))
-        with open(path, 'w', newline='') as f:
-            w = csv.writer(f)
-            w.writerow(['x_Pt', 'T_K', 'a_Angstrom', 'seed'])
-            for T in TEMPS:
-                p = data.get((comp, T), {})
-                if p and p.get('a_mean') is not None:
-                    w.writerow(['{:.2f}'.format(comp), T,
-                                '{:.6f}'.format(p['a_mean']), SEED])
-    print('  Per-composition CSVs OK')
-
-
-def make_plots(data):
-    """Generate a(T), a(comp), facets plots."""
-    try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-    except ImportError:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', 'matplotlib', '-q'],
-                       timeout=60)
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
-
-    # 1. a(T) all comps
-    fig, ax = plt.subplots(figsize=(10, 7))
-    for ci, comp in enumerate(COMP):
-        pts = [(T, data[(comp, T)]) for T in TEMPS
-               if (comp, T) in data and data[(comp, T)].get('a_mean') is not None]
-        if pts:
-            pts.sort()
-            ts, vs = [p[0] for p in pts], [p[1] for p in pts]
-            avs = [v['a_mean'] for v in vs]
-            errs = [v.get('a_std', 0) for v in vs]
-            ax.plot(ts, avs, 'o-', color=colors[ci],
-                    label='x_Pt={:.2f}'.format(comp), markersize=7, linewidth=2)
-            ax.fill_between(ts, [a - s for a, s in zip(avs, errs)],
-                            [a + s for a, s in zip(avs, errs)],
-                            alpha=0.15, color=colors[ci])
-    ax.set_xlabel('Temperature (K)')
-    ax.set_ylabel('Lattice parameter a (Angstrom)')
-    ax.set_title('Fe-Pt Thermal Expansion (seed={})'.format(SEED))
-    ax.legend(fontsize=10)
-    ax.grid(alpha=0.3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(PLOTS, 'a_vs_T.png'), dpi=150)
-    plt.close(fig)
-    print('  Plot: a_vs_T.png')
-
-    # 2. a(comp) at fixed T
-    fig, ax = plt.subplots(figsize=(10, 7))
-    for T in TEMPS:
-        pts = [(comp, data[(comp, T)]['a_mean'])
-               for comp in COMP
-               if (comp, T) in data and data[(comp, T)].get('a_mean') is not None]
-        if pts:
-            pts.sort()
-            ax.plot([p[0] for p in pts], [p[1] for p in pts],
-                    'o-', label='T={}K'.format(T), markersize=8, linewidth=2)
-    ax.set_xlabel('Pt fraction x_Pt')
-    ax.set_ylabel('Lattice parameter a (Angstrom)')
-    ax.set_title('Fe-Pt a(comp) at fixed temperatures (seed={})'.format(SEED))
-    ax.legend(fontsize=10)
-    ax.grid(alpha=0.3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(PLOTS, 'a_vs_comp.png'), dpi=150)
-    plt.close(fig)
-    print('  Plot: a_vs_comp.png')
-
-    # 3. Facets 2x3
-    fig, axes = plt.subplots(2, 3, figsize=(14, 9))
-    fig.suptitle('Fe-Pt Thermal Expansion (seed={})'.format(SEED), fontsize=14, fontweight='bold')
-    for ci, comp in enumerate(COMP):
-        ax = axes.flatten()[ci]
-        pts = [(T, data[(comp, T)]) for T in TEMPS
-               if (comp, T) in data and data[(comp, T)].get('a_mean') is not None]
-        if pts:
-            pts.sort()
-            ts = [p[0] for p in pts]
-            vs = [p[1] for p in pts]
-            avs = [v['a_mean'] for v in vs]
-            errs = [v.get('a_std', 0) for v in vs]
-            ax.errorbar(ts, avs, yerr=errs, fmt='o-', color=colors[ci],
-                        capsize=4, markersize=6)
-            rise = avs[-1] - avs[0]
-            alpha = rise / avs[0] / 900
-            ax.set_title('x_Pt={:.2f}\nDa={:.4f}A a={:.2e}'.format(comp, rise, alpha),
-                         fontsize=10)
-            ax.set_xlabel('T (K)')
-            ax.set_ylabel('a (Angstrom)')
-            ax.grid(alpha=0.3)
-    for i in range(len(COMP), 6):
-        axes.flatten()[i].set_visible(False)
-    plt.tight_layout()
-    fig.savefig(os.path.join(PLOTS, 'a_vs_T_facets.png'), dpi=150)
-    plt.close(fig)
-    print('  Plot: a_vs_T_facets.png')
-
-
-# ── Main ──
 
 def main():
+    """
+    # intent: Orchestrate 20-point sequential MD run with CSV + plots output
+    # allies: lmp.*, seed_mgr.*
+    # sidefx: io (writes results/ with logs, CSVs, plots)
+    # purity: impure
+    # errors: returns 0 on success, 1 on LAMMPS not found
+    """
     print('=' * 60)
     print('  Fe-Pt MD Thermal Expansion')
-    print('  Protocol: {} eq + {} prod, Pdamp={}'.format(EQ, PROD, PDAMP))
+    print('  Protocol: {} eq + {} prod, Tdamp={}, Pdamp={}'.format(EQ, PROD, TDAMP, PDAMP))
     print('  Seed: {} ({})'.format(SEED, SEED_SOURCE))
     print('  Grid: {} comps x {} temps = {} points'.format(
         len(COMP), len(TEMPS), len(COMP) * len(TEMPS)))
     print('  Output: ' + OUT)
-    lmp = find_lmp()
-    print('  LAMMPS: ' + (lmp or 'NOT FOUND'))
+    lmp_path = lmp.find_lmp_display()
+    print('  LAMMPS: ' + (lmp_path or 'NOT FOUND'))
     print('=' * 60)
 
-    if not lmp:
+    if not lmp.find_lmp():
         print('\nERROR: lmp.exe not found in bin/ or PATH')
         return 1
+
+    # Cleanup old files if not resuming
+    if not RESUME:
+        for f in os.listdir(LOGS):
+            if f.endswith('.lmp'):
+                os.remove(os.path.join(LOGS, f))
+        for f in os.listdir(PLOTS):
+            if f.endswith('.png'):
+                os.remove(os.path.join(PLOTS, f))
+        print('  Cleaned old logs and PNGs')
 
     # Generate structures
     print('\nGenerating structures...')
     for comp in COMP:
-        gen_structure(comp)
+        lmp.gen_structure(comp)
     print('  Structures OK')
+
+    # Protocol log
+    lmp.write_protocol_log(OUT, 'run_main.py', EQ, PROD, TDAMP, PDAMP,
+                           COMP, TEMPS, SEED, proto_name='run_protocol.txt')
 
     # Run all 20 points sequentially
     results = {}
@@ -414,32 +134,31 @@ def main():
         for T in TEMPS:
             label = '[{}/20] x_Pt={:.2f} T={}K'.format(i * 4 + TEMPS.index(T) + 1, comp, T)
             print('\n  ' + label)
-            datafile = os.path.join(_PROJ, 'data',
-                                    'data.fept_c{:.2f}.lmp'.format(comp))
+            datafile = os.path.join(lmp.DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
             logfile = os.path.join(LOGS, 'log_{:.2f}_{}.lmp'.format(comp, T))
-            infile = write_input(datafile, comp, T)
+            infile = lmp.write_input(datafile, comp, T, OUT, POT_LINE,
+                                      EQ, PROD, TDAMP, PDAMP, SEED)
 
             t0 = time.time()
-            r = run_lammps(infile, logfile)
+            r = lmp.run_lmp(infile, logfile=logfile)
             dt = time.time() - t0
 
-            p = parse_log(logfile)
+            p = lmp.parse_production(logfile, NATOMS)
             if p and p.get('a_mean') is not None:
-                print('    a={:.6f} n={} t={:.0f}s'.format(
-                    p['a_mean'], p['n_points'], dt))
+                print('    a={:.6f} n={} t={:.0f}s'.format(p['a_mean'], p['n_points'], dt))
             elif p and p.get('result_a'):
-                print('    result_a={:.6f} (no prod thermo) t={:.0f}s'.format(
-                    p['result_a'], dt))
+                print('    result_a={:.6f} (no prod thermo) t={:.0f}s'.format(p['result_a'], dt))
             else:
                 print('    FAILED t={:.0f}s'.format(dt))
-                print('    stderr: ' + (r.get('stderr', '')[:200] if not r.get('ok') else ''))
+                if not r.get('ok') and r.get('stderr'):
+                    print('    stderr: ' + r['stderr'][:200])
             p['runtime'] = dt
             results[(comp, T)] = p
 
     total = time.time() - total_start
     print('\n\nTotal time: {:.1f} min'.format(total / 60))
 
-    # Print results table
+    # Results table
     print('\n' + '=' * 95)
     print('  RESULTS (seed={})'.format(SEED))
     print('=' * 95)
@@ -458,18 +177,10 @@ def main():
                 print('{:>6.2f} {:>5} {:>11}'.format(comp, T, 'NO DATA'))
 
     # Trends
-    print('\n  --- a(T) Trends (seed={}) ---'.format(SEED))
-    for comp in COMP:
-        vals = [(T, results[(comp, T)]['a_mean'])
-                for T in TEMPS if (comp, T) in results and results[(comp, T)].get('a_mean')]
-        if len(vals) == 4:
-            av = [v[1] for v in vals]
-            rise = av[3] - av[0]
-            alpha = rise / av[0] / 900
-            mono = all(av[i+1] >= av[i] for i in range(3))
-            status = 'OK' if mono else 'non-monotonic'
-            print('  x_Pt={:.2f}: a300={:.6f} a1200={:.6f} Da={:.6f}A  a={:.3e}  {}'.format(
-                comp, av[0], av[3], rise, alpha, status))
+    lmp.print_trends(results, COMP, TEMPS, SEED)
+
+    # CSV
+    lmp.write_csv(results, COMP, TEMPS, OUT, SEED)
 
     # Pt benchmark
     pt300 = results.get((1.0, 300), {})
@@ -481,12 +192,12 @@ def main():
         print('  a(1200K) = {:.6f} (expected ~3.956)'.format(pt1200['a_mean']))
         print('  a_Pt = {:.3e} (expected ~7.5e-6)'.format(alpha_pt))
 
-    # CSV
-    write_csv(results)
+    # CTE report CSV -- using lmp helper
+    lmp.write_cte_csv(results, COMP, TEMPS, OUT)
 
-    # Plots
+    # Plots (via shared make_plots)
     try:
-        make_plots(results)
+        lmp.make_plots(results, COMP, TEMPS, SEED, PLOTS)
     except Exception as e:
         print('  Plot error: ' + str(e))
 
@@ -495,14 +206,12 @@ def main():
     fail = 20 - ok
     print('\n' + '=' * 60)
     if fail == 0:
-        print('  COMPLETE — All {} points verified (seed={})'.format(ok, SEED))
+        print('  COMPLETE -- All {} points verified (seed={})'.format(ok, SEED))
     else:
         print('  {} OK, {} FAILURES (seed={})'.format(ok, fail, SEED))
     print('  Output: ' + OUT)
     print('  Seed info: seed_info.txt')
     print('=' * 60)
-
-    return 0 if fail == 0 else 1
 
 
 if __name__ == '__main__':

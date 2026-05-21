@@ -48,115 +48,102 @@ if %errorlevel% equ 0 (
     )
 )
 
-echo [ERROR] Python 3.11 or 3.12 (x64) required.
-echo   https://www.python.org/downloads/release/python-3129/
+echo.
+echo   ERROR: Python 3.11 or 3.12 not found.
+echo   Install it from: https://www.python.org/downloads/
+echo.
 pause
 exit /b 1
 
 :python_ok
-echo [OK] Python ready
 echo.
 
 REM ===================================================================
 REM Step 2: Virtual environment
 REM ===================================================================
-echo [2/5] Virtual environment...
-if exist ".venv\Scripts\python.exe" (
-    echo   .venv exists, skipping
+echo [2/5] Creating virtual environment...
+
+if exist "%PROJ_DIR%\.venv" (
+    echo   .venv already exists
 ) else (
-    echo   Creating .venv...
-    %PYTHON% -m venv .venv
-    if %errorlevel% neq 0 (echo [ERROR] Failed to create .venv & pause & exit /b 1)
+    %PYTHON% -m venv "%PROJ_DIR%\.venv"
+    if %errorlevel% neq 0 (
+        echo   ERROR: Failed to create .venv
+        pause
+        exit /b 1
+    )
     echo   .venv created
 )
-echo [OK]
+
 echo.
 
 REM ===================================================================
-REM Step 3: Dependencies
+REM Step 3: Install dependencies
 REM ===================================================================
-echo [3/5] Installing dependencies...
-.venv\Scripts\python.exe -m pip install --upgrade pip -q
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-if %errorlevel% neq 0 (echo [ERROR] pip install failed & pause & exit /b 1)
-echo [OK]
-echo.
+echo [3/5] Installing dependencies (numpy, matplotlib)...
 
-REM ===================================================================
-REM Step 4: LAMMPS
-REM ===================================================================
-echo [4/5] Checking LAMMPS...
-call :find_lammps
+"%PROJ_DIR%\.venv\Scripts\python" -m pip install --upgrade pip >nul 2>&1
+"%PROJ_DIR%\.venv\Scripts\python" -m pip install numpy matplotlib >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [WARN] LAMMPS not found.
-    echo Options:
-    echo   1. Install LAMMPS from packages.lammps.org
-    echo   2. Set LMP_EXE
-    echo   3. Copy lmp.exe + DLLs into bin\
-) else (
-    echo [OK] LAMMPS: %LMP_EXE%
-    where lmp.exe >nul 2>&1 && echo [OK] LMP in PATH also: lmp.exe || echo [OK] LMP only in bin\
-)
-echo   LAMMPS_PLUGIN_PATH=%LAMMPS_PLUGIN_PATH%
-echo   LAMMPS_POTENTIALS=%LAMMPS_POTENTIALS%
-echo.
-
-REM ===================================================================
-REM Step 5: Run demo
-REM ===================================================================
-echo [5/5] Starting DEMO...
-echo.
-call run_demo.bat
-
-echo.
-echo ==================================================
-echo SETUP COMPLETE!
-echo ==================================================
-echo.
-echo Next: run_main.bat for full 20-point run
-echo.
-endlocal
-pause
-
-:find_lammps
-
-REM 1) Portable lmp.exe in bin/ next to project
-if exist "%PROJ_DIR%\bin\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\bin\lmp.exe
-    exit /b 0
-)
-
-REM 2) LMP_EXE env var
-if defined LMP_EXE (
-    if exist "%LMP_EXE%" (
-        exit /b 0
+    echo   ERROR: pip install failed — retrying with longer timeout...
+    "%PROJ_DIR%\.venv\Scripts\python" -m pip install --default-timeout=120 numpy matplotlib
+    if %errorlevel% neq 0 (
+        echo   ERROR: Still failed. Check internet connection.
+        pause
+        exit /b 1
     )
 )
+echo   Done.
 
-REM 3) lmp.exe in PATH
-where lmp.exe >nul 2>&1
+echo.
+
+REM ===================================================================
+REM Step 4: Check LAMMPS
+REM ===================================================================
+echo [4/5] Checking LAMMPS...
+
+if not exist "%PROJ_DIR%\bin\lmp.exe" (
+    echo   ERROR: lmp.exe not found in bin\lmp.exe
+    pause
+    exit /b 1
+)
+REM Quick test — just check the binary exists and is runnable
+"%LMP_EXE%" -help >nul 2>&1
 if %errorlevel% equ 0 (
-    set LMP_EXE=lmp.exe
-    exit /b 0
+    echo   lmp.exe found and working
+) else (
+    echo   WARNING: lmp.exe found but -help failed.
+    echo   It may still work with scripts.
 )
 
-REM 4) Typical install paths (one by one to avoid (x86) parsing)
-if exist "%PROJ_DIR%\lmp.exe" (
-    set LMP_EXE=%PROJ_DIR%\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\bin\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\bin\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS 64-bit\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS 64-bit\lmp.exe
-    exit /b 0
-)
-if exist "C:\Program Files\LAMMPS\lmp.exe" (
-    set LMP_EXE=C:\Program Files\LAMMPS\lmp.exe
-    exit /b 0
+echo.
+
+REM ===================================================================
+REM Step 5: Run DEMO
+REM ===================================================================
+echo [5/5] Running DEMO (2 points, ~1 minute)...
+
+cd /d "%PROJ_DIR%"
+
+"%PROJ_DIR%\.venv\Scripts\python" scripts/run_phase4.py --demo
+if %errorlevel% neq 0 (
+    echo.
+    echo   DEMO failed with error code %errorlevel%
+    echo   Check the output above.
+    pause
+    exit /b 1
 )
 
-REM Not found
-exit /b 1
+echo.
+echo ==================================================
+echo  SETUP COMPLETE
+echo ==================================================
+echo.
+echo  Next steps:
+echo    Full run:   python scripts/run_phase4.py
+echo    Demo run:   python scripts/run_phase4.py --demo
+echo    Turbo run:  python scripts/run_phase4_turbo.py --turbo
+echo.
+echo  Results go to: output_v4\
+echo.
+pause
