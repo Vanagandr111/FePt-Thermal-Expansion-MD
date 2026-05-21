@@ -1,0 +1,3 @@
+SEED=27677
+MODE=main
+SOURCE=generated

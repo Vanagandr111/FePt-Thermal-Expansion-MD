@@ -5,6 +5,8 @@ setlocal enabledelayedexpansion
 
 set PYTHON=.venv\Scripts\python.exe
 if not exist "%PYTHON%" set PYTHON=python
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 
 cls
 echo ============================================
@@ -87,29 +89,41 @@ if "%PARTIAL%"=="1" (
         )
     )
 )
+if not defined RESUME_FLAG set RESUME_FLAG=0
 
 REM --- Seed dialog ---
 echo.
 echo  --- Seed Configuration ---
 echo.
-echo  Options:
-echo    [Enter]     — auto-generate new random seed
-echo    [12345]     — enter a specific seed number
-echo    [R]         — re-use last used seed
-echo.
-
-set /p SEED_INPUT="Seed (Enter=auto / R=re-use / number): "
-
 set SEED_ARGS=
-if /i "!SEED_INPUT!"=="R" (
-    set SEED_ARGS=--seed
-    echo  Will re-use last seed.
-) else if "!SEED_INPUT!"=="" (
-    set SEED_ARGS=
-    echo  Will auto-generate seed.
+if "!RESUME_FLAG!"=="1" (
+    echo  Resume selected: will re-use seed from existing output/logs.
 ) else (
-    set SEED_ARGS=--seed !SEED_INPUT!
-    echo  Manual seed: !SEED_INPUT!
+    echo  Options:
+    echo    [Enter]     — auto-generate new random seed
+    echo    [12345]     — enter a specific seed number
+    echo    [R]         — re-use last used seed
+    echo.
+
+    set /p SEED_INPUT="Seed (Enter=auto / R=re-use / number): "
+
+    if /i "!SEED_INPUT!"=="R" (
+        set SEED_ARGS=--reuse-seed
+        echo  Will re-use last seed.
+    ) else if "!SEED_INPUT!"=="" (
+        set SEED_ARGS=
+        echo  Will auto-generate seed.
+    ) else (
+        set SEED_ARGS=--seed !SEED_INPUT!
+        echo  Manual seed: !SEED_INPUT!
+    )
+)
+
+set RUN_ARGS=%MODE_FLAG% %SEED_ARGS%
+if "!RESUME_FLAG!"=="1" (
+    set RUN_ARGS=!RUN_ARGS! --resume
+) else (
+    set RUN_ARGS=!RUN_ARGS! --force
 )
 
 REM --- Build command ---
@@ -117,11 +131,11 @@ echo.
 echo ============================================
 echo   Starting %MODE_LABEL% mode
 echo   Script: %SCRIPT%
-echo   Args: %MODE_FLAG% %SEED_ARGS%
+echo   Args: !RUN_ARGS!
 echo ============================================
 echo.
 
-%PYTHON% %SCRIPT% %MODE_FLAG% %SEED_ARGS%
+%PYTHON% %SCRIPT% !RUN_ARGS!
 if errorlevel 1 (
     echo.
     echo [ERROR] Calculation failed (exit code %errorlevel%^)
