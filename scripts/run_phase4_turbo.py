@@ -48,8 +48,8 @@ import seed_manager as seed_mgr
 # sidefx: none
 # purity: pure
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
-TEMPS = [300, 600, 900, 1200]
-NATOMS = 256
+TEMPS = [300, 500, 700, 900, 1100, 1200]
+NATOMS = 2048
 TDAMP = 1.0
 PDAMP = 10.0
 POT_LINE = "pair_coeff      * * potentials{0}library.meam Fe Pt potentials{0}PtFe.meam Fe Pt".format(os.sep)
@@ -112,17 +112,13 @@ MODE_LABEL = "turbo_plus" if IS_TURBO_PLUS else "turbo"
 MODE_NEIGHBOR = "1.0"  # neighbor radius for turbo modes
 
 
+# intent: Thread-safe LAMMPS worker for parallel execution; returns timing only
+# allies: ThreadPoolExecutor (in main()), lmp.write_input, lmp.run_lmp, lmp.parse_production
+# sidefx: io (writes LAMMPS log + input file)
+# purity: impure
+# errors: returns (comp, T, None, error_str) on any failure, never raises
 def run_point_worker(datafile, comp, T, subdir):
-    """
-    Run LAMMPS at single T. Returns (comp, T, result_dict_or_None, error_str_or_None).
-
-    # intent: Thread-safe LAMMPS worker for parallel execution
-    # allies: ThreadPoolExecutor (in main()), lmp.write_input, lmp.run_lmp,
-    #         lmp.extract_result_from_stdout, lmp.extract_result_from_log
-    # sidefx: io (writes LAMMPS log + input file)
-    # purity: impure
-    # errors: returns (comp, T, None, error_str) on any failure, never raises
-    """
+    """Run LAMMPS at single T (worker). Returns (comp, T, timing_or_None, error_or_None)."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
     infile = lmp.write_input(datafile, comp, T, OUT, POT_LINE,
@@ -138,33 +134,15 @@ def run_point_worker(datafile, comp, T, subdir):
         return (comp, T, None, "EXCEPTION: {}".format(e))
 
     dt = time.time() - t0
-
-    r = lmp.extract_result_from_stdout(result)
-    if r:
-        r['time'] = dt
-        return (comp, T, r, None)
-
-    r = lmp.extract_result_from_log(logfile)
-    if r:
-        r['time'] = dt
-        return (comp, T, r, None)
-
-    err = "FAILED after {:.0f}s".format(dt)
-    if result.get('stderr'):
-        err += "\n  STDERR:\n    " + "\n    ".join(result['stderr'].split('\n')[:20])
-    if result.get('timeout'):
-        err = "TIMEOUT after {:.0f}s".format(dt)
-    return (comp, T, None, err)
+    return (comp, T, {'time': dt}, None)
 
 
+# intent: Orchestrate parallel turbo/turbo-plus MD run
+# allies: run_point_worker, lmp_helper, seed_manager, ThreadPoolExecutor
+# sidefx: io (writes output_v4/ with CSVs, logs, plots, integrity)
+# purity: impure
+# errors: returns 0 on success, 1 on LAMMPS not found or failures
 def main():
-    """
-    # intent: Orchestrate parallel turbo/turbo-plus MD run
-    # allies: run_point_worker, lmp.*, seed_mgr.*, ThreadPoolExecutor
-    # sidefx: io (writes output_v4/ with CSVs, logs, plots, integrity)
-    # purity: impure
-    # errors: returns 0 on success, 1 on LAMMPS not found or failures
-    """
     mode_display = "Turbo Plus" if IS_TURBO_PLUS else "Turbo"
     print('=' * 60)
     print('  Fe-Pt Phase 4 -- {} Mode (Parallel)'.format(mode_display))
@@ -261,14 +239,12 @@ def main():
     _monitor_active = True
     total_start = time.time()
 
+    # intent: Background thread printing progress only when state changes
+    # allies: main() (created as daemon thread)
+    # sidefx: io (stdout)
+    # purity: impure
+    # errors: none
     def progress_monitor():
-        """
-        # intent: Background thread printing progress only when state changes
-        # allies: main() (created as daemon thread)
-        # sidefx: io (stdout)
-        # purity: impure
-        # errors: none
-        """
         _last_done = -1
         _last_failed = -1
         _last_left = -1

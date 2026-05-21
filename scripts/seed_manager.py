@@ -28,38 +28,38 @@ SEED_INFO = "seed_info.txt"   # per-output-dir: calculation metadata
 
 # -- Seed Generation --
 def generate_seed():
-    """
-    # intent: Generate a random seed for LAMMPS velocity create (10000-99999)
-    # allies: get_or_create_seed (fallback when no manual/reuse/resume)
-    # sidefx: none
-    # purity: pure
-    # errors: none
-    """
+# intent: Generate a random seed for LAMMPS velocity create (10000-99999)
+# allies: get_or_create_seed (fallback when no manual/reuse/resume)
+# sidefx: none
+# purity: pure
+# errors: none
+def generate_seed():
+    """Generate a random seed for LAMMPS."""
     return secrets.randbelow(90000) + 10000
 
 
 # -- Persistence - root --
 def save_seed_to_project(project_root, seed):
-    """
-    # intent: Save last used seed to SEED_FILE in project root
-    # allies: get_or_create_seed (calls on every resolution)
-    # sidefx: io (writes SEED_FILE)
-    # purity: impure
-    # errors: IOError (unhandled, propagates up)
-    """
+# intent: Save last used seed to SEED_FILE in project root
+# allies: get_or_create_seed (calls on every resolution)
+# sidefx: io (writes SEED_FILE)
+# purity: impure
+# errors: IOError (unhandled, propagates up)
+def save_seed_to_project(project_root, seed):
+    """Save last used seed to project root SEED_FILE."""
     path = os.path.join(project_root, SEED_FILE)
     with open(path, 'w') as f:
         f.write(str(seed) + '\n')
 
 
 def load_last_seed(project_root):
-    """
-    # intent: Load last used seed from SEED_FILE
-    # allies: get_or_create_seed, read_seed_from_dir (resume fallback)
-    # sidefx: io (reads SEED_FILE)
-    # purity: impure
-    # errors: returns None on missing file / parse error (silent)
-    """
+# intent: Load last used seed from SEED_FILE
+# allies: get_or_create_seed, read_seed_from_dir (resume fallback)
+# sidefx: io (reads SEED_FILE)
+# purity: impure
+# errors: returns None on missing file / parse error (silent)
+def load_last_seed(project_root):
+    """Load last used seed from project root SEED_FILE."""
     path = os.path.join(project_root, SEED_FILE)
     if os.path.exists(path):
         with open(path) as f:
@@ -72,13 +72,13 @@ def load_last_seed(project_root):
 
 # -- Persistence - per-output-dir --
 def write_seed_info(output_dir, seed, mode, seed_source):
-    """
-    # intent: Write seed_info.txt to output directory for reproducibility
-    # allies: get_or_create_seed, main scripts
-    # sidefx: io (writes SEED_INFO)
-    # purity: impure
-    # errors: IOError (unhandled, propagates up)
-    """
+# intent: Write seed_info.txt to output directory for reproducibility
+# allies: get_or_create_seed, main scripts
+# sidefx: io (writes SEED_INFO)
+# purity: impure
+# errors: IOError (unhandled, propagates up)
+def write_seed_info(output_dir, seed, mode, seed_source):
+    """Write seed_info.txt to output directory for reproducibility."""
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, SEED_INFO)
     with open(path, 'w') as f:
@@ -89,13 +89,13 @@ def write_seed_info(output_dir, seed, mode, seed_source):
 
 
 def read_seed_from_dir(output_dir):
-    """
-    # intent: Read seed from output dir's seed_info.txt, fallback to logs
-    # allies: get_or_create_seed (resume path), detect_seed_from_logs
-    # sidefx: io (reads SEED_INFO / logs)
-    # purity: impure
-    # errors: returns None if no seed found (silent)
-    """
+# intent: Read seed from output dir seed_info.txt, fallback to logs
+# allies: get_or_create_seed (resume path), detect_seed_from_logs
+# sidefx: io (reads SEED_INFO / logs)
+# purity: impure
+# errors: returns None if no seed found (silent)
+def read_seed_from_dir(output_dir):
+    """Read seed from output dir seed_info.txt, fallback to logs."""
     path = os.path.join(output_dir, SEED_INFO)
     if os.path.exists(path):
         with open(path) as f:
@@ -111,13 +111,13 @@ def read_seed_from_dir(output_dir):
 
 
 def detect_seed_from_logs(log_dir):
-    """
-    # intent: Scan LAMMPS log files to extract seed from 'velocity all create'
-    # allies: read_seed_from_dir (fallback path)
-    # sidefx: io (reads .lmp log files)
-    # purity: impure
-    # errors: returns None if no log files or no seed pattern found (silent)
-    """
+# intent: Scan LAMMPS log files to extract seed from velocity all create
+# allies: read_seed_from_dir (fallback path)
+# sidefx: io (reads .lmp log files)
+# purity: impure
+# errors: returns None if no log files or no seed pattern found (silent)
+def detect_seed_from_logs(log_dir):
+    """Scan LAMMPS log files to extract seed from velocity create command."""
     if not os.path.isdir(log_dir):
         return None
     for fname in sorted(os.listdir(log_dir)):
@@ -132,51 +132,19 @@ def detect_seed_from_logs(log_dir):
 
 
 # -- Resume / Partial Results Detection --
-def check_partial_results_logs(logs_dir, expected=20):
-    """
-    # intent: Check if logs dir has partial/complete results for resume decision
-    # allies: main scripts (run_* decide resume vs force), lmp_helper
-    # sidefx: io (reads .lmp log files)
-    # purity: impure
-    # errors: returns None / "PARTIAL" / "COMPLETE" (no exception)
-    """
-    if not os.path.isdir(logs_dir):
-        return None
-    existing = [f for f in os.listdir(logs_dir)
-                if f.startswith("log_") and f.endswith(".lmp")]
-    if not existing:
-        return None
-    if len(existing) >= expected:
-        valid = 0
-        for fname in existing:
-            fpath = os.path.join(logs_dir, fname)
-            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
-            if 'RESULT:' in content or 'DONE' in content:
-                valid += 1
-        if valid >= expected:
-            return "COMPLETE"
-    return "PARTIAL"
-
 
 # -- Main Seed Resolution --
 def get_or_create_seed(project_root, output_dir, manual_seed=None,
                        reuse_last=False, resume=False):
-    """
-    Resolve seed.
-
-    Priority: manual seed > resume seed from output logs/info > last seed
-    (if explicitly requested) > new random seed.
-
-    Returns (seed, source_string).
-
-    # intent: Central seed resolution - resolves from CLI args, resume, or auto
-    # allies: generate_seed, save_seed_to_project, write_seed_info,
-    #         load_last_seed, read_seed_from_dir
-    # sidefx: io (writes SEED_FILE + SEED_INFO)
-    # purity: impure
-    # errors: int() conversion on manual_seed may raise ValueError
-    """
+# intent: Central seed resolution -- resolves from CLI args, resume, or auto
+# allies: generate_seed, save_seed_to_project, write_seed_info,
+#         load_last_seed, read_seed_from_dir
+# sidefx: io (writes SEED_FILE + SEED_INFO)
+# purity: impure
+# errors: int() conversion on manual_seed may raise ValueError
+def get_or_create_seed(project_root, output_dir, manual_seed=None,
+                       reuse_last=False, resume=False):
+    """Resolve seed. Priority: manual > resume > last_seed > auto."""
     if manual_seed is not None:
         seed = int(manual_seed)
         source = "manual"
@@ -208,12 +176,4 @@ def get_or_create_seed(project_root, output_dir, manual_seed=None,
 
 
 # -- Console Formatting --
-def format_seed_info_line(seed, source):
-    """
-    # intent: Format seed info for console output
-    # allies: main scripts (run_* display)
-    # sidefx: none
-    # purity: pure
-    # errors: none
-    """
-    return "Seed: {} ({})".format(seed, source)
+

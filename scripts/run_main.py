@@ -43,8 +43,8 @@ import seed_manager as seed_mgr
 # sidefx: none
 # purity: pure
 COMP = [0.0, 0.25, 0.5, 0.75, 1.0]
-TEMPS = [300, 600, 900, 1200]
-NATOMS = 256
+TEMPS = [300, 500, 700, 900, 1100, 1200]
+NATOMS = 2048
 EQ = 50000
 PROD = 100000
 TDAMP = 1.0
@@ -84,6 +84,11 @@ SEED, SEED_SOURCE = seed_mgr.get_or_create_seed(
 seed_mgr.write_seed_info(OUT, SEED, "main", SEED_SOURCE)
 
 
+# intent: Run full Phase 4 simulation sweep (compositions × temperatures)
+# allies: lmp_helper, seed_manager
+# sidefx: io (writes logs, CSVs, plots to output_v4/)
+# purity: impure
+# errors: returns 0 on success, 1 on failure
 def main():
     """
     # intent: Orchestrate 20-point sequential MD run with CSV + plots output
@@ -132,7 +137,7 @@ def main():
     total_start = time.time()
     for i, comp in enumerate(COMP):
         for T in TEMPS:
-            label = '[{}/20] x_Pt={:.2f} T={}K'.format(i * 4 + TEMPS.index(T) + 1, comp, T)
+            label = '[{}/{}] x_Pt={:.2f} T={}K'.format(i * len(TEMPS) + TEMPS.index(T) + 1, len(COMP) * len(TEMPS), comp, T)
             print('\n  ' + label)
             datafile = os.path.join(lmp.DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
             logfile = os.path.join(LOGS, 'log_{:.2f}_{}.lmp'.format(comp, T))
@@ -146,8 +151,6 @@ def main():
             p = lmp.parse_production(logfile, NATOMS)
             if p and p.get('a_mean') is not None:
                 print('    a={:.6f} n={} t={:.0f}s'.format(p['a_mean'], p['n_points'], dt))
-            elif p and p.get('result_a'):
-                print('    result_a={:.6f} (no prod thermo) t={:.0f}s'.format(p['result_a'], dt))
             else:
                 print('    FAILED t={:.0f}s'.format(dt))
                 if not r.get('ok') and r.get('stderr'):

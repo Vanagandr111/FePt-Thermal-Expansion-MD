@@ -43,6 +43,9 @@ DATA_DIR = os.path.join(PROJDIR, 'data')
 POT_DIR = os.path.join(PROJDIR, 'potentials')
 SCRIPTS = os.path.join(PROJDIR, 'scripts')
 
+# ── OpenMP auto-detection ──────────────────────────────────
+CPU_COUNT = os.cpu_count() or 4  # fallback if detection fails
+
 
 # ── LAMMPS search ────────────────────────────────────────────
 # intent: Locate lmp.exe by priority: bin/, LMP_EXE, PATH, defaults
@@ -115,7 +118,7 @@ _RUN_LMP_BAT = os.path.join(PROJDIR, '_run_lmp.bat')
 # sidefx: io (spawns subprocess, creates LAMMPS log)
 # purity: impure
 # errors: returns error dict with ok=False on all failure modes
-def run_lmp(infile, logfile=None, timeout=900, lmp_label='', **kwargs):
+def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0, **kwargs):
     """
     Run LAMMPS via _run_lmp.bat (helper with %~dp0).
     Paths relative from PROJDIR.
@@ -141,7 +144,16 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', **kwargs):
         logfile_rel = os.path.relpath(logfile, PROJDIR)
         bat_args += ['-log', logfile_rel]
 
+    if omp_threads > 0:
+        bat_args += ['-sf', 'omp', '-pk', 'omp', str(omp_threads)]
+
     shell_cmd = subprocess.list2cmdline(bat_args)
+
+    proc_env = os.environ.copy()
+    if omp_threads > 0:
+        proc_env['OMP_NUM_THREADS'] = str(omp_threads)
+    if 'env' in kwargs:
+        proc_env.update(kwargs.pop('env'))
 
     start = time.time()
     timed_out = False
@@ -149,7 +161,7 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', **kwargs):
         proc = subprocess.Popen(
             ['cmd.exe', '/c', shell_cmd],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=PROJDIR, **kwargs
+            cwd=PROJDIR, env=proc_env, **kwargs
         )
         try:
             stdout_b, stderr_b = proc.communicate(timeout=timeout)
@@ -179,92 +191,13 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', **kwargs):
     }
 
 
-# ── Result parsing ──────────────────────────────────────────
-# intent: Parse a single "RESULT:" line from LAMMPS output
-# allies: extract_result_from_log, extract_result_from_stdout
-# sidefx: none
-# purity: pure
-# errors: returns None if T= or A= not found
-def parse_result_line(line):
-    """Parse RESULT line from LAMMPS. Flexible format."""
-    m_T = re.search(r'T=(\d+)', line)
-    m_A = re.search(r'A=([\d.]+)', line)
-    if not (m_T and m_A):
-        return None
-    fields = {
-        'T': int(m_T.group(1)),
-        'a': float(m_A.group(1)),
-    }
-    m_comp = re.search(r'COMP=([\d.]+)', line)
-    if m_comp:
-        fields['comp'] = float(m_comp.group(1))
-    m_vol = re.search(r'VOL=([\d.]+)', line)
-    if m_vol:
-        fields['vol'] = float(m_vol.group(1))
-    m_lx = re.search(r'LX=([\d.]+)', line)
-    if m_lx:
-        fields['lx'] = float(m_lx.group(1))
-    m_ly = re.search(r'LY=([\d.]+)', line)
-    if m_ly:
-        fields['ly'] = float(m_ly.group(1))
-    m_lz = re.search(r'LZ=([\d.]+)', line)
-    if m_lz:
-        fields['lz'] = float(m_lz.group(1))
-    m_natoms = re.search(r'NATOMS=(\d+)', line)
-    if m_natoms:
-        fields['natoms'] = int(m_natoms.group(1))
-    return fields
-
-
-# intent: Extract RESULT line from LAMMPS .lmp log file
-# allies: parse_result_line (parsing worker)
-# sidefx: io (reads log file)
-# purity: impure
-# errors: returns None on missing file or no RESULT found
-def extract_result_from_log(logfile):
-    """Extract RESULT from LAMMPS log file."""
-    if not os.path.exists(logfile):
-        return None
-    with open(logfile, 'r', encoding='utf-8', errors='replace') as f:
-        content = f.read()
-    for line in content.split('\n'):
-        if line.startswith('RESULT:'):
-            r = parse_result_line(line)
-            if r:
-                return r
-    for line in content.split('\n'):
-        if 'RESULT:' in line and 'T=' in line and 'A=' in line:
-            r = parse_result_line(line)
-            if r:
-                return r
-    return None
-
-
-# intent: Extract RESULT line from stdout dict returned by run_lmp()
-# allies: parse_result_line, run_lmp (source of stdout dict)
-# sidefx: none
-# purity: pure
-# errors: returns None on missing stdout or no RESULT found
-def extract_result_from_stdout(result):
-    """Extract RESULT from stdout dict/object."""
-    stdout_text = result.get('stdout') if isinstance(result, dict) else getattr(result, 'stdout', None)
-    if not stdout_text:
-        return None
-    for line in stdout_text.split('\n'):
-        if line.startswith('RESULT:'):
-            r = parse_result_line(line)
-            if r:
-                return r
-    return None
-
-
 # ── Structure generation ────────────────────────────────────
 # intent: Generate FCT lattice structure via gen_structure.py subprocess
 # allies: gen_structure.py (external script)
 # sidefx: io (writes data.fept_*.lmp)
 # purity: impure
 # errors: returns existing path if file already exists
-def gen_structure(comp, nx=4, ny=4, nz=4):
+def gen_structure(comp, nx=8, ny=8, nz=8):
     """Generate structure via gen_structure.py."""
     gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
     outfile = os.path.join(DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
@@ -283,21 +216,13 @@ def gen_structure(comp, nx=4, ny=4, nz=4):
 # sidefx: io (reads .lmp log file)
 # purity: impure
 # errors: returns {"n_points": 0} on missing/incomplete file
-def parse_production(logpath, natoms=256):
+def parse_production(logpath, natoms=2048):
     """Parse production phase for mean a(std)."""
     if not os.path.exists(logpath) or os.path.getsize(logpath) < 100:
         return {'n_points': 0}
 
     with open(logpath, 'r', encoding='utf-8', errors='replace') as f:
         text = f.read()
-
-    # Extract RESULT line
-    result_a = None
-    for line in text.split('\n'):
-        if 'RESULT:' in line and 'A=' in line:
-            m = re.search(r'A=([\d.]+)', line)
-            if m:
-                result_a = float(m.group(1))
 
     # Main: parse PRODUCTION_START to PRODUCTION_DONE
     in_prod = False
@@ -333,8 +258,6 @@ def parse_production(logpath, natoms=256):
             if 'EQ_DONE' in s:
                 in_prod = True
                 continue
-            if 'RESULT:' in s:
-                break
             if in_prod and s and s[0].isdigit():
                 parts = s.split()
                 if len(parts) >= 9:
@@ -346,7 +269,7 @@ def parse_production(logpath, natoms=256):
                         pass
 
     if not a_vals:
-        return {'n_points': 0, 'a_mean': None, 'result_a': result_a}
+        return {'n_points': 0}
 
     n = len(a_vals)
     mean_a = sum(a_vals) / n
@@ -363,7 +286,6 @@ def parse_production(logpath, natoms=256):
         'a_std': std_a,
         'drift': drift,
         'n_points': n,
-        'result_a': result_a,
         'mean_vol': mean_vol,
         'mean_press': mean_press,
         'std_press': std_press,
@@ -377,7 +299,8 @@ def parse_production(logpath, natoms=256):
 # sidefx: io (writes in/*.lmp input file)
 # purity: impure
 def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
-                tdamp=1.0, pdamp=10.0, seed=12345, neighbor_radius=None):
+                tdamp=1.0, pdamp=10.0, seed=12345, neighbor_radius=None,
+                omp_threads=0, pair_style_type='meam'):
     """Generate a LAMMPS input file. Parameterized for all modes."""
     os.makedirs(os.path.join(out, 'in'), exist_ok=True)
     fname = 'in_phase4_{:.2f}_{}.lmp'.format(comp, T)
@@ -386,6 +309,8 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
     data_rel = os.path.relpath(datafile, PROJDIR)
     neighbor_line = 'neighbor        {} bin'.format(neighbor_radius) if neighbor_radius else 'neighbor        2.0 bin'
 
+    omp_line = 'package omp {}'.format(omp_threads) if omp_threads > 0 else None
+
     lines = [
         '# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}'.format(T, comp, seed),
         'units           metal',
@@ -393,9 +318,26 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
         'atom_style      atomic',
         '',
         'read_data       {}'.format(data_rel),
-        '',
-        'pair_style      meam',
-        pot_line,
+    ]
+    if omp_line:
+        lines += ['', omp_line]
+    if pair_style_type == 'eam':
+        # Single-element EAM (e.g. Pt_u3.eam for pure Pt)
+        ps_name = 'eam'
+        pc_line = pot_line  # pot_line should be just the file path
+        ps_lines = [
+            '',
+            'pair_style      eam',
+            'pair_coeff      * * {}'.format(pc_line),
+        ]
+    else:
+        # MEAM: multi-element (default)
+        ps_lines = [
+            '',
+            'pair_style      meam',
+            pot_line,
+        ]
+    lines += ps_lines + [
         '',
         neighbor_line,
         'neigh_modify    every 1 delay 0 check yes',
@@ -415,14 +357,10 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
         'run             {}'.format(eq_steps),
         'print           "EQ_DONE"',
         '',
-        'thermo          100',
+        'thermo          500',
         'print           "PRODUCTION_START"',
         'run             {}'.format(prod_steps),
         'print           "PRODUCTION_DONE"',
-        '',
-        'variable myvol  equal vol',
-        'variable mya    equal (4.0*vol/count(all))^(1.0/3.0)',
-        'print           "RESULT: COMP={:.2f} T={} A=${{mya}} VOL=${{myvol}}"'.format(comp, T),
         'print           "DONE"',
     ]
     with open(infile, 'w', newline='\n') as f:
@@ -447,8 +385,7 @@ def write_csv(parsed_all, comps, temps, out, seed,
         w = csv.writer(f, delimiter=';')
 
         # Build header
-        header = ['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
-                  'result_last_point', 'drift', 'n_points',
+        header = ['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom', 'drift', 'n_points',
                   'mean_press_bar', 'std_press_bar', 'runtime_s']
         if mode_label:
             header += ['mode']
@@ -464,10 +401,9 @@ def write_csv(parsed_all, comps, temps, out, seed,
                 p = parsed_all.get((comp, T), {})
                 if p and p.get('a_mean') is not None:
                     row = [
-                        '{:.2f}'.format(comp), T,
+                        '{:.6f}'.format(comp), T,
                         '{:.6f}'.format(p['a_mean']),
                         '{:.6f}'.format(p.get('a_std', 0)),
-                        '{:.6f}'.format(p.get('result_a', 0) or 0),
                         '{:.6e}'.format(p.get('drift', 0)),
                         p.get('n_points', 0),
                         '{:.1f}'.format(p.get('mean_press', 0) or 0),
@@ -538,8 +474,7 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
     ws.title = "Results"
 
     # Build header
-    header = ['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
-              'result_last_point', 'drift', 'n_points',
+    header = ['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom', 'drift', 'n_points',
               'mean_press_bar', 'std_press_bar', 'runtime_s']
     if mode_label:
         header += ['mode']
@@ -555,12 +490,11 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
         1: '0',          # T_K
         2: '0.000000',   # a_mean
         3: '0.000000',   # a_std
-        4: '0.000000',   # result_last_point
-        5: '0.00E+00',   # drift
-        6: '0',          # n_points
-        7: '0.0',        # mean_press
-        8: '0.0',        # std_press
-        9: '0.00',       # runtime
+        4: '0.00E+00',   # drift
+        5: '0',          # n_points
+        6: '0.0',        # mean_press
+        7: '0.0',        # std_press
+        8: '0.00',       # runtime
     }
     # mode = text, eq_steps/prod_steps = '0', seed = '0'
 
@@ -580,7 +514,6 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
                     round(comp, 2), T,
                     round(p['a_mean'], 6),
                     round(p.get('a_std', 0), 6),
-                    round(p.get('result_a', 0) or 0, 6),
                     p.get('drift', 0),
                     p.get('n_points', 0),
                     round(p.get('mean_press', 0) or 0, 1),
@@ -665,7 +598,8 @@ def write_cte_csv(parsed_all, comps, temps, out):
 # purity: impure
 def write_protocol_log(out, script_name, eq_steps, prod_steps, tdamp, pdamp,
                        comps, temps, seed, proto_name='run_protocol.txt',
-                       mode_label=None, mode_extra=None):
+                       mode_label=None, mode_extra=None,
+                       potential_name='MEAM PtFe.meam'):
     """Write protocol log to output dir."""
     proto_path = os.path.join(out, proto_name)
     lines = [
@@ -674,7 +608,7 @@ def write_protocol_log(out, script_name, eq_steps, prod_steps, tdamp, pdamp,
         'Timestamp: {}'.format(time.strftime('%Y-%m-%d %H:%M:%S')),
         'Script: {}'.format(script_name),
         'Pipeline: Phase 4',
-        'Potential: MEAM PtFe.meam',
+        'Potential: {}'.format(potential_name),
     ]
     if mode_label:
         lines.append('Mode: {}'.format(mode_label))

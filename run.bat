@@ -18,13 +18,14 @@ REM --- Mode selection ---
 :MENU_MODE
 echo  Select calculation mode:
 echo.
-echo    [M]  MAIN      — run_main.py (sequential, full 50k+100k, results^)
-echo    [T]  TURBO     — parallel, high-accuracy (50k eq + 100k prod)
-echo    [P]  TURBO-PLUS  — parallel, fast (20k eq + 50k prod)
-echo    [L]  LONG      — sequential, Long Protocol (50k eq + 100k prod)
+echo    [M]  MAIN       — run_main.py (sequential, full 50k+100k)
+echo    [T]  TURBO      — parallel, high-accuracy (50k eq + 100k prod^)
+echo    [P]  TURBO-PLUS — parallel, fast (20k eq + 50k prod^)
+echo    [F]  LONG-FAST  — parallel + OpenMP, FULL accuracy (50k eq + 100k prod^)
+echo    [L]  LONG       — sequential, Long Protocol (50k eq + 100k prod^)
 echo.
 set MODE=M
-set /p MODE="Choose [M/T/P/L] (default M): "
+set /p MODE="Choose [M/T/P/F/L] (default M): "
 if /i "%MODE%"=="T" set MODE_LABEL=TURBO
 if /i "%MODE%"=="T" set SCRIPT=scripts\run_phase4_turbo.py
 if /i "%MODE%"=="T" set MODE_FLAG=--turbo
@@ -37,6 +38,10 @@ if /i "%MODE%"=="L" set MODE_LABEL=LONG
 if /i "%MODE%"=="L" set SCRIPT=scripts\run_phase4.py
 if /i "%MODE%"=="L" set MODE_FLAG=
 if /i "%MODE%"=="L" set OUT_DIR=output_v4
+if /i "%MODE%"=="F" set MODE_LABEL=LONG-FAST
+if /i "%MODE%"=="F" set SCRIPT=scripts\run_phase4_long_fast.py
+if /i "%MODE%"=="F" set MODE_FLAG=
+if /i "%MODE%"=="F" set OUT_DIR=output_v4\long_fast
 if /i "%MODE%"=="M" set MODE_LABEL=MAIN
 if /i "%MODE%"=="M" set SCRIPT=scripts\run_main.py
 if /i "%MODE%"=="M" set MODE_FLAG=
@@ -66,6 +71,10 @@ if "%OUT_DIR%"=="output_v4" (
     if exist "output_v4\logs" dir /b "output_v4\logs\log_*.lmp" >nul 2>nul
     if not errorlevel 1 set PARTIAL=1
 )
+if "%OUT_DIR%"=="output_v4\long_fast" (
+    if exist "output_v4\long_fast\logs" dir /b "output_v4\long_fast\logs\log_*.lmp" >nul 2>nul
+    if not errorlevel 1 set PARTIAL=1
+)
 
 if "%PARTIAL%"=="1" (
     echo  [^>] Existing log files found in %OUT_DIR%\logs^\
@@ -81,6 +90,7 @@ if "%PARTIAL%"=="1" (
         if /i "!FORCE_RESUME!"=="y" (
             if "%OUT_DIR%"=="results" rmdir /s /q results >nul 2>nul & mkdir results >nul 2>nul
             if "%OUT_DIR%"=="output_v4" rmdir /s /q output_v4 >nul 2>nul
+            if "%OUT_DIR%"=="output_v4\long_fast" if exist output_v4\long_fast rmdir /s /q output_v4\long_fast >nul 2>nul
             echo  Cleared. Will start fresh.
         ) else (
             echo  Cancelled.

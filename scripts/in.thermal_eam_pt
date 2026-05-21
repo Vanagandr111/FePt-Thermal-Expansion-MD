@@ -1,0 +1,44 @@
+# LAMMPS input for pure Pt EAM validation (Pt_u3.eam)
+# Foiles 1986 — standalone EAM potential
+# Windows-ready: uses relative paths from project dir
+#
+# Usage: lmp -in in.thermal_eam_pt -var T 300
+# Or:    lmp -in in.thermal_eam_pt -var T 1200
+
+variable T index 300
+
+units           metal
+boundary        p p p
+atom_style      atomic
+
+# Structure: pure Pt (single atom type)
+# Generated via: python scripts/gen_structure.py 8 8 8 1.0 data/data.fept_c1.00.lmp
+# But for EAM we need single-type file — use data.pt_pure.lmp
+read_data       ../data/data.pt_pure.lmp
+
+# EAM potential (single-element, Foiles 1986)
+pair_style      eam
+pair_coeff      * * ../potentials/Pt_u3.eam
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+thermo          100
+thermo_style    custom step temp pe ke press vol lx ly lz
+
+minimize        1.0e-6 1.0e-8 1000 10000
+print           "MINIMIZATION_DONE"
+
+# NPT relaxation
+fix             nptfix all npt temp ${T} ${T} 0.5 iso 0.0 0.0 1.0
+
+thermo          1000
+print           "EQ_START"
+run             50000
+print           "EQ_DONE"
+
+thermo          500
+print           "PRODUCTION_START"
+run             100000
+print           "PRODUCTION_DONE"
+print           "DONE"

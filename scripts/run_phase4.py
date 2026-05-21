@@ -46,8 +46,8 @@ import seed_manager as seed_mgr
 # sidefx: none
 # purity: pure
 COMPOSITIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
-TEMPS = [300, 600, 900, 1200]
-NATOMS = 256
+TEMPS = [300, 500, 700, 900, 1100, 1200]
+NATOMS = 2048
 EQ_STEPS = 50000
 PROD_STEPS = 100000
 TDAMP = 1.0
@@ -75,17 +75,13 @@ RESUME = '--resume' in sys.argv
 FORCE = '--force' in sys.argv
 
 
+# intent: Run LAMMPS at single T; returns timing only (a_mean from parse_production)
+# allies: main() (called per point), lmp.run_lmp, lmp.write_input, lmp.parse_production
+# sidefx: io (writes LAMMPS log + input file)
+# purity: impure
+# errors: returns None on LAMMPS failure / parse failure
 def run_point(datafile, comp, T, subdir):
-    """
-    Run LAMMPS at single T using lmp_helper.
-
-    # intent: Single LAMMPS run for one composition-temperature point
-    # allies: main() (called per point), lmp.run_lmp, lmp.write_input,
-    #         lmp.extract_result_from_stdout, lmp.extract_result_from_log
-    # sidefx: io (writes LAMMPS log + input file)
-    # purity: impure
-    # errors: returns None on LAMMPS failure / parse failure
-    """
+    """Run LAMMPS at single T; returns timing only."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
     infile = lmp.write_input(datafile, comp, T, OUT, POT_LINE,
@@ -96,22 +92,20 @@ def run_point(datafile, comp, T, subdir):
     result = lmp.run_lmp(infile, logfile=logfile, timeout=900)
     dt = time.time() - t0
 
-    r = lmp.extract_result_from_stdout(result)
-    if r:
-        print(" a={:.6f}A [{:.0f}s]".format(r['a'], dt))
-        r['time'] = dt
-        return r
-
-    r = lmp.extract_result_from_log(logfile)
-    if r:
-        print(" a={:.6f}A (log) [{:.0f}s]".format(r['a'], dt))
-        r['time'] = dt
-        return r
+    p = lmp.parse_production(logfile, NATOMS)
+    if p and p.get('a_mean') is not None:
+        print(" a={:.6f}A [{:.0f}s]".format(p['a_mean'], dt))
+        return {'time': dt}
 
     print(" FAILED [{}s]".format(dt))
     return None
 
 
+# intent: Orchestrate Phase 4 Long Protocol -- 20 MD runs, analysis, output
+# allies: run_point, lmp_helper, seed_manager
+# sidefx: io (writes output_v4/ with CSVs, logs, plots, integrity)
+# purity: impure
+# errors: returns 0 on success, 1 on LAMMPS not found or failures
 def main():
     """
     # intent: Orchestrate Phase 4 Long Protocol -- 20 MD runs, analysis, output
@@ -169,7 +163,7 @@ def main():
     for i, comp in enumerate(COMPOSITIONS):
         for T in TEMPS:
             label = '[{}/{}] x_Pt={:.2f} T={}K'.format(
-                i * 4 + TEMPS.index(T) + 1,
+                i * len(TEMPS) + TEMPS.index(T) + 1,
                 len(COMPOSITIONS) * len(TEMPS), comp, T)
             print('\n  ' + label)
             datafile = os.path.join(lmp.DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))

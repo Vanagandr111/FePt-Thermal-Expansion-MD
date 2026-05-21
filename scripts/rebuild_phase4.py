@@ -16,23 +16,27 @@ Usage:
 #                               integrity_check, print_trends)
 """
 import os
-import math
-import re
 import csv
 import sys
 
 _PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OUT = os.path.join(_PROJ, "output_v4")
 _LOGS = os.path.join(_OUT, "logs")
-_NATOMS = 256
+_NATOMS = 2048
 _COMPS = [0.0, 0.25, 0.5, 0.75, 1.0]
-_TEMPS = [300, 600, 900, 1200]
+_TEMPS = [300, 500, 700, 900, 1100, 1200]
 
 
 # -- Log parsing --
+# intent: Parse a single LAMMPS log file for production data
+# allies: main() (rebuild phase4)
+# sidefx: io (reads .lmp log file)
+# purity: impure
+# errors: returns {"n_points": 0} on missing / too-small file
 def parse_log(logpath):
     """
     Parse a single LAMMPS log file for production data.
+    Delegates to lmp_helper.parse_production().
 
     # intent: Extract a_mean, a_std, drift, n_points from one log file
     # allies: main() (called per log file)
@@ -40,81 +44,11 @@ def parse_log(logpath):
     # purity: impure
     # errors: returns {"n_points": 0} on missing / too-small file
     """
-    if not os.path.exists(logpath) or os.path.getsize(logpath) < 100:
+    import lmp_helper as lmp
+    result = lmp.parse_production(logpath, _NATOMS)
+    if result is None:
         return {"n_points": 0}
-    with open(logpath, "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-
-    result_a = None
-    for line in text.split("\n"):
-        if "RESULT:" in line and "A=" in line:
-            m = re.search(r"A=([\d.]+)", line)
-            if m:
-                result_a = float(m.group(1))
-
-    in_prod = False
-    a_vals, vol_vals, press_vals = [], [], []
-    for line in text.split("\n"):
-        s = line.strip()
-        if "PRODUCTION_START" in s:
-            in_prod = True
-            continue
-        if "PRODUCTION_DONE" in s:
-            break
-        if in_prod and s and s[0].isdigit():
-            parts = s.split()
-            if len(parts) >= 9:
-                try:
-                    vol = float(parts[5])
-                    a = (vol * 4 / _NATOMS) ** (1 / 3)
-                    a_vals.append(a)
-                    vol_vals.append(vol)
-                    press_vals.append(float(parts[4]))
-                except Exception:
-                    pass
-
-    if not a_vals:
-        # fallback: parse post-EQ
-        in_prod = False
-        for line in text.split("\n"):
-            s = line.strip()
-            if "EQ_DONE" in s:
-                in_prod = True
-                continue
-            if "RESULT:" in s:
-                break
-            if in_prod and s and s[0].isdigit():
-                parts = s.split()
-                if len(parts) >= 9:
-                    try:
-                        vol = float(parts[5])
-                        a = (vol * 4 / _NATOMS) ** (1 / 3)
-                        a_vals.append(a)
-                    except Exception:
-                        pass
-
-    if not a_vals:
-        return {"n_points": 0, "a_mean": None, "result_a": result_a}
-
-    n = len(a_vals)
-    mean_a = sum(a_vals) / n
-    std_a = math.sqrt(sum((x - mean_a) ** 2 for x in a_vals) / max(n - 1, 1))
-    mean_vol = sum(vol_vals) / n if vol_vals else 0
-    mean_press = sum(press_vals) / n if press_vals else None
-    std_press = math.sqrt(sum((p - mean_press) ** 2 for p in press_vals) / max(len(press_vals) - 1, 1)) if press_vals else None
-    half = n // 2
-    drift = sum(a_vals[half:]) / max(n - half, 1) - sum(a_vals[:half]) / max(half, 1)
-
-    return {
-        "a_mean": mean_a,
-        "a_std": std_a,
-        "drift": drift,
-        "n_points": n,
-        "result_a": result_a,
-        "mean_vol": mean_vol,
-        "mean_press": mean_press,
-        "std_press": std_press,
-    }
+    return result
 
 
 # -- CTE calculation --
@@ -146,6 +80,11 @@ def _linear_fit(xs, ys):
     return slope, intercept, r_sq
 
 
+# intent: Calculate comprehensive CTE report for one composition
+# allies: main() (writes CSV), _linear_fit (internal)
+# sidefx: none
+# purity: pure
+# errors: returns None if < 2 points
 def calc_cte_report(a_vals):
     """
     Calculate comprehensive CTE report for one composition.
@@ -209,6 +148,11 @@ def calc_cte_report(a_vals):
 
 
 # -- Main --
+# intent: Rebuild all Phase 4 artifacts from existing logs
+# allies: parse_log, calc_cte_report, lmp_helper
+# sidefx: io (writes output_v4/ CSVs + integrity + plots)
+# purity: impure
+# errors: returns 1 if log dir missing
 def main():
     """
     # intent: Rebuild all Phase 4 artifacts from existing logs
@@ -229,9 +173,6 @@ def main():
     print("  Output: " + _OUT)
     print("=" * 60)
 
-    # TEMP: parse all logs using local parse_log for compatibility
-    # reason: lmp_helper.parse_production() signature differs slightly
-    # remove-after: after lmp_helper refactor, switch to lmp.parse_production
     results = {}
     for comp in _COMPS:
         for T in _TEMPS:
@@ -262,7 +203,7 @@ def main():
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f, delimiter=";")
         header = ["x_Pt", "T_K", "a_mean_Angstrom", "a_std_Angstrom",
-                   "result_last_point", "drift", "n_points",
+                   "drift", "n_points",
                    "mean_press_bar", "std_press_bar"]
         if seed:
             header += ["seed"]
@@ -275,7 +216,6 @@ def main():
                         "{:.2f}".format(comp), T,
                         "{:.6f}".format(p["a_mean"]),
                         "{:.6f}".format(p.get("a_std", 0)),
-                        "{:.6f}".format(p.get("result_a", 0) or 0),
                         "{:.6e}".format(p.get("drift", 0)),
                         p.get("n_points", 0),
                         "{:.1f}".format(p.get("mean_press", 0) or 0),
