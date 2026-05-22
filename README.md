@@ -11,7 +11,7 @@ simulations** across the full composition range at four temperatures, with a lon
 equilibration and production protocol for converged results.
 
 **Key output:** Lattice parameter $a(T)$ for $x_{\mathrm{Pt}} = 0.00$, $0.25$, $0.50$, $0.75$, $1.00$
-at $T = 300$, $600$, $900$, $1200$ K, with effective coefficient of thermal expansion (CTE)
+at $T = 300$, $500$, $700$, $900$, $1100$, $1200$ K, with effective coefficient of thermal expansion (CTE)
 for each composition.
 
 ---
@@ -173,8 +173,8 @@ Generated plots are in the output directory (seed 26365 in metadata):
 ### Requirements
 
 - **Windows 10/11**
-- **Python 3.10 or newer**
-- A pre-compiled LAMMPS executable placed in `bin/lmp.exe`
+- **Python 3.10 or newer** (uses `py` launcher or `python` automatically)
+- A pre-compiled LAMMPS executable
 
 > **No WSL is required.** The pipeline runs natively on Windows.
 >
@@ -217,7 +217,7 @@ Generated plots are in the output directory (seed 26365 in metadata):
    run.bat
    ```
 
-   Interactive menu with 4 modes. See below for details.
+   Interactive menu with 9 modes. See below for details.
 
 ### Run Modes
 
@@ -247,13 +247,13 @@ recalculate when existing log files are found.
 
 ```cmd
 REM TURBO 256at (recommended)
-python scripts\run_mode.py --mode turbo --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
+%%PYTHON%% scripts\run_mode.py --mode turbo --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 
 REM TURBO 2048at
-python scripts\run_mode.py --mode turbo --natoms 2048 --backend omp [--seed N | --reuse-seed] [--resume | --force]
+%%PYTHON%% scripts\run_mode.py --mode turbo --natoms 2048 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 
 REM LONG 256at
-python scripts\run_mode.py --mode long --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
+%%PYTHON%% scripts\run_mode.py --mode long --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 ```
 
 ### Seed Management
@@ -377,9 +377,8 @@ FePt-Thermal-Expansion-MD/
 ├── docs/
 │   ├── PHYSICAL_VALIDATION.md     ← Protocol validation details
 │   └── REPORT.md                  ← MATLAB script status
-├── bin/
-│   └── lmp.exe                    ← LAMMPS executable (user-provided)
-├── run.bat                        ← ★ INTERACTIVE LAUNCHER (recommended entry)
+├── bin/                            ← LAMMPS executable + DLLs + utilities
+├── run.bat                        ← ★ INTERACTIVE LAUNCHER (auto-detects Python)
 ├── _run_lmp.bat                   ← LAMMPS wrapper (used by Python scripts)
 ├── bootstrap.bat                  ← Environment setup (Windows)
 ├── requirements.txt               ← Python dependencies
