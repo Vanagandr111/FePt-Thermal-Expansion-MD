@@ -43,6 +43,8 @@ output_v3/in_*.lmp
 output_v4/
 output_v4_parallel/
 output_v4_reduced/
+# Backup directories (auto-created by run.bat)
+*_backup_*/
 
 # Temporary scripts not part of the pipeline
 generate_figures.py

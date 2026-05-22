@@ -125,7 +125,7 @@ echo [5/5] Running DEMO (2 points, ~1 minute)...
 
 cd /d "%PROJ_DIR%"
 
-"%PROJ_DIR%\.venv\Scripts\python" scripts/run_phase4.py --demo
+"%PROJ_DIR%\.venv\Scripts\python" scripts/run_mode.py --mode demo
 if %errorlevel% neq 0 (
     echo.
     echo   DEMO failed with error code %errorlevel%
@@ -140,10 +140,9 @@ echo  SETUP COMPLETE
 echo ==================================================
 echo.
 echo  Next steps:
-echo    Full run:   python scripts/run_phase4.py
-echo    Demo run:   python scripts/run_phase4.py --demo
-echo    Turbo run:  python scripts/run_phase4_turbo.py --turbo
+echo    run.bat    -- interactive menu (modes 0-8)
+echo    run.bat [2]  -- TURBO 256at (main result)
 echo.
-echo  Results go to: output_v4\
+echo  Results go to: output_v4_256\
 echo.
 pause

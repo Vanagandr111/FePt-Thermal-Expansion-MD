@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Regenerate plots from existing CSV with updated make_plots()."""
 import sys, os, csv
 
