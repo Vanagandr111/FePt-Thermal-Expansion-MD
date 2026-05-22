@@ -1,38 +1,44 @@
 %% phase4_analysis.m
-% Phase 4 — Fe₁₋ₓPtₓ MD Long Runs (50k eq + 100k prod)
+% Phase 4 — Fe₁₋ₓPtₓ MD 256-atom Turbo Results (50k eq + 100k prod)
 % Lattice parameter analysis vs temperature and composition
 % Output: 5 publication-ready figures + summary CSV
 %
 % SOURCE OF TRUTH:
-%   This script analyses ONLY output_v4/all_results.csv — the single
-%   validated final dataset for the scientific result. Whether the data
-%   was produced by sequential or parallel accurate runs doesn't matter;
-%   the official scientific mode writes its results to this file.
+%   This script analyses output_v4_256/all_results_turbo_256at_omp.csv —
+%   the principal 256-atom dataset (MEAM, OpenMP, seed 26365).
+%   30 independent MD runs: 5 compositions × 6 temperatures (300–1200 K, 200 K spacing).
 %
-%   If the dataset is regenerated (e.g. by a parallel accurate run), this
+%   If the dataset is regenerated (e.g. with a new seed), this
 %   script automatically picks up the new values — no modifications needed.
 %
 % Columns used:
 %   x_Pt, T_K, a_mean_Angstrom, a_std_Angstrom
 %
 % CTE formula:
-%   α_eff = (a(1200K) − a(300K)) / (a(300K) * 900K)
+%   α_eff = (a(max_T) − a(min_T)) / (a(min_T) * ΔT)
+%
+% Key results (seed 26365):
+%   Pt CTE = 9.151 × 10⁻⁶ K⁻¹  — 96% of experimental (9.5 × 10⁻⁶)
+%   Fe CTE = 1.460 × 10⁻⁵ K⁻¹  — highest (metastable fcc-Fe)
+%   Min CTE at FePt₃ = 7.117 × 10⁻⁶ K⁻¹
 %
 % Run from project root: C:\проекты\Nikolay\
 %   >> cd C:\проекты\Nikolay
 %   >> phase4_analysis
 %
-% Input:  output_v4/all_results.csv
-% Output: output_v4/ (5 PNGs + phase4_summary.csv)
+% Input:  output_v4_256/all_results_turbo_256at_omp.csv
+% Output: output_v4_256/ (a_vs_T_turbo_256at_omp.png, a_vs_T_turbo_256at_omp_facets.png,
+%                         a_vs_comp.png, cte_vs_xPt.png, delta_a_percent.png,
+%                         phase4_summary.csv)
 %
-% STATUS: Prepared — runtime test pending
+% STATUS: Updated for 256-atom turbo results (seed 26365)
 % ===========================================================================
 
 clear; close all; clc;
 
 %% Configuration
-data_csv   = 'output_v4/all_results.csv';
-output_dir = 'output_v4/';
+data_csv   = 'output_v4_256/all_results_turbo_256at_omp.csv';
+output_dir = 'output_v4_256/';
 if ~exist(output_dir, 'dir'), mkdir(output_dir); end
 
 %% Load data
@@ -45,6 +51,8 @@ x_Pt_vals = unique(data.x_Pt);
 T_vals    = unique(data.T_K);
 n_comp    = length(x_Pt_vals);
 n_T       = length(T_vals);
+
+fprintf('Compositions: %d  Temperatures: %d  Total runs: %d\n', n_comp, n_T, height(data));
 
 %% Compute Δa = a_max - a_min for each composition
 delta_a = zeros(n_comp, 1);
@@ -75,10 +83,10 @@ for i = 1:n_comp
         'DisplayName', sprintf('x_{Pt} = %.2f', x_Pt_vals(i)));
 end
 xlabel('T (K)'); ylabel('a ({\AA})');
-title('Lattice parameter a(T) — Phase 4 Fe_{1-x}Pt_x');
+title('Lattice parameter a(T) — Phase 4 (256-atom Turbo Fe_{1-x}Pt_x)');
 legend('Location', 'northwest');
-saveas(gcf, fullfile(output_dir, 'a_vs_T_all.png'));
-fprintf('Saved: a_vs_T_all.png\n');
+saveas(gcf, fullfile(output_dir, 'a_vs_T_turbo_256at_omp.png'));
+fprintf('Saved: a_vs_T_turbo_256at_omp.png\n');
 
 %% = Plot 2: a(T) — facets per composition =================================
 ncols = 3; nrows = ceil(n_comp / ncols);
@@ -91,9 +99,9 @@ for i = 1:n_comp
     xlabel('T (K)'); ylabel('a ({\AA})');
     title(sprintf('x_{Pt}=%.2f, \\Delta a=%.4f{\\AA}', x_Pt_vals(i), delta_a(i)));
 end
-sgtitle('a(T) facets — Phase 4 Fe_{1-x}Pt_x');
-saveas(gcf, fullfile(output_dir, 'a_vs_T_facets.png'));
-fprintf('Saved: a_vs_T_facets.png\n');
+sgtitle('a(T) facets — Phase 4 (256-atom Turbo Fe_{1-x}Pt_x)');
+saveas(gcf, fullfile(output_dir, 'a_vs_T_turbo_256at_omp_facets.png'));
+fprintf('Saved: a_vs_T_turbo_256at_omp_facets.png\n');
 
 %% = Plot 3: a(x_Pt) at fixed T ============================================
 figure; hold on; grid on;
@@ -109,10 +117,10 @@ for j = 1:n_T
         'DisplayName', sprintf('T = %d K', T_vals(j)));
 end
 xlabel('x_{Pt}'); ylabel('a ({\AA})');
-title('a(x_{Pt}) at fixed T — Phase 4');
+title('a(x_{Pt}) at fixed T — Phase 4 (256-atom Turbo)');
 legend('Location', 'northwest');
-saveas(gcf, fullfile(output_dir, 'a_vs_xPt.png'));
-fprintf('Saved: a_vs_xPt.png\n');
+saveas(gcf, fullfile(output_dir, 'a_vs_comp.png'));
+fprintf('Saved: a_vs_comp.png\n');
 
 %% = Plot 4: CTE vs x_Pt ==================================================
 figure; hold on; grid on;
@@ -125,8 +133,8 @@ for i = 1:n_comp
         'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
         'FontSize', 10, 'FontWeight', 'bold');
 end
-xlabel('x_{Pt}'); ylabel('CTE \\alpha \\times 10^5 (K^{-1})');
-title('Thermal expansion coefficient vs Pt fraction — Phase 4');
+xlabel('x_{Pt}'); ylabel('CTE \alpha \times 10^5 (K^{-1})');
+title('Thermal expansion coefficient vs Pt fraction — Phase 4 (256-atom Turbo)');
 xlim([-0.05, 1.05]);
 saveas(gcf, fullfile(output_dir, 'cte_vs_xPt.png'));
 fprintf('Saved: cte_vs_xPt.png\n');
@@ -149,8 +157,8 @@ for i = 1:n_comp
         'LineWidth', 1.5, 'MarkerSize', 7, ...
         'DisplayName', sprintf('x_{Pt}=%.2f', x_Pt_vals(i)));
 end
-xlabel('T (K)'); ylabel('\\Delta a / a_0 (%)');
-title('Relative thermal expansion — Phase 4 Fe_{1-x}Pt_x');
+xlabel('T (K)'); ylabel('\Delta a / a_0 (%)');
+title('Relative thermal expansion — Phase 4 (256-atom Turbo Fe_{1-x}Pt_x)');
 legend('Location', 'northwest');
 saveas(gcf, fullfile(output_dir, 'delta_a_percent.png'));
 fprintf('Saved: delta_a_percent.png\n');
@@ -162,10 +170,20 @@ writetable(summary_table, fullfile(output_dir, 'phase4_summary.csv'));
 fprintf('Saved: phase4_summary.csv\n');
 
 %% Console summary
-fprintf('\n======= Phase 4 Summary =======\n');
+fprintf('\n======= Phase 4 Summary (256-atom Turbo, seed 26365) =======\n');
 fprintf('%-8s %-12s %-14s\n', 'x_Pt', 'Δa (Å)', 'α_eff (K⁻¹)');
 for i = 1:n_comp
     fprintf('%-8.2f %-12.4f %-14.2e\n', x_Pt_vals(i), delta_a(i), alpha_eff(i));
 end
-fprintf('================================\n');
+fprintf('===========================================================\n');
+
+%% Benchmark comparison
+pt_idx = find(x_Pt_vals == 1.00);
+if ~isempty(pt_idx)
+    alpha_exp = 9.5e-6;
+    ratio = alpha_eff(pt_idx) / alpha_exp * 100;
+    fprintf('\nPt benchmark: α_computed = %.3e  α_exp = %.3e  ratio = %.1f%%\n', ...
+        alpha_eff(pt_idx), alpha_exp, ratio);
+end
+
 disp('Phase 4 MATLAB analysis done.');
