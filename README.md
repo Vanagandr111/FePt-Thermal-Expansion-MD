@@ -2,6 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![LAMMPS](https://img.shields.io/badge/LAMMPS-2Aug2023-orange)](https://www.lammps.org/)
+[![Release v1.6.6](https://img.shields.io/badge/release-v1.6.6-brightgreen)](https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases/tag/v1.6.6)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 This repository contains the complete pipeline for computing lattice parameters and
