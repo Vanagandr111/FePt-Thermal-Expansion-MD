@@ -1,0 +1,51 @@
+Fe-Pt Phase 4 -- Integrity Check (Turbo 256at OMP)
+Seed: 26365
+Protocol: 50000 eq + 100000 prod, Tdamp=1.0, Pdamp=10.0
+MEAM potential: PtFe.meam (Fe-Pt cross interaction)
+Grid: 5 comps x 6 temps = 30 points
+Parallel workers: 10
+============================================================
+  ✓ x_Pt=0.00 T=300: a=3.627013 n=302 drift=2.07e-04
+  ✓ x_Pt=0.00 T=500: a=3.637386 n=302 drift=5.79e-05
+  ✓ x_Pt=0.00 T=700: a=3.647557 n=302 drift=1.05e-03
+  ✓ x_Pt=0.00 T=900: a=3.658476 n=302 drift=1.38e-03
+  ✓ x_Pt=0.00 T=1100: a=3.669001 n=302 drift=1.23e-03
+  ✓ x_Pt=0.00 T=1200: a=3.674681 n=302 drift=2.17e-03
+  ✓ x_Pt=0.25 T=300: a=3.797485 n=202 drift=1.18e-04
+  ✓ x_Pt=0.25 T=500: a=3.806623 n=202 drift=1.91e-03
+  ✓ x_Pt=0.25 T=700: a=3.814489 n=202 drift=1.64e-04
+  ✓ x_Pt=0.25 T=900: a=3.821398 n=202 drift=3.76e-04
+  ✓ x_Pt=0.25 T=1100: a=3.828275 n=202 drift=1.30e-04
+  ✓ x_Pt=0.25 T=1200: a=3.831604 n=202 drift=8.33e-04
+  ✓ x_Pt=0.50 T=300: a=3.869811 n=202 drift=-1.87e-04
+  ✓ x_Pt=0.50 T=500: a=3.875957 n=202 drift=2.82e-05
+  ✓ x_Pt=0.50 T=700: a=3.881715 n=202 drift=1.71e-04
+  ✓ x_Pt=0.50 T=900: a=3.887403 n=202 drift=1.01e-04
+  ✓ x_Pt=0.50 T=1100: a=3.892813 n=202 drift=-5.83e-04
+  ✓ x_Pt=0.50 T=1200: a=3.895203 n=202 drift=3.64e-04
+  ✓ x_Pt=0.75 T=300: a=3.905901 n=202 drift=-1.76e-04
+  ✓ x_Pt=0.75 T=500: a=3.911772 n=202 drift=-1.08e-04
+  ✓ x_Pt=0.75 T=700: a=3.917635 n=202 drift=-1.99e-04
+  ✓ x_Pt=0.75 T=900: a=3.922835 n=202 drift=1.35e-04
+  ✓ x_Pt=0.75 T=1100: a=3.927883 n=202 drift=-6.35e-05
+  ✓ x_Pt=0.75 T=1200: a=3.930933 n=202 drift=1.78e-04
+  ✓ x_Pt=1.00 T=300: a=3.929026 n=202 drift=2.07e-04
+  ✓ x_Pt=1.00 T=500: a=3.935243 n=202 drift=2.33e-05
+  ✓ x_Pt=1.00 T=700: a=3.942110 n=202 drift=-4.16e-04
+  ✓ x_Pt=1.00 T=900: a=3.949330 n=202 drift=1.33e-04
+  ✓ x_Pt=1.00 T=1100: a=3.957704 n=202 drift=5.98e-06
+  ✓ x_Pt=1.00 T=1200: a=3.961384 n=202 drift=-3.30e-04
+============================================================
+✓ 30 verified / Failures: 0 / Total: 30
+
+Pt benchmark (seed=26365):
+  a(300K) = 3.929026 A  (expected ~3.929)
+  a(1200K) = 3.961384 A  (expected ~3.956)
+  a_eff = 9.151e-06  (expected ~7.5e-6)
+  Da300 = 0.000026 A from expected
+
+Pt benchmark (seed=26365):
+  a(300K) = 3.929026 A  (expected ~3.929)
+  a(1200K) = 3.961384 A  (expected ~3.956)
+  a_eff = 9.151e-06  (expected ~7.5e-6)
+  Da300 = 0.000026 A from expected

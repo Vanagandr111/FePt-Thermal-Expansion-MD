@@ -1,0 +1,3 @@
+SEED=26365
+MODE=turbo_256at_omp
+SOURCE=generated

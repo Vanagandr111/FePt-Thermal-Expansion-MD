@@ -1,176 +1,106 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-setlocal enabledelayedexpansion
 
-set PYTHON=.venv\Scripts\python.exe
-if not exist "%PYTHON%" set PYTHON=python
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
-
+:MENU
 cls
 echo ============================================
-echo    Fe-Pt MD — Thermal Expansion Calculator
+echo       Fe-Pt MD - Thermal Expansion
 echo ============================================
 echo.
-
-REM --- Mode selection ---
-:MENU_MODE
-echo  Select calculation mode:
+echo   [0] DEMO (50+100, 2048at, OpenMP)
 echo.
-echo    [M]  MAIN       — run_main.py (sequential, full 50k+100k)
-echo    [T]  TURBO      — parallel, high-accuracy (50k eq + 100k prod^)
-echo    [P]  TURBO-PLUS — parallel, fast (20k eq + 50k prod^)
-echo    [F]  LONG-FAST  — parallel + OpenMP, FULL accuracy (50k eq + 100k prod^)
-echo    [L]  LONG       — sequential, Long Protocol (50k eq + 100k prod^)
+echo   [1] TURBO-FAST (20k+50k, 256at, OpenMP)
+echo   [2] TURBO 256at (50k+100k, OpenMP)
+echo   [3] TURBO 2048at (OpenMP)
+echo   [4] TURBO 2048at (KOKKOS)
 echo.
-set MODE=M
-set /p MODE="Choose [M/T/P/F/L] (default M): "
-if /i "%MODE%"=="T" set MODE_LABEL=TURBO
-if /i "%MODE%"=="T" set SCRIPT=scripts\run_phase4_turbo.py
-if /i "%MODE%"=="T" set MODE_FLAG=--turbo
-if /i "%MODE%"=="T" set OUT_DIR=output_v4
-if /i "%MODE%"=="P" set MODE_LABEL=TURBO-PLUS
-if /i "%MODE%"=="P" set SCRIPT=scripts\run_phase4_turbo.py
-if /i "%MODE%"=="P" set MODE_FLAG=--turbo-plus
-if /i "%MODE%"=="P" set OUT_DIR=output_v4
-if /i "%MODE%"=="L" set MODE_LABEL=LONG
-if /i "%MODE%"=="L" set SCRIPT=scripts\run_phase4.py
-if /i "%MODE%"=="L" set MODE_FLAG=
-if /i "%MODE%"=="L" set OUT_DIR=output_v4
-if /i "%MODE%"=="F" set MODE_LABEL=LONG-FAST
-if /i "%MODE%"=="F" set SCRIPT=scripts\run_phase4_long_fast.py
-if /i "%MODE%"=="F" set MODE_FLAG=
-if /i "%MODE%"=="F" set OUT_DIR=output_v4\long_fast
-if /i "%MODE%"=="M" set MODE_LABEL=MAIN
-if /i "%MODE%"=="M" set SCRIPT=scripts\run_main.py
-if /i "%MODE%"=="M" set MODE_FLAG=
-if /i "%MODE%"=="M" set OUT_DIR=results
-if not defined SCRIPT (
-    echo  Invalid choice, using MAIN
-    set MODE=M
-    set MODE_LABEL=MAIN
-    set SCRIPT=scripts\run_main.py
-    set MODE_FLAG=
-    set OUT_DIR=results
-)
-
-cls
+echo   [5] LONG 256at (OpenMP)
+echo   [6] LONG 2048at (OpenMP)
+echo   [7] LONG 2048at (KOKKOS)
+echo.
+echo   [8] TURBO-EXPERIMENTAL 256at (OMP 4t, neigh/5)
+echo.
+echo   [x] Exit
+echo.
 echo ============================================
-echo  Mode: %MODE_LABEL%
-echo ============================================
+set /p CHOICE="Your choice (0-8,x): "
+
+if /i "%CHOICE%"=="x" exit /b 0
+
 echo.
+echo [DIAG] CHOICE='%CHOICE%'
+echo --- Seed Configuration ---
+echo.
+echo   [Enter]     - auto-generate new random seed
+echo   [12345]     - enter a specific seed number
+echo   [R]         - re-use last used seed
+echo.
+set /p SEED_INPUT="Seed (Enter=auto / R=reuse / number): "
 
-REM --- Resume / Partial results check ---
-set PARTIAL=0
-if "%OUT_DIR%"=="results" (
-    if exist "results\logs" dir /b "results\logs\log_*.lmp" >nul 2>nul
-    if not errorlevel 1 set PARTIAL=1
-)
-if "%OUT_DIR%"=="output_v4" (
-    if exist "output_v4\logs" dir /b "output_v4\logs\log_*.lmp" >nul 2>nul
-    if not errorlevel 1 set PARTIAL=1
-)
-if "%OUT_DIR%"=="output_v4\long_fast" (
-    if exist "output_v4\long_fast\logs" dir /b "output_v4\long_fast\logs\log_*.lmp" >nul 2>nul
-    if not errorlevel 1 set PARTIAL=1
-)
-
-if "%PARTIAL%"=="1" (
-    echo  [^>] Existing log files found in %OUT_DIR%\logs^\
-    echo.
-    set /p RESUME="Continue (resume) from where it stopped? [Y/n]: "
-    if /i "!RESUME!"=="Y" set RESUME_FLAG=1
-    if /i "!RESUME!"=="" set RESUME_FLAG=1
-    if "!RESUME_FLAG!"=="1" (
-        echo  Will resume — existing points will be kept.
-        echo.
+set SEED_FLAG=
+if not "%SEED_INPUT%"=="" (
+    if /i "%SEED_INPUT%"=="R" (
+        set SEED_FLAG=--seed "reuse"
     ) else (
-        set /p FORCE_RESUME="Clear all and recalculate from scratch? [y/N]: "
-        if /i "!FORCE_RESUME!"=="y" (
-            if "%OUT_DIR%"=="results" rmdir /s /q results >nul 2>nul & mkdir results >nul 2>nul
-            if "%OUT_DIR%"=="output_v4" rmdir /s /q output_v4 >nul 2>nul
-            if "%OUT_DIR%"=="output_v4\long_fast" if exist output_v4\long_fast rmdir /s /q output_v4\long_fast >nul 2>nul
-            echo  Cleared. Will start fresh.
-        ) else (
-            echo  Cancelled.
-            pause
-            exit /b 0
-        )
-    )
-)
-if not defined RESUME_FLAG set RESUME_FLAG=0
-
-REM --- Seed dialog ---
-echo.
-echo  --- Seed Configuration ---
-echo.
-set SEED_ARGS=
-if "!RESUME_FLAG!"=="1" (
-    echo  Resume selected: will re-use seed from existing output/logs.
-) else (
-    echo  Options:
-    echo    [Enter]     — auto-generate new random seed
-    echo    [12345]     — enter a specific seed number
-    echo    [R]         — re-use last used seed
-    echo.
-
-    set /p SEED_INPUT="Seed (Enter=auto / R=re-use / number): "
-
-    if /i "!SEED_INPUT!"=="R" (
-        set SEED_ARGS=--reuse-seed
-        echo  Will re-use last seed.
-    ) else if "!SEED_INPUT!"=="" (
-        set SEED_ARGS=
-        echo  Will auto-generate seed.
-    ) else (
-        set SEED_ARGS=--seed !SEED_INPUT!
-        echo  Manual seed: !SEED_INPUT!
+        set SEED_FLAG=--seed "%SEED_INPUT%"
     )
 )
 
-set RUN_ARGS=%MODE_FLAG% %SEED_ARGS%
-if "!RESUME_FLAG!"=="1" (
-    set RUN_ARGS=!RUN_ARGS! --resume
-) else (
-    set RUN_ARGS=!RUN_ARGS! --force
-)
-
-REM --- Build command ---
 echo.
-echo ============================================
-echo   Starting %MODE_LABEL% mode
-echo   Script: %SCRIPT%
-echo   Args: !RUN_ARGS!
-echo ============================================
-echo.
+rem --- Archive old results ---
+set OUT_DIR=output_v4_256
+if "%CHOICE%"=="0" set OUT_DIR=output_v4
+if "%CHOICE%"=="3" set OUT_DIR=output_v4
+if "%CHOICE%"=="4" set OUT_DIR=output_v4
+if "%CHOICE%"=="6" set OUT_DIR=output_v4
+if "%CHOICE%"=="7" set OUT_DIR=output_v4
 
-%PYTHON% %SCRIPT% !RUN_ARGS!
-if errorlevel 1 (
+if exist "%OUT_DIR%\" (
     echo.
-    echo [ERROR] Calculation failed (exit code %errorlevel%^)
-    pause
-    exit /b 1
+    echo ============================================
+    echo  Archiving old %OUT_DIR%...
+    powershell -NoProfile -Command "$d='%~dp0%OUT_DIR%'; if(Test-Path $d){$ts=Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'; $b=$d+'_backup_'+$ts; Move-Item $d $b; Write-Host '  Archived to: ' (Split-Path $b -Leaf)}"
+    echo ============================================
 )
 
 echo.
 echo ============================================
-echo    Done! Results saved to %OUT_DIR%^\
+if "%CHOICE%"=="0" echo  Starting DEMO mode
+if "%CHOICE%"=="0" python "%~dp0scripts\run_mode.py" --mode demo %SEED_FLAG%
+
+if "%CHOICE%"=="1" echo  Starting TURBO-FAST (256at, OpenMP)
+if "%CHOICE%"=="1" python "%~dp0scripts\run_mode.py" --mode turbo-fast %SEED_FLAG%
+
+if "%CHOICE%"=="2" echo  Starting TURBO 256at (OpenMP)
+if "%CHOICE%"=="2" python "%~dp0scripts\run_mode.py" --mode turbo --natoms 256 --backend omp %SEED_FLAG%
+
+if "%CHOICE%"=="3" echo  Starting TURBO 2048at (OpenMP)
+if "%CHOICE%"=="3" python "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend omp %SEED_FLAG%
+
+if "%CHOICE%"=="4" echo  Starting TURBO 2048at (KOKKOS)
+if "%CHOICE%"=="4" python "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend kokkos %SEED_FLAG%
+
+if "%CHOICE%"=="5" echo  Starting LONG 256at (OpenMP)
+if "%CHOICE%"=="5" python "%~dp0scripts\run_mode.py" --mode long --natoms 256 --backend omp %SEED_FLAG%
+
+if "%CHOICE%"=="6" echo  Starting LONG 2048at (OpenMP)
+if "%CHOICE%"=="6" python "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend omp %SEED_FLAG%
+
+if "%CHOICE%"=="7" echo  Starting LONG 2048at (KOKKOS)
+if "%CHOICE%"=="7" python "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend kokkos %SEED_FLAG%
+
+if "%CHOICE%"=="8" echo  Starting TURBO-EXPERIMENTAL 256at (OMP 4t, neigh/5)
+if "%CHOICE%"=="8" python "%~dp0scripts\run_mode.py" --mode turbo-experimental %SEED_FLAG%
 echo ============================================
+goto END
+
+:END
 echo.
-if "%OUT_DIR%"=="results" (
-    echo  results\results.csv            — data table (with seed)
-    echo  results\plots\a_vs_T.png       — a(T^) plot (seed in title^)
-    echo  results\plots\a_vs_comp.png    — a(comp^) plot
-    echo  results\plots\a_vs_T_facets.png — detailed facets
-) else (
-    echo  %OUT_DIR%\all_results*.csv     — data table (with seed)
-    echo  %OUT_DIR%\a_vs_T_all*.png      — a(T^) plot
-    echo  %OUT_DIR%\a_vs_comp*.png       — a(comp^) plot
-    echo  %OUT_DIR%\integrity_check*.txt — integrity report
-)
-echo  seed_info.txt in output dir      — calculation seed
-echo  seed.txt in project root         — last used seed
+echo ============================================
+echo    DONE -- All calculations finished
+echo    Results in %OUT_DIR%\
+echo ============================================
 echo.
 pause
 exit /b 0

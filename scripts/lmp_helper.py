@@ -118,7 +118,8 @@ _RUN_LMP_BAT = os.path.join(PROJDIR, '_run_lmp.bat')
 # sidefx: io (spawns subprocess, creates LAMMPS log)
 # purity: impure
 # errors: returns error dict with ok=False on all failure modes
-def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0, **kwargs):
+def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0,
+            kokkos=False, **kwargs):
     """
     Run LAMMPS via _run_lmp.bat (helper with %~dp0).
     Paths relative from PROJDIR.
@@ -146,6 +147,8 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0, **kw
 
     if omp_threads > 0:
         bat_args += ['-sf', 'omp', '-pk', 'omp', str(omp_threads)]
+    if kokkos:
+        bat_args += ['-sf', 'kokkos', '-pk', 'kokkos']
 
     shell_cmd = subprocess.list2cmdline(bat_args)
 
@@ -154,6 +157,9 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0, **kw
         proc_env['OMP_NUM_THREADS'] = str(omp_threads)
     if 'env' in kwargs:
         proc_env.update(kwargs.pop('env'))
+    # use_kokkos from caller → kokkos flag
+    if kwargs.pop('use_kokkos', None):
+        kokkos = True
 
     start = time.time()
     timed_out = False
@@ -197,12 +203,14 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0, **kw
 # sidefx: io (writes data.fept_*.lmp)
 # purity: impure
 # errors: returns existing path if file already exists
-def gen_structure(comp, nx=8, ny=8, nz=8):
-    """Generate structure via gen_structure.py."""
+def gen_structure(comp, nx=8, ny=8, nz=8, force=False):
+    """Generate structure via gen_structure.py. force=True = regenerate even if exists."""
     gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
     outfile = os.path.join(DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
     if os.path.exists(outfile):
-        return outfile
+        if not force:
+            return outfile
+        os.remove(outfile)
     subprocess.run(
         [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile],
         capture_output=True, timeout=30
@@ -269,6 +277,26 @@ def parse_production(logpath, natoms=2048):
                         pass
 
     if not a_vals:
+        # Fallback 2: single-run mode — RUN_START to RUN_DONE
+        for line in text.split('\n'):
+            s = line.strip()
+            if 'RUN_START' in s:
+                in_prod = True
+                continue
+            if 'RUN_DONE' in s:
+                in_prod = False
+                break
+            if in_prod and s and s[0].isdigit():
+                parts = s.split()
+                if len(parts) >= 9:
+                    try:
+                        vol = float(parts[5])
+                        a = (vol * 4 / natoms) ** (1 / 3)
+                        a_vals.append(a)
+                    except Exception:
+                        pass
+
+    if not a_vals:
         return {'n_points': 0}
 
     n = len(a_vals)
@@ -300,8 +328,15 @@ def parse_production(logpath, natoms=2048):
 # purity: impure
 def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
                 tdamp=1.0, pdamp=10.0, seed=12345, neighbor_radius=None,
-                omp_threads=0, pair_style_type='meam'):
-    """Generate a LAMMPS input file. Parameterized for all modes."""
+                omp_threads=0, pair_style_type='meam', use_kokkos=False,
+                single_run=False, neigh_modify_every=1):
+    """Generate a LAMMPS input file. Parameterized for all modes.
+
+    When single_run=True: eq+prod combined into one continuous run
+    (workaround for MEAM crash on pure Fe between two `run` commands with MinGW LAMMPS).
+
+    neigh_modify_every: neighbour rebuild frequency (default 1, experimental = 5)
+    """
     os.makedirs(os.path.join(out, 'in'), exist_ok=True)
     fname = 'in_phase4_{:.2f}_{}.lmp'.format(comp, T)
     infile = os.path.join(out, 'in', fname)
@@ -309,7 +344,11 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
     data_rel = os.path.relpath(datafile, PROJDIR)
     neighbor_line = 'neighbor        {} bin'.format(neighbor_radius) if neighbor_radius else 'neighbor        2.0 bin'
 
-    omp_line = 'package omp {}'.format(omp_threads) if omp_threads > 0 else None
+    # package omp / kokkos handled by CLI flags (run_lmp passes -sf/-pk)
+    # Do NOT add to input file to avoid "Package command after sim box" error
+    # See: wsl-windows-utf8 troubleshooting section
+    # omp_line = 'package omp {}'.format(omp_threads) if omp_threads > 0 else None
+    kokkos_line = 'package kokkos' if use_kokkos else None
 
     lines = [
         '# Phase 4 Fe-Pt MEAM T={}K comp={:.2f} seed={}'.format(T, comp, seed),
@@ -319,8 +358,8 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
         '',
         'read_data       {}'.format(data_rel),
     ]
-    if omp_line:
-        lines += ['', omp_line]
+    if kokkos_line:
+        lines += ['', kokkos_line]
     if pair_style_type == 'eam':
         # Single-element EAM (e.g. Pt_u3.eam for pure Pt)
         ps_name = 'eam'
@@ -340,7 +379,7 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
     lines += ps_lines + [
         '',
         neighbor_line,
-        'neigh_modify    every 1 delay 0 check yes',
+        'neigh_modify    every {} delay 0 check yes'.format(neigh_modify_every),
         '',
         'thermo          100',
         'thermo_style    custom step temp pe ke press vol lx ly lz',
@@ -352,17 +391,30 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
         '',
         'fix             nptfix all npt temp {} {} {} iso 0.0 0.0 {}'.format(T, T, tdamp, pdamp),
         '',
-        'thermo          1000',
-        'print           "EQ_START"',
-        'run             {}'.format(eq_steps),
-        'print           "EQ_DONE"',
-        '',
-        'thermo          500',
-        'print           "PRODUCTION_START"',
-        'run             {}'.format(prod_steps),
-        'print           "PRODUCTION_DONE"',
-        'print           "DONE"',
     ]
+
+    if single_run:
+        total_steps = eq_steps + prod_steps
+        lines += [
+            'thermo          500',
+            'print           "RUN_START"',
+            'run             {}'.format(total_steps),
+            'print           "RUN_DONE"',
+            'print           "DONE"',
+        ]
+    else:
+        lines += [
+            'thermo          1000',
+            'print           "EQ_START"',
+            'run             {}'.format(eq_steps),
+            'print           "EQ_DONE"',
+            '',
+            'thermo          500',
+            'print           "PRODUCTION_START"',
+            'run             {}'.format(prod_steps),
+            'print           "PRODUCTION_DONE"',
+            'print           "DONE"',
+        ]
     with open(infile, 'w', newline='\n') as f:
         f.write('\n'.join(lines) + '\n')
     return infile
@@ -757,8 +809,20 @@ def integrity_check(parsed_all, comps, temps, out, seed, eq_steps, prod_steps,
     # Print Pt benchmark
     if pt_300.get('a_mean') and pt_1200.get('a_mean'):
         print('\n  --- Pt Benchmark (seed={}) ---'.format(seed))
-        print('  a(300K) = {:.6f} A (expected ~3.929)'.format(a300))
-        print('  a(1200K) = {:.6f} A (expected ~3.956)'.format(a1200))
+        print('  a(300K) = {:.6f} A (expected 3.923-3.924)'.format(a300))
+        print('  a(1200K) = {:.6f} A'.format(a1200))
+        # CTE comparison for Pt
+        pt_a_vals = [(T, parsed_all[(1.0, T)]['a_mean'])
+                     for T in temps
+                     if (1.0, T) in parsed_all and parsed_all[(1.0, T)].get('a_mean')]
+        pt_cte = calc_cte_report(pt_a_vals) if len(pt_a_vals) >= 2 else None
+        if pt_cte:
+            PT_CTE_REF = 9.0e-6
+            dev_2pt = pt_cte['alpha_2pt'] - PT_CTE_REF
+            dev_fit = pt_cte['alpha_fit'] - PT_CTE_REF
+            print('  CTE(Pt) alpha_2pt={:.3e}  alpha_fit={:.3e}  (ref={:.1e})'.format(
+                pt_cte['alpha_2pt'], pt_cte['alpha_fit'], PT_CTE_REF))
+            print('  Deviation: d_2pt={:+.3e}  d_fit={:+.3e}'.format(dev_2pt, dev_fit))
 
     # Print CTE report
     print('\n  --- CTE Report (all methods) ---')
@@ -1062,3 +1126,67 @@ def make_plots(parsed_all, comps, temps, seed, out,
     fig.savefig(os.path.join(out, a_vs_T_facets_fn), dpi=150)
     plt.close(fig)
     print('  Plot: {}'.format(a_vs_T_facets_fn))
+
+
+# ── Potential helper ──
+def get_potential(comp):
+    """Return (pot_line, pair_style_type) for given Fe-Pt composition."""
+    if comp >= 0.99:
+        return 'potentials/Pt_u3.eam', 'eam'
+    meam_lib = 'potentials/library.meam'
+    meam_params = 'potentials/PtFe.meam'
+    return 'pair_coeff * * {} Fe Pt {} Fe Pt'.format(meam_lib, meam_params), 'meam'
+
+
+# ── Stale process handler ──
+def check_stale_lammps():
+    """Kill stale lmp.exe processes before starting a new run."""
+    import subprocess as _sp
+    try:
+        out = _sp.check_output('tasklist /fo csv /nh /fi "imagename eq lmp.exe"',
+                               shell=True, timeout=30, text=True, stderr=_sp.DEVNULL)
+        if 'lmp.exe' in out:
+            print('  Found stale lmp.exe — killing...')
+            _sp.run('taskkill /f /im lmp.exe', shell=True, timeout=15,
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            import time as _t
+            for _ in range(3):
+                _t.sleep(1)
+                check = _sp.run('tasklist /nh /fi "imagename eq lmp.exe"',
+                                shell=True, timeout=10, capture_output=True, text=True)
+                if 'lmp.exe' not in check.stdout:
+                    print('  All stale lmp.exe killed.')
+                    return
+            print('  WARNING: some stale lmp.exe may remain.')
+    except Exception:
+        pass
+
+
+# ── Write protocol log ──
+def write_protocol_log(outdir, script_name, eq_steps, prod_steps, tdamp, pdamp,
+                       comps, temps, seed,
+                       proto_name='protocol.txt',
+                       mode_label=None, mode_extra=None):
+    """Write run protocol log with parameters and points list."""
+    proto_path = os.path.join(outdir, proto_name)
+    with open(proto_path, 'w', encoding='utf-8') as f:
+        f.write('Fe-Pt MD Protocol\n')
+        f.write('Script: {}\n'.format(script_name))
+        f.write('Mode: {}\n'.format(mode_label or 'N/A'))
+        if mode_extra:
+            for k, v in mode_extra.items():
+                f.write('  {}: {}\n'.format(k, v))
+        f.write('Eq steps: {}\n'.format(eq_steps))
+        f.write('Prod steps: {}\n'.format(prod_steps))
+        f.write('Tdamp: {}  Pdamp: {}\n'.format(tdamp, pdamp))
+        f.write('Seed: {}\n'.format(seed))
+        f.write('Temperatures: {}\n'.format(', '.join(str(T) for T in temps)))
+        f.write('Compositions: {}\n'.format(', '.join('{:.2f}'.format(c) for c in comps)))
+        f.write('Points:\n')
+        for comp in comps:
+            for T in temps:
+                f.write('  x_Pt={:.2f} T={}K\n'.format(comp, T))
+    print('  Protocol: {}'.format(proto_path))
+    return proto_path
+
+

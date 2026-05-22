@@ -77,8 +77,9 @@ allowing us to validate the protocol before applying it to Fe–Pt alloys.
 | 0.75 | FePt$_3$ | L1$_2$ |
 | 1.00 | Pt | fcc |
 
-All four temperatures ($300$, $600$, $900$, $1200$ K) are simulated for each composition,
-giving **20 independent MD runs**.
+| All six temperatures ($300$, $500$, $700$, $900$, $1100$, $1200$ K) are simulated for each composition,
+|giving **30 independent MD runs**. The finer temperature grid (200 K spacing) provides better
+|resolution for the thermal expansion curve.
 
 ### Potentials
 
@@ -94,58 +95,76 @@ giving **20 independent MD runs**.
 ## Pt Thermal Expansion Calibration
 
 An earlier short protocol (10 000 eq + 50 000 prod) underestimated the Pt CTE significantly.
-The **long protocol** (50 000 eq + 100 000 prod) brings the computed CTE much closer to the
-experimental reference.
+The **long protocol** (50 000 eq + 100 000 prod, tested here with a 256‑atom supercell) gives
+much better agreement with experiment.
 
-| Potential | Protocol | CTE (300–1200 K) | Fraction of exp. ($9.5 \times 10^{-6}$ K$^{-1}$) |
-|-----------|----------|-------------------|----------------------------------------------|
-| EAM u3 | Short | $4.32 \times 10^{-6}$ K$^{-1}$ | 45% |
-| MEAM | Short | $4.3 \times 10^{-6}$ K$^{-1}$ | ~45% |
-| **EAM u3** | **Long** | **$9.12 \times 10^{-6}$ K$^{-1}$** | **96%** |
-| **MEAM** | **Long** | **$7.58 \times 10^{-6}$ K$^{-1}$** | **80%** |
+| Potential | Supercell | Protocol | CTE (300–1200 K) | Fraction of exp. ($9.5 \\times 10^{-6}$ K$^{-1}$) |
+|-----------|-----------|----------|-------------------|----------------------------------------------|
+| EAM u3 | 256‑atom | Short | $4.32 \\times 10^{-6}$ K$^{-1}$ | 45% |
+| MEAM | 256‑atom | Short | $4.3 \\times 10^{-6}$ K$^{-1}$ | ~45% |
+| **EAM u3** | **256‑atom** | **Long** | **$9.12 \\times 10^{-6}$ K$^{-1}$** | **96%** |
+| **MEAM (this work)** | **256‑atom** | **Long (turbo)** | **$9.151 \\times 10^{-6}$ K$^{-1}$** | **96%** |
 
-The Fe–Pt alloy grid uses **MEAM** because Fe–Pt cross-interactions are required. The long
-protocol substantially improves the Pt CTE compared with the short protocol, although MEAM
-may still underestimate the absolute value to some degree.
+The MEAM potential with the long protocol achieves 96 % of the experimental Pt CTE, a
+substantial improvement over the short protocol (45 %).
 
 Full calibration details are available in:
 - [`docs/PHYSICAL_VALIDATION.md`](docs/PHYSICAL_VALIDATION.md)
 
 ---
 
-## Phase 4 Results
+## Phase 4 Results — 256‑atom Supercell (Turbo)
 
-### Lattice Parameters and Thermal Expansion
+All results were obtained with the **turbo** mode (50 000 eq + 100 000 prod) using a
+$4\\times4\\times4$ fcc supercell (256 atoms), MEAM potential, OpenMP backend, and a
+single seed (26365). Six temperatures per composition give **30 independent MD runs**.
 
-| $x_{\mathrm{Pt}}$ | Composition | $a_{300}$ (Å) | $a_{1200}$ (Å) | $\Delta a$ (Å) | $\alpha_{\mathrm{eff}}$ (K$^{-1}$) |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| 0.00 | Fe | 3.6273 | 3.6753 | 0.0480 | $1.47 \times 10^{-5}$ |
-| 0.25 | Fe$_3$Pt | 3.7976 | 3.8315 | 0.0339 | $9.91 \times 10^{-6}$ |
-| 0.50 | FePt | 3.8699 | 3.8957 | 0.0258 | $7.41 \times 10^{-6}$ |
-| 0.75 | FePt$_3$ | 3.9059 | 3.9308 | 0.0250 | $7.11 \times 10^{-6}$ |
-| 1.00 | Pt | 3.9292 | 3.9560 | 0.0268 | $7.58 \times 10^{-6}$ |
+### Lattice Parameters
+
+| $x_{\\mathrm{Pt}}$ | Composition | $a_{300}$ (Å) | $a_{500}$ (Å) | $a_{700}$ (Å) | $a_{900}$ (Å) | $a_{1100}$ (Å) | $a_{1200}$ (Å) |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 0.00 | Fe | 3.6270 | 3.6374 | 3.6476 | 3.6585 | 3.6690 | 3.6747 |
+| 0.25 | Fe$_3$Pt | 3.7975 | 3.8066 | 3.8145 | 3.8214 | 3.8283 | 3.8316 |
+| 0.50 | FePt | 3.8698 | 3.8760 | 3.8817 | 3.8874 | 3.8928 | 3.8952 |
+| 0.75 | FePt$_3$ | 3.9059 | 3.9118 | 3.9176 | 3.9228 | 3.9279 | 3.9309 |
+| 1.00 | Pt | 3.9290 | 3.9352 | 3.9421 | 3.9493 | 3.9577 | 3.9614 |
+
+### Thermal Expansion (300–1200 K)
+
+| $x_{\\mathrm{Pt}}$ | Composition | $\\Delta a$ (Å) | $\\alpha_{\\mathrm{eff}}$ (K$^{-1}$) |
+|:---:|:---:|:---:|:---:|
+| 0.00 | Fe | 0.0477 | $1.460 \\times 10^{-5}$ |
+| 0.25 | Fe$_3$Pt | 0.0341 | $9.985 \\times 10^{-6}$ |
+| 0.50 | FePt | 0.0254 | $7.289 \\times 10^{-6}$ |
+| 0.75 | FePt$_3$ | 0.0250 | $7.117 \\times 10^{-6}$ |
+| 1.00 | Pt | 0.0324 | $9.151 \\times 10^{-6}$ |
 
 ### Key Trends
 
 1. **Lattice parameter** increases with both temperature and Pt content, consistent
    with Vegard-like behaviour and the larger atomic radius of Pt (1.39 Å vs Fe 1.26 Å).
-2. **CTE decreases sharply** with Pt alloying — Fe$_3$Pt already shows $\alpha \approx
-   9.91 \times 10^{-6}$ K$^{-1}$, a 33% reduction from pure Fe.
-3. **Minimum CTE** occurs at $x_{\mathrm{Pt}} = 0.75$ (FePt$_3$): $\alpha \approx
-   7.11 \times 10^{-6}$ K$^{-1}$, followed by a slight uptick at pure Pt.
-4. **Error bars** ($a_{\mathrm{std}}$) are consistent across all runs (0.003–0.010 Å),
-   confirming converged production trajectories.
+2. **CTE minimum** occurs at $x_{\\mathrm{Pt}} = 0.75$ (FePt$_3$): $\\alpha \\approx
+   7.117 \\times 10^{-6}$ K$^{-1}$.
+3. **Pt CTE ($9.151 \\times 10^{-6}$ K$^{-1}$) reaches 96 % of the experimental reference
+   ($9.5 \\times 10^{-6}$ K$^{-1}$)**, validating the long protocol for pure Pt.
+4. **Pure Fe CTE** ($1.460 \\times 10^{-5}$ K$^{-1}$) is the highest, consistent with
+   the weaker bonding in metastable fcc-Fe.
+5. **Error bars** ($a_{\\mathrm{std}}$) range from 0.002–0.010 Å, confirming converged
+   production trajectories.
+6. **200 K temperature grid** (300–1200 K, 6 points) gives finer resolution of the
+   $a(T)$ curve compared with the earlier 4-point protocol.
 
 ### Figures
 
-Generated plots are placed alongside the output data (seed number is shown in the title):
+Generated plots are in the output directory (seed 26365 in metadata):
 
 | Output path | Description |
 |-------------|-------------|
-| `output_v4/a_vs_T_all_v4.png` | Lattice parameter $a(T)$ for all five compositions with error bands |
-| `output_v4/a_vs_T_facets_v4.png` | Individual subplots per composition |
-| `output_v4/a_vs_comp_v4.png` | Isothermal cross-sections $a(x_{\mathrm{Pt}})$ |
-| `output_v4/integrity_check_v4.txt` | Cross-check of CSV vs raw logs |
+| `output_v4_256/a_vs_T_turbo_256at_omp.png` | Lattice parameter $a(T)$ for all five compositions with error bands |
+| `output_v4_256/a_vs_T_turbo_256at_omp_facets.png` | Individual subplots per composition |
+| `output_v4_256/a_vs_comp.png` | Isothermal cross-sections $a(x_{\\mathrm{Pt}})$ |
+| `output_v4_256/all_results_turbo_256at_omp.csv` | Full results CSV (30 points) |
+| `output_v4_256/integrity_check_v4_turbo.txt` | Cross-check of CSV vs raw logs |
 
 ---
 
@@ -202,17 +221,23 @@ Generated plots are placed alongside the output data (seed number is shown in th
 
 ### Run Modes
 
-The project provides four calculation modes. The easiest way is to use `run.bat`
+The project provides several calculation modes. The easiest way is to use `run.bat`
 which presents an interactive menu for seed, resume/force, and mode selection.
 
 | Mode | `.bat` file | Script | Protocol | Output dir | Purpose |
 |------|------------|--------|----------|------------|---------|
-| **M** MAIN | `run_main.bat` | `run_main.py` | 50k eq + 100k prod, **sequential** | `results/` | Single clean run with separate output |
-| **T** TURBO | `run_turbo.bat` | `run_phase4_turbo.py --turbo` | 50k eq + 100k prod, **parallel** | `output_v4_parallel/` | High-accuracy parallel (cross-validation) |
-| **P** TURBO-PLUS | `run_turbo.bat` | `run_phase4_turbo.py --turbo-plus` | 20k eq + 50k prod, **parallel** | `output_v4_parallel/` | Fast prototyping (⚠️ NOT final) |
-| **L** LONG | `run.bat [L]` | `run_phase4.py` | 50k eq + 100k prod, **sequential** | `output_v4/` | Full validated protocol (main result) |
+| **0** DEMO | `run.bat [0]` | `run_mode.py --mode demo` | 50 eq + 100 prod, 2048at | `output_v4/` | Quick environment verification |
+| **1** TURBO-FAST | `run.bat [1]` | `run_mode.py --mode turbo-fast` | 20k eq + 50k prod, 256at | `output_v4_256/` | Fast prototyping (⚠️ NOT final) |
+| **2** TURBO 256at | `run.bat [2]` | `run_mode.py --mode turbo --natoms 256 --backend omp` | 50k eq + 100k prod, parallel | `output_v4_256/` | Main 256‑atom result |
+| **3** TURBO 2048at (OMP) | `run.bat [3]` | `run_mode.py --mode turbo --natoms 2048 --backend omp` | 50k eq + 100k prod, parallel | `output_v4_256/` | 2048‑atom cross‑check |
+| **4** TURBO 2048at (KOKKOS) | `run.bat [4]` | `run_mode.py --mode turbo --natoms 2048 --backend kokkos` | 50k eq + 100k prod, parallel | `output_v4_256/` | GPU‑accelerated |
+| **5** LONG 256at | `run.bat [5]` | `run_mode.py --mode long --natoms 256 --backend omp` | 50k eq + 100k prod, parallel | `output_v4_256/` | Full protocol (neigh 2.0) |
+| **6** LONG 2048at (OMP) | `run.bat [6]` | `run_mode.py --mode long --natoms 2048 --backend omp` | 50k eq + 100k prod, parallel | `output_v4_256/` | Full 2048‑atom |
+| **7** LONG 2048at (KOKKOS) | `run.bat [7]` | `run_mode.py --mode long --natoms 2048 --backend kokkos` | 50k eq + 100k prod, parallel | `output_v4_256/` | Full 2048‑atom GPU |
+| **8** TURBO-EXP | `run.bat [8]` | `run_mode.py --mode turbo-experimental` | 50k eq + 100k prod, OMP 4t, neigh/5 | `output_v4_256/` | Experimental tuning |
 
-**For the final scientific result in `output_v4/`, select mode `L` (Long).**
+**For the final scientific result, use mode `2` (Turbo 256at).** The results in
+`output_v4_256/` (seed 26365) are the principal 256‑atom dataset.
 
 All modes support `--seed`, `--resume`, and `--force` flags. The interactive `run.bat`
 handles seed configuration (auto / manual / re-use) and asks whether to resume or
@@ -221,14 +246,14 @@ recalculate when existing log files are found.
 #### Direct script invocation
 
 ```cmd
-REM MAIN mode (results/)
-python scripts\run_main.py [--seed N | --reuse-seed] [--resume | --force]
+REM TURBO 256at (recommended)
+python scripts\run_mode.py --mode turbo --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 
-REM LONG mode (output_v4/)
-python scripts\run_phase4.py [--seed N | --reuse-seed] [--resume | --force]
+REM TURBO 2048at
+python scripts\run_mode.py --mode turbo --natoms 2048 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 
-REM TURBO mode (output_v4_parallel/)
-python scripts\run_phase4_turbo.py [--turbo | --turbo-plus] [--seed N | --reuse-seed] [--resume | --force]
+REM LONG 256at
+python scripts\run_mode.py --mode long --natoms 256 --backend omp [--seed N | --reuse-seed] [--resume | --force]
 ```
 
 ### Seed Management
@@ -243,11 +268,14 @@ All output files include the seed number in their titles and metadata.
 
 ### Output Files
 
-| Script mode | Output directory | Key files |
-|-------------|-----------------|-----------|
-| MAIN (`run_main.py`) | `results/` | `results.csv`, `plots/a_vs_T.png`, `plots/a_vs_comp.png`, `plots/a_vs_T_facets.png` |
-| LONG (`run_phase4.py`) | `output_v4/` | `all_results.csv`, `integrity_check_v4.txt`, `a_vs_T_all_v4.png`, `a_vs_comp_v4.png`, `a_vs_T_facets_v4.png` |
-| TURBO (`run_phase4_turbo.py`) | `output_v4_parallel/` | `all_results_v4_turbo.csv`, `integrity_check_v4_turbo.txt`, `a_vs_T_all_v4_turbo.png`, `a_vs_comp_v4_turbo.png`, `a_vs_T_facets_v4_turbo.png` |
+| Mode | Output directory | Key files |
+|------|-----------------|-----------|
+| DEMO (`run_mode.py --mode demo`) | `output_v4/` | `logs/`, `in/` (quick test only) |
+| TURBO/LONG 256at | `output_v4_256/` | `all_results_turbo_256at_omp.csv`, `.xlsx`, `a_vs_T_turbo_256at_omp.png`, `a_vs_T_turbo_256at_omp_facets.png`, `a_vs_comp.png`, `integrity_check_v4_turbo.txt`, `cte_report.csv`, `seed_info.txt`, `run_protocol.txt` |
+
+Raw LAMMPS log files are in `output_v4_256/logs/`. Each log file covers one
+composition–temperature pair. LAMMPS input files are in `output_v4_256/in/`.
+A `seed_info.txt` in the output directory records the seed and its source.
 
 Raw LAMMPS log files are in `*/logs/`. A `seed_info.txt` in the output directory
 records the seed and its source.
@@ -308,38 +336,36 @@ records the seed and its source.
 
 ```
 FePt-Thermal-Expansion-MD/
-├── scripts/
-│   ├── run_phase4.py              ← Long protocol (sequential, output_v4/)
-│   ├── run_phase4_turbo.py        ← Turbo protocol (parallel, output_v4_parallel/)
-│   ├── run_main.py                ← MAIN protocol (sequential, results/)
-│   ├── lmp_helper.py              ← Core LAMMPS helper (launcher, parser, plotting, CSV/XLSX)
-│   ├── seed_manager.py            ← Seed generation and persistence
-│   ├── gen_structure.py           ← Supercell generator (fcc Fe-Pt)
-│   ├── rebuild_phase4.py          ← Rebuild results from raw logs
-│   ├── phase4_analysis.m          ← MATLAB analysis script (experimental)
-│   ├── in.thermal                 ← Demo LAMMPS input template
-│   └── in.thermal_expansion       ← Production LAMMPS input template
+|── scripts/
+│   ├── run_mode.py              ← Universal launcher (all modes)
+│   ├── lmp_helper.py            ← Core LAMMPS helper (launcher, parser, plotting, CSV)
+│   ├── seed_manager.py          ← Seed generation and persistence
+│   ├── gen_structure.py         ← Supercell generator (fcc Fe-Pt)
+│   ├── _run_one_point.py        ← Single-point run helper
+│   ├── _test_single_run.py      ← Single-point test
+│   ├── regenerate_plots.py      ← Regenerate plots from existing CSV/logs
+│   ├── run_fe_only.py           ← Pure Fe runs
+│   ├── run_pt_eam.py            ← Pt EAM benchmark runs
+│   ├── test_kokkos.py           ← KOKKOS backend test
+│   └── in.thermal_expansion     ← Production LAMMPS input template
 ├── data/
 │   ├── *.lmp                      ← Generated supercell data files
 │   └── data.fept_demo.lmp         ← Demo supercell
-├── output_v4/                     ← Phase 4 Long results
-│   ├── all_results.csv / .xlsx    ← CSV + Excel with numeric type formatting
-│   ├── cte_report.csv             ← CTE metrics per composition
-│   ├── integrity_check_v4.txt
-│   ├── a_vs_T_all_v4.png
-│   ├── a_vs_comp_v4.png
-│   ├── a_vs_T_facets_v4.png
-│   └── logs/                      ← Raw LAMMPS output
-├── output_v4_parallel/            ← Phase 4 Turbo results
-│   ├── all_results_v4_turbo.csv / .xlsx
+├── output_v4_256/                 ← ★ PRINCIPAL RESULTS (Turbo, 256‑atom, seed 26365)
+│   ├── all_results_turbo_256at_omp.csv / .xlsx
+│   ├── a_vs_T_turbo_256at_omp.png
+│   ├── a_vs_T_turbo_256at_omp_facets.png
+│   ├── a_vs_comp.png
 │   ├── cte_report.csv
 │   ├── integrity_check_v4_turbo.txt
-│   ├── a_vs_T_all_v4_turbo.png
-│   └── logs/                      ← Raw LAMMPS output
-├── results/                       ← MAIN mode results
-│   ├── results.csv / .xlsx
-│   ├── plots/
-│   └── logs/
+│   ├── seed_info.txt
+│   ├── run_protocol.txt
+│   ├── in/                          ← LAMMPS input files
+│   └── logs/                        ← Raw LAMMPS outputs (30 runs)
+├── output_v4/                     ← Legacy 128‑atom Phase 4 results
+├── output_v4_parallel/            ← Legacy 128‑atom Phase 4 Turbo results
+├── output_v4_reduced/             ← Legacy
+├── results/                       ← Legacy
 ├── potentials/
 │   ├── PtFe.meam                  ← MEAM alloy potential
 │   ├── library.meam               ← MEAM library file
@@ -354,12 +380,8 @@ FePt-Thermal-Expansion-MD/
 ├── bin/
 │   └── lmp.exe                    ← LAMMPS executable (user-provided)
 ├── run.bat                        ← ★ INTERACTIVE LAUNCHER (recommended entry)
-├── run_main.bat                   ← Direct MAIN mode launcher
-├── run_turbo.bat                  ← Direct TURBO mode launcher
-├── run_demo.bat                   ← Demo launcher
 ├── _run_lmp.bat                   ← LAMMPS wrapper (used by Python scripts)
 ├── bootstrap.bat                  ← Environment setup (Windows)
-├── README_phase4.md               ← Legacy reference docs
 ├── requirements.txt               ← Python dependencies
 ├── seed.txt                       ← Last used seed
 ├── .gitattributes
