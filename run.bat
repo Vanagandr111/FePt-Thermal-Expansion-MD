@@ -16,8 +16,11 @@ if %errorlevel% equ 0 (
 )
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
-    set PYTHON=python
-    goto python_detected
+    python -c "import sys; ver=sys.version_info; exit(0 if (3,11) <= (ver.major,ver.minor) <= (3,12) else 1)" >nul 2>&1
+    if %errorlevel% equ 0 (
+        set PYTHON=python
+        goto python_detected
+    )
 )
 echo.
 echo   ERROR: Python 3.11 or 3.12 not found.
@@ -126,7 +129,8 @@ goto END
 echo.
 echo ============================================
 echo    DONE -- All calculations finished
-echo    Results in %OUT_DIR%echo ============================================
+echo    Results in %OUT_DIR%
+echo ============================================
 echo.
 pause
 exit /b 0
