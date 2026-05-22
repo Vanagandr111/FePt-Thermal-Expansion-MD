@@ -97,31 +97,31 @@ if exist "%OUT_DIR%" (
 echo.
 echo ============================================
 if "%CHOICE%"=="0" echo  Starting DEMO mode
-if "%CHOICE%"=="0" %PYTHON% "%~dp0scriptsun_mode.py" --mode demo %SEED_FLAG%
+if "%CHOICE%"=="0" %PYTHON% "%~dp0scripts\run_mode.py" --mode demo %SEED_FLAG%
 
 if "%CHOICE%"=="1" echo  Starting TURBO-FAST (256at, OpenMP)
-if "%CHOICE%"=="1" %PYTHON% "%~dp0scriptsun_mode.py" --mode turbo-fast %SEED_FLAG%
+if "%CHOICE%"=="1" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-fast %SEED_FLAG%
 
 if "%CHOICE%"=="2" echo  Starting TURBO 256at (OpenMP)
-if "%CHOICE%"=="2" %PYTHON% "%~dp0scriptsun_mode.py" --mode turbo --natoms 256 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="2" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 256 --backend omp %SEED_FLAG%
 
 if "%CHOICE%"=="3" echo  Starting TURBO 2048at (OpenMP)
-if "%CHOICE%"=="3" %PYTHON% "%~dp0scriptsun_mode.py" --mode turbo --natoms 2048 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="3" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend omp %SEED_FLAG%
 
 if "%CHOICE%"=="4" echo  Starting TURBO 2048at (KOKKOS)
-if "%CHOICE%"=="4" %PYTHON% "%~dp0scriptsun_mode.py" --mode turbo --natoms 2048 --backend kokkos %SEED_FLAG%
+if "%CHOICE%"=="4" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend kokkos %SEED_FLAG%
 
 if "%CHOICE%"=="5" echo  Starting LONG 256at (OpenMP)
-if "%CHOICE%"=="5" %PYTHON% "%~dp0scriptsun_mode.py" --mode long --natoms 256 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="5" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 256 --backend omp %SEED_FLAG%
 
 if "%CHOICE%"=="6" echo  Starting LONG 2048at (OpenMP)
-if "%CHOICE%"=="6" %PYTHON% "%~dp0scriptsun_mode.py" --mode long --natoms 2048 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="6" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend omp %SEED_FLAG%
 
 if "%CHOICE%"=="7" echo  Starting LONG 2048at (KOKKOS)
-if "%CHOICE%"=="7" %PYTHON% "%~dp0scriptsun_mode.py" --mode long --natoms 2048 --backend kokkos %SEED_FLAG%
+if "%CHOICE%"=="7" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend kokkos %SEED_FLAG%
 
 if "%CHOICE%"=="8" echo  Starting TURBO-EXPERIMENTAL 256at (OMP 4t, neigh/5)
-if "%CHOICE%"=="8" %PYTHON% "%~dp0scriptsun_mode.py" --mode turbo-experimental %SEED_FLAG%
+if "%CHOICE%"=="8" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-experimental %SEED_FLAG%
 echo ============================================
 goto END
 
