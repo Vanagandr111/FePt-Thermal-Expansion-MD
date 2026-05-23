@@ -90,7 +90,25 @@ if exist "%OUT_DIR%" (
     echo.
     echo ============================================
     echo  Archiving old %OUT_DIR%...
-    powershell -NoProfile -Command "$d='%~dp0%OUT_DIR%'; if(Test-Path $d){$ts=Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'; $b=$d+'_backup_'+$ts; Move-Item $d $b; Write-Host '  Archived to: ' (Split-Path $b -Leaf)}"
+    powershell -NoProfile -Command ^
+        "$d='%~dp0%OUT_DIR%'; " ^
+        "if(Test-Path $d){ " ^
+        "  $ts=Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'; " ^
+        "  $b=$d+'_backup_'+$ts; " ^
+        "  try{ " ^
+        "    Move-Item $d $b -ErrorAction Stop; " ^
+        "    Write-Host '  Archived to: ' (Split-Path $b -Leaf) " ^
+        "  }catch{ " ^
+        "    Write-Host '  WARNING: Move-Item failed (' $_.Exception.Message ')'; " ^
+        "    Write-Host '  Trying robocopy + delete...'; " ^
+        "    robocopy $d $b /E /MOVE /NFL /NDL /NJH /NJS /NP >nul 2>&1; " ^
+        "    if exist $d ( " ^
+        "      Write-Host '  WARNING: Could not archive — directory locked, continuing...'; " ^
+        "    ) else ( " ^
+        "      Write-Host '  Archived to: ' (Split-Path $b -Leaf) ' (via copy)'; " ^
+        "    ) " ^
+        "  } " ^
+        "}"
     echo ============================================
 )
 
