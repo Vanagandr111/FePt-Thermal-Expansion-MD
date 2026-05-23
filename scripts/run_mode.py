@@ -185,7 +185,7 @@ else:
 
 
 # ── Worker function ──
-def run_point_worker(datafile, comp, T, subdir):
+def run_point_worker(datafile, comp, T, subdir, seed=12345):
     """Run LAMMPS at single T (worker). Returns (comp, T, timing_or_None, error_or_None)."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
@@ -193,7 +193,7 @@ def run_point_worker(datafile, comp, T, subdir):
     is_pure_fe = (comp <= 0.001)
     infile = lmp.write_input(datafile, comp, T, OUT, pot_line,
                               EQ_STEPS, PROD_STEPS, TDAMP, PDAMP,
-                              12345, neighbor_radius=NEIGHBOR,
+                              seed, neighbor_radius=NEIGHBOR,
                               omp_threads=OMP_THREADS, use_kokkos=USE_KOKKOS,
                               pair_style_type=pair_style,
                               single_run=is_pure_fe,
@@ -284,7 +284,7 @@ def main():
         print('  (sequential mode — 1 point at a time)')
         parsed_all = {}
         for datafile, comp, T, subdir in all_points:
-            comp_out, T_out, raw_result, error = run_point_worker(datafile, comp, T, subdir)
+            comp_out, T_out, raw_result, error = run_point_worker(datafile, comp, T, subdir, seed=SEED_FINAL)
             logfile = os.path.join(LOGS, 'log_{:.2f}_{}.lmp'.format(comp, T))
             if raw_result:
                 p = lmp.parse_production(logfile, NATOMS)
@@ -348,7 +348,7 @@ def main():
 
         parsed_all = {}
         with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
-            futures = {executor.submit(run_point_worker, df, c, T, sub):
+            futures = {executor.submit(run_point_worker, df, c, T, sub, SEED_FINAL):
                        (c, T) for df, c, T, sub in all_points}
 
             for future in as_completed(futures):
