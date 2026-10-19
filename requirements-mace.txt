@@ -1,0 +1,12 @@
+# MACE neural-potential pipeline dependencies (Fe-Pt CTE)
+# Python 3.10+ (tested: 3.14). torch is installed separately by
+# bootstrap_mace.bat / bootstrap_mace.sh from the PyTorch cu128 index.
+numpy==2.5.4
+ase==3.29.0
+scipy==1.18.1
+pandas==2.3.3
+e3nn==0.4.4
+mace-torch==0.3.16
+matplotlib==3.11.2
+torch-ema==0.3
+torchmetrics==1.9.0

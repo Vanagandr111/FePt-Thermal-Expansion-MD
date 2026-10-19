@@ -211,10 +211,15 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False):
         if not force:
             return outfile
         os.remove(outfile)
-    subprocess.run(
+    os.makedirs(DATA_DIR, exist_ok=True)
+    proc = subprocess.run(
         [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile],
         capture_output=True, timeout=30
     )
+    if proc.returncode != 0 or not os.path.exists(outfile):
+        raise RuntimeError('gen_structure failed (rc={}): {}'.format(
+            proc.returncode,
+            proc.stderr.decode(errors='replace')[-400:]))
     return outfile
 
 
@@ -368,6 +373,13 @@ def write_input(datafile, comp, T, out, pot_line, eq_steps, prod_steps,
             '',
             'pair_style      eam',
             'pair_coeff      * * {}'.format(pc_line),
+        ]
+    elif pair_style_type == 'eam_alloy':
+        # Multi-element EAM alloy (Zhou04)
+        ps_lines = [
+            '',
+            'pair_style      eam/alloy',
+            'pair_coeff      * * {} Fe Pt'.format(pot_line),
         ]
     else:
         # MEAM: multi-element (default)
@@ -1129,8 +1141,13 @@ def make_plots(parsed_all, comps, temps, seed, out,
 
 
 # ── Potential helper ──
-def get_potential(comp):
-    """Return (pot_line, pair_style_type) for given Fe-Pt composition."""
+def get_potential(comp, potential_type='meam'):
+    """Return (pot_line, pair_style_type) for given Fe-Pt composition.
+
+    potential_type: 'meam' (default) or 'zhou04'.
+    """
+    if potential_type == 'zhou04':
+        return 'potentials/Zhou04.eam.alloy', 'eam_alloy'
     if comp >= 0.99:
         return 'potentials/Pt_u3.eam', 'eam'
     meam_lib = 'potentials/library.meam'

@@ -275,6 +275,48 @@ records the seed and its source.
 
 ---
 
+## MACE Neural Potential — Windows/Linux, CPU/GPU
+
+Alternative runner that replaces classical MEAM/EAM with the `FePt_potential.pt`
+neural network potential (MACE, ASE-MD). The LAMMPS pipeline above is untouched;
+this runner is fully independent.
+
+- `scripts/run_main_mace.py` — cross-platform NPT runner (no `cmd`/`.bat` code)
+- `run_mace.bat` (Windows) / `scripts/run_main_mace.sh` (Linux/WSL) — launchers
+- Python env: `.venv-mace` (created separately so the existing `.venv` used by
+  the LAMMPS scripts stays untouched)
+- Model lookup: `potentials/FePt_potential.pt` (already installed), `scripts/`,
+  project root, or `--model <path>`
+
+Device selection (works on both OSes):
+
+```bat
+run_mace.bat --quick                :: smoke test, CPU/GPU auto
+run_mace.bat --device cuda          :: force GPU (falls back to CPU + warning)
+run_mace.bat --device cpu           :: force CPU
+run_mace.bat --eq 50000 --prod 100000 --grid 4 --device cuda --out output_mace_256
+```
+
+```bash
+bash scripts/run_main_mace.sh --quick
+bash scripts/run_main_mace.sh --device cuda --eq 50000 --prod 100000 --grid 4
+```
+
+`--grid 4` = 256-atom supercell (same size as the LAMMPS phase-4 runs);
+`--grid 2` = 32 atoms for smoke tests. Default grid is 4 (32 in `--quick`).
+
+Verified 2026-10-19 on `FePt_potential.pt` (ScaleShiftMACE, r_max = 6 Å):
+
+| Run | T = 300 K a (Å) | T = 1200 K a (Å) | CTE (1/K) |
+|-----|-----------------|------------------|-----------|
+| Windows (torch 2.9.1, CPU) | 3.851093 | 3.885100 | 9.8118e-06 |
+| WSL Ubuntu (torch 2.14, CPU) | 3.851093 | 3.885100 | 9.8118e-06 |
+
+Identical results on both OSes (seed = 42, quick protocol — smoke-test quality,
+not publication numbers).
+
+---
+
 ## Reproducibility and Data Integrity
 
 - **Raw logs as source of truth:** All lattice parameters are extracted directly from

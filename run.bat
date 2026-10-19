@@ -75,9 +75,23 @@ if not "%SEED_INPUT%"=="" (
     ) else (
         set SEED_FLAG=--seed "%SEED_INPUT%"
     )
+
 )
 
 echo.
+echo --- Potential Selection ---
+echo.
+echo   [1] MEAM (Kim2006, default)
+echo   [2] Zhou04 EAM Alloy
+echo.
+set /p POTENTIAL_INPUT="Potential (1=MEAM / 2=Zhou04): "
+echo.
+set POTENTIAL_FLAG=meam
+if /i "%POTENTIAL_INPUT%"=="z" set POTENTIAL_FLAG=zhou04
+if /i "%POTENTIAL_INPUT%"=="Z" set POTENTIAL_FLAG=zhou04
+echo   Using: %POTENTIAL_FLAG%
+echo.
+
 rem --- Archive old results ---
 set OUT_DIR=output_v4_256
 if "%CHOICE%"=="0" set OUT_DIR=output_v4
@@ -102,11 +116,11 @@ if exist "%OUT_DIR%" (
         "    Write-Host '  WARNING: Move-Item failed (' $_.Exception.Message ')'; " ^
         "    Write-Host '  Trying robocopy + delete...'; " ^
         "    robocopy $d $b /E /MOVE /NFL /NDL /NJH /NJS /NP >nul 2>&1; " ^
-        "    if exist $d ( " ^
+        "    if(Test-Path $d){ " ^
         "      Write-Host '  WARNING: Could not archive — directory locked, continuing...'; " ^
-        "    ) else ( " ^
+        "    }else{ " ^
         "      Write-Host '  Archived to: ' (Split-Path $b -Leaf) ' (via copy)'; " ^
-        "    ) " ^
+        "    } " ^
         "  } " ^
         "}"
     echo ============================================
@@ -115,31 +129,31 @@ if exist "%OUT_DIR%" (
 echo.
 echo ============================================
 if "%CHOICE%"=="0" echo  Starting DEMO mode
-if "%CHOICE%"=="0" %PYTHON% "%~dp0scripts\run_mode.py" --mode demo %SEED_FLAG%
+if "%CHOICE%"=="0" %PYTHON% "%~dp0scripts\run_mode.py" --mode demo --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="1" echo  Starting TURBO-FAST (256at, OpenMP)
-if "%CHOICE%"=="1" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-fast %SEED_FLAG%
+if "%CHOICE%"=="1" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-fast --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="2" echo  Starting TURBO 256at (OpenMP)
-if "%CHOICE%"=="2" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 256 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="2" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 256 --backend omp --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="3" echo  Starting TURBO 2048at (OpenMP)
-if "%CHOICE%"=="3" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="3" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend omp --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="4" echo  Starting TURBO 2048at (KOKKOS)
-if "%CHOICE%"=="4" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend kokkos %SEED_FLAG%
+if "%CHOICE%"=="4" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo --natoms 2048 --backend kokkos --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="5" echo  Starting LONG 256at (OpenMP)
-if "%CHOICE%"=="5" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 256 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="5" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 256 --backend omp --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="6" echo  Starting LONG 2048at (OpenMP)
-if "%CHOICE%"=="6" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend omp %SEED_FLAG%
+if "%CHOICE%"=="6" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend omp --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="7" echo  Starting LONG 2048at (KOKKOS)
-if "%CHOICE%"=="7" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend kokkos %SEED_FLAG%
+if "%CHOICE%"=="7" %PYTHON% "%~dp0scripts\run_mode.py" --mode long --natoms 2048 --backend kokkos --potential %POTENTIAL_FLAG% %SEED_FLAG%
 
 if "%CHOICE%"=="8" echo  Starting TURBO-EXPERIMENTAL 256at (OMP 4t, neigh/5)
-if "%CHOICE%"=="8" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-experimental %SEED_FLAG%
+if "%CHOICE%"=="8" %PYTHON% "%~dp0scripts\run_mode.py" --mode turbo-experimental --potential %POTENTIAL_FLAG% %SEED_FLAG%
 echo ============================================
 goto END
 

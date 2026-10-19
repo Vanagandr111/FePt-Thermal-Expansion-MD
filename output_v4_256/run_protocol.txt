@@ -8,7 +8,7 @@ Mode: Turbo 256at OMP
 Eq steps: 50000
 Prod steps: 100000
 Tdamp: 1.0  Pdamp: 10.0
-Seed: 26365
+Seed: 123321
 Temperatures: 300, 500, 700, 900, 1100, 1200
 Compositions: 0.00, 0.25, 0.50, 0.75, 1.00
 Points:

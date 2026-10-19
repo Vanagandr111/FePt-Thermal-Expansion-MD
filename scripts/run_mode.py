@@ -73,6 +73,8 @@ parser.add_argument('--seed', nargs='?', const='reuse', default=None,
                     help='Seed: число, "reuse" или опустить для авто')
 parser.add_argument('--force', action='store_true',
                     help='Пересоздать всё с нуля')
+parser.add_argument('--potential', choices=['meam', 'zhou04'], default='meam',
+                    help='Потенциал: meam (по умолч.) или zhou04 (Zhou04 EAM)')
 parser.add_argument('--output-dir', default=None,
                     help='Выходная директория (относительно проекта)')
 print("  [RAW_ARGV] os.name='{}' sys.argv={}".format(os.name, sys.argv))
@@ -83,6 +85,7 @@ print("  [HERMES_DIAG] MODE = '{}'  os.name = '{}'  sys.argv = {}".format(MODE, 
 
 BACKEND = args.backend
 FORCE = args.force
+POTENTIAL_TYPE = args.potential
 NATOMS = args.natoms
 
 # ── Валидация ──
@@ -189,7 +192,7 @@ def run_point_worker(datafile, comp, T, subdir, seed=12345):
     """Run LAMMPS at single T (worker). Returns (comp, T, timing_or_None, error_or_None)."""
     os.makedirs(subdir, exist_ok=True)
     logfile = os.path.join(subdir, "log_{:.2f}_{}.lmp".format(comp, T))
-    pot_line, pair_style = lmp.get_potential(comp)
+    pot_line, pair_style = lmp.get_potential(comp, potential_type=POTENTIAL_TYPE)
     is_pure_fe = (comp <= 0.001)
     infile = lmp.write_input(datafile, comp, T, OUT, pot_line,
                               EQ_STEPS, PROD_STEPS, TDAMP, PDAMP,
@@ -217,6 +220,7 @@ def main():
     print('=' * 60)
     print('  Fe-Pt Phase 4 -- {} Mode'.format(MODE_DISPLAY))
     print('  Backend: {}'.format(BACKEND.upper()))
+    print('  Potential: {}'.format(POTENTIAL_TYPE.upper()))
     print('  Atoms: {} ({}x{}x{} cells)'.format(NATOMS, NX, NY, NZ))
     print('  Protocol: {} eq + {} prod, Tdamp={}, Pdamp={}'.format(EQ_STEPS, PROD_STEPS, TDAMP, PDAMP))
     print('  Neighbor: {} bin'.format(NEIGHBOR))

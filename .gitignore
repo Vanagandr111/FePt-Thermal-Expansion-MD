@@ -2,6 +2,7 @@
 
 # Virtual environment
 .venv/
+.venv-mace/
 venv/
 env/
 
@@ -22,6 +23,7 @@ Thumbs.db
 
 # Archives
 *.zip
+*.tar.gz
 
 # Portable LAMMPS binary (~50 MB, must be obtained separately)
 bin/
@@ -46,5 +48,11 @@ output_v4_reduced/
 # Backup directories (auto-created by run.bat)
 *_backup_*/
 
+# MACE neural-potential outputs (run_mace.bat / run_main_mace.sh)
+output_mace_*/
+
 # Temporary scripts not part of the pipeline
 generate_figures.py
+
+# Backups of patched files
+*.bak_hermes*
