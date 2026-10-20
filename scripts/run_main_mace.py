@@ -29,9 +29,12 @@ Device: --device auto (default) picks cuda when available, else cpu;
 explicit --device cuda on a machine without CUDA falls back to CPU
 with a warning instead of crashing.
 """
+import os
+# CUDA: avoid allocator fragmentation (parallel workers + inductor temp
+# buffers OOM'd on an 8 GiB card with 5 GiB still "free")
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 import argparse
 import math
-import os
 import subprocess
 import sys
 import time
@@ -182,16 +185,19 @@ def _make_dynamics(atoms, T, timestep_fs):
 
 
 def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
-              timestep_fs=1.0, seed=42, grid=4):
+              timestep_fs=1.0, seed=42, grid=4, prepare=True):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
     Here: NPT integrator at 0 bar -> volume expands with T.
     `grid`: supercell replication (4 -> 256 atoms, 2 -> 32 atoms).
+    `prepare=False`: structure must already exist (parallel workers must
+    not regenerate the same file concurrently - torn reads).
     Returns dict in lmp_helper.parse_production() format.
     """
     t0 = time.time()
-    datafile = lmp.gen_structure(comp, nx=grid, ny=grid, nz=grid, force=True)
+    datafile = lmp.gen_structure(comp, nx=grid, ny=grid, nz=grid,
+                                 force=prepare)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
 
@@ -322,6 +328,17 @@ class FastMACECalculator(MACECalculator):
                 num_models, num_atoms, batch, out)
 
 
+def _mp_worker(tasks, out_queue, model, device, compile_mode, use_bf16,
+               eq_steps, prod_steps, interval, grid, base_seed):
+    """Parallel worker: own compiled calculator on the shared GPU."""
+    calc = FastMACECalculator(model_paths=model, device=device,
+                              compile_mode=compile_mode, use_bf16=use_bf16)
+    for comp, T in tasks:
+        parsed = run_point(calc, comp, T, eq_steps, prod_steps, interval,
+                           seed=base_seed, grid=grid, prepare=False)
+        out_queue.put(((comp, T), parsed))
+
+
 def main():
     global _OUT
     ap = argparse.ArgumentParser()
@@ -345,6 +362,9 @@ def main():
                     help='disable bf16 autocast (slower on GPU, max accuracy)')
     ap.add_argument('--no-compile', action='store_true',
                     help='disable torch.compile/triton (slower on GPU)')
+    ap.add_argument('--workers', type=int, default=None,
+                    help='parallel GPU workers (default: 2 on cuda when '
+                         '>1 point; each worker owns a compiled calculator)')
     args = ap.parse_args()
 
     if args.quick:
@@ -390,9 +410,6 @@ def main():
         use_bf16 = not args.fp32
     print('MACE speed mode: compile={} bf16={}'.format(
         compile_mode or 'off', 'on' if use_bf16 else 'off'))
-    calc = FastMACECalculator(model_paths=model, device=device,
-                              compile_mode=compile_mode,
-                              use_bf16=use_bf16)
 
     if args.out:
         _OUT = os.path.abspath(args.out)
@@ -404,12 +421,69 @@ def main():
 
     seed = 42
     parsed_all = {}
-    for comp in comps:
-        print('comp x_Pt={:.2f}'.format(comp))
-        for T in temps:
+    tasks = [(comp, T) for comp in comps for T in temps]
+    workers = args.workers
+    if workers is None:
+        # 256-atom points already saturate the GPU (measured: 140s sequential
+        # vs 147s with 2 workers) -> extra workers only help tiny systems.
+        workers = 2 if (device.startswith('cuda') and grid <= 2
+                        and len(tasks) > 1) else 1
+    workers = max(1, min(workers, len(tasks)))
+    print('Workers: {}'.format(workers))
+
+    if workers == 1:
+        calc = FastMACECalculator(model_paths=model, device=device,
+                                  compile_mode=compile_mode,
+                                  use_bf16=use_bf16)
+        for comp, T in tasks:
+            print('comp x_Pt={:.2f}'.format(comp))
             parsed_all[(comp, T)] = run_point(
                 calc, comp, T, eq_steps, prod_steps, args.interval,
                 seed=seed, grid=grid)
+    else:
+        # spawn: each worker owns its compiled calculator on the GPU;
+        # point seed stays fixed (42) so results do not depend on the
+        # worker layout.
+        # Pre-generate structures in the parent: workers must never
+        # regenerate the same file concurrently (torn-read race).
+        for comp in {c for c, _ in tasks}:
+            lmp.gen_structure(comp, nx=grid, ny=grid, nz=grid, force=True)
+        from multiprocessing import get_context
+        ctx = get_context('spawn')
+        q = ctx.Queue()
+        chunks = [tasks[i::workers] for i in range(workers)]
+        procs = []
+        for chunk in chunks:
+            p = ctx.Process(
+                target=_mp_worker,
+                args=(chunk, q, model, device, compile_mode, use_bf16,
+                      eq_steps, prod_steps, args.interval, grid, seed))
+            p.start()
+            procs.append(p)
+        # Collect with timeout: a dead worker must fail fast instead of
+        # hanging forever in q.get().
+        import queue as _queue
+        owned = [set(c) for c in chunks]
+        delivered = set()
+        while len(delivered) < len(tasks):
+            try:
+                key, parsed = q.get(timeout=30)
+            except _queue.Empty:
+                dead = [(i, p.exitcode, sorted(owned[i] - delivered))
+                        for i, p in enumerate(procs)
+                        if not p.is_alive() and owned[i] - delivered]
+                if dead:
+                    raise RuntimeError(
+                        'worker(s) died before delivering their points: {}'
+                        .format(dead))
+                continue
+            parsed_all[key] = parsed
+            delivered.add(key)
+            print('  point done {}/{}'.format(len(parsed_all), len(tasks)))
+        for p in procs:
+            p.join()
+            if p.exitcode != 0:
+                print('WARNING: worker exited with code {}'.format(p.exitcode))
 
     lmp.write_csv(parsed_all, comps, temps, _OUT, seed,
                   mode_label='mace', eq_steps=eq_steps,
