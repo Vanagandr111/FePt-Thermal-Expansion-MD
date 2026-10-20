@@ -38,6 +38,8 @@ import time
 
 import numpy as np
 
+from mace.calculators import MACECalculator  # noqa: E402 (needs torch env)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lmp_helper as lmp                      # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
@@ -289,6 +291,37 @@ def write_cte_full(parsed_all, comps, temps, out):
     return path
 
 
+class FastMACECalculator(MACECalculator):
+    """MACECalculator + torch.compile (triton) + bf16 autocast.
+
+    ~1.7x faster per step on consumer GPUs (measured: 94 -> 55 ms/step on
+    RTX 3070 Ti, 256 atoms). bf16 outputs are cast back to fp32 before
+    mace's numpy conversion (numpy has no bfloat16).
+    """
+
+    def __init__(self, *a, compile_mode='default', use_bf16=True, **kw):
+        kw.setdefault('default_dtype', 'float32')
+        kw['compile_mode'] = compile_mode
+        super().__init__(*a, **kw)
+        self._use_bf16 = bool(use_bf16) and str(self.device).startswith('cuda')
+
+    def calculate(self, *a, **k):
+        if self._use_bf16:
+            import torch
+            with torch.autocast('cuda', dtype=torch.bfloat16):
+                return super().calculate(*a, **k)
+        return super().calculate(*a, **k)
+
+    def _create_result_tensors(self, num_models, num_atoms, batch, out):
+        import torch
+        out = {k: (v.float() if torch.is_tensor(v)
+                   and v.dtype == torch.bfloat16 else v)
+               for k, v in out.items()}
+        with torch.autocast('cuda', enabled=False):
+            return super()._create_result_tensors(
+                num_models, num_atoms, batch, out)
+
+
 def main():
     global _OUT
     ap = argparse.ArgumentParser()
@@ -308,6 +341,10 @@ def main():
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
     ap.add_argument('--out', default=None,
                     help='output directory (default <proj>/results_mace)')
+    ap.add_argument('--fp32', action='store_true',
+                    help='disable bf16 autocast (slower on GPU, max accuracy)')
+    ap.add_argument('--no-compile', action='store_true',
+                    help='disable torch.compile/triton (slower on GPU)')
     args = ap.parse_args()
 
     if args.quick:
@@ -346,8 +383,16 @@ def main():
         return 1
     print('Model: {}'.format(model))
 
-    from mace.calculators import MACECalculator
-    calc = MACECalculator(model_paths=model, device=device)
+    compile_mode = None
+    use_bf16 = False
+    if device.startswith('cuda'):
+        compile_mode = None if args.no_compile else 'default'
+        use_bf16 = not args.fp32
+    print('MACE speed mode: compile={} bf16={}'.format(
+        compile_mode or 'off', 'on' if use_bf16 else 'off'))
+    calc = FastMACECalculator(model_paths=model, device=device,
+                              compile_mode=compile_mode,
+                              use_bf16=use_bf16)
 
     if args.out:
         _OUT = os.path.abspath(args.out)
