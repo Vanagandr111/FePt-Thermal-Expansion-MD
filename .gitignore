@@ -56,3 +56,8 @@ generate_figures.py
 
 # Backups of patched files
 *.bak_hermes*
+.cache/
+
+# Gate / benchmark / quick-run outputs (v1.7.4)
+output_*/
+_test_zhou_eam/

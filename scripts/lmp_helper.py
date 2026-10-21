@@ -203,8 +203,17 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0,
 # sidefx: io (writes data.fept_*.lmp)
 # purity: impure
 # errors: returns existing path if file already exists
-def gen_structure(comp, nx=8, ny=8, nz=8, force=False):
-    """Generate structure via gen_structure.py. force=True = regenerate even if exists."""
+# Module-global seed-lattice override: run_main_mace.main() sets it from
+# --lc so every generation path (single-worker, parent pre-generation)
+# shares one explicit value instead of a hardcoded one.
+SEED_LC = None
+
+
+def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None):
+    """Generate structure via gen_structure.py. force=True = regenerate even if exists.
+    lc = explicit seed lattice constant (Angstrom); None = SEED_LC, else LC_TABLE by system."""
+    if lc is None:
+        lc = SEED_LC
     gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
     outfile = os.path.join(DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
     if os.path.exists(outfile):
@@ -212,14 +221,19 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False):
             return outfile
         os.remove(outfile)
     os.makedirs(DATA_DIR, exist_ok=True)
+    cmd = [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile]
+    if lc is not None:
+        cmd.append(str(lc))
     proc = subprocess.run(
-        [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile],
-        capture_output=True, timeout=30
+        cmd, capture_output=True, timeout=30
     )
     if proc.returncode != 0 or not os.path.exists(outfile):
         raise RuntimeError('gen_structure failed (rc={}): {}'.format(
             proc.returncode,
             proc.stderr.decode(errors='replace')[-400:]))
+    # surface the generator's own log (seed lc + source note) into run logs
+    if proc.stdout:
+        sys.stdout.write(proc.stdout.decode(errors='replace'))
     return outfile
 
 

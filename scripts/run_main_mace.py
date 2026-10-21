@@ -33,6 +33,18 @@ import os
 # CUDA: avoid allocator fragmentation (parallel workers + inductor temp
 # buffers OOM'd on an 8 GiB card with 5 GiB still "free")
 os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+# F. Keep compiler caches inside the project: a clean machine / fresh clone
+# must not recompile triton+inductor from scratch on every first run.
+_PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault('TRITON_CACHE_DIR',
+                      os.path.join(_PROJ_ROOT, '.cache', 'triton'))
+os.environ.setdefault('TORCHINDUCTOR_CACHE_DIR',
+                      os.path.join(_PROJ_ROOT, '.cache', 'inductor'))
+# torch 2.6 defaults weights_only=True; e3nn/o3 constants.pt legitimately
+# need a plain pickle -> force the old behaviour, else import dies with
+# UnpicklingError (or hangs in an unreadable traceback) in any shell where
+# this variable was not preset.
+os.environ.setdefault('TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD', '1')
 import argparse
 import math
 import subprocess
@@ -227,7 +239,10 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     dyn_md.attach(collect, interval=thermo_interval)
     dyn_md.run(eq_steps)
     n_eq = len(records)
+    t_prod0 = time.time()
     dyn_md.run(prod_steps)
+    prod_wall = time.time() - t_prod0
+    ms_step = 1000.0 * prod_wall / max(1, prod_steps)
 
     # parse production window
     a_vals = [r[0] for r in records[n_eq:]]
@@ -236,8 +251,9 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     drift = float(a_arr[-1] - a_arr[0]) if len(a_arr) > 1 else 0.0
     wall = time.time() - t0
 
-    print('  comp={:.2f} T={:4d}K  a={:.5f} A  n={:d}  wall={:.0f}s'
-          .format(comp, T, float(a_arr.mean()), len(a_arr), wall))
+    print('  comp={:.2f} T={:4d}K  a={:.5f} A  n={:d}  wall={:.0f}s  '
+          'ms/step={:.1f}'
+          .format(comp, T, float(a_arr.mean()), len(a_arr), wall, ms_step))
 
     return {
         'a_mean': float(a_arr.mean()),
@@ -328,9 +344,84 @@ class FastMACECalculator(MACECalculator):
                 num_models, num_atoms, batch, out)
 
 
+# ---------------- D. Verlet-skin neighbour-list cache -------------------
+# Off by default: --nl-skin <A>. The neighbour list is built once with
+# cutoff+skin; later steps reuse it and filter pairs back to the model
+# cutoff by CURRENT distances. Within skin/2 the pair set inside r_max is
+# provably complete (classic Verlet), and the boolean filter preserves
+# the matscipy edge order -> same pairs, same order (math unchanged).
+_NL_CACHE = {'on': False, 'skin': 0.0, 'cutoff': None, 'pos0': None,
+             'edge_index': None, 'unit_shifts': None,
+             'hits': 0, 'rebuilds': 0}
+
+
+# intent: monkey-patch mace's get_neighborhood with a skin-cached version
+# allies: mace.data.atomic_data.get_neighborhood (target), main() (--nl-skin)
+# sidefx: process-local patch of site-packages memory only (no files touched)
+# purity: impure
+# errors: falls back to the original builder on any non-PBC / shape case
+def _install_nl_cache(skin):
+    import mace.data.atomic_data as _ad
+    orig = _ad.get_neighborhood
+
+    def _gn(positions, cutoff, pbc=None, cell=None,
+            true_self_interaction=False):
+        c = _NL_CACHE
+        if not c['on']:
+            return orig(positions, cutoff, pbc, cell, true_self_interaction)
+        import numpy as np
+        pos = np.asarray(positions, dtype=float)
+        if cell is None or np.asarray(cell).shape != (3, 3):
+            cell_arr = np.eye(3)
+        else:
+            cell_arr = np.asarray(cell, dtype=float)
+        pbc_arr = (np.zeros(3, bool) if pbc is None
+                   else np.asarray(pbc, dtype=bool))
+        hit = (c['pos0'] is not None
+               and bool(pbc_arr.all())          # full-PBC fast path only
+               and c['cutoff'] == cutoff
+               and c['pos0'].shape == pos.shape)
+        if hit:
+            # max atomic displacement vs build positions (min-image w.r.t.
+            # the current cell; isotropic cell growth adds ~0 at skin=1 A)
+            d = pos - c['pos0']
+            frac = d @ np.linalg.inv(cell_arr)
+            frac -= np.round(frac)
+            if np.linalg.norm(frac @ cell_arr, axis=1).max() > c['skin'] * 0.5:
+                hit = False
+        if hit:
+            ei = c['edge_index']
+            us = c['unit_shifts']
+            dj = pos[ei[1]] - pos[ei[0]] + us @ cell_arr
+            keep = np.einsum('ij,ij->i', dj, dj) <= cutoff * cutoff + 1e-8
+            c['hits'] += 1
+            return ei[:, keep], us[keep] @ cell_arr, us[keep], cell_arr
+        # rebuild with the buffered cutoff, filter back to the model cutoff
+        ei, shifts, us, c_out = orig(pos, cutoff + c['skin'], pbc, cell,
+                                     true_self_interaction)
+        dj = pos[ei[1]] - pos[ei[0]] + shifts
+        keep = np.einsum('ij,ij->i', dj, dj) <= cutoff * cutoff + 1e-8
+        c.update({'cutoff': cutoff, 'pos0': pos.copy(),
+                  'edge_index': ei, 'unit_shifts': us})
+        c['rebuilds'] += 1
+        return ei[:, keep], shifts[keep], us[keep], c_out
+
+    _ad.get_neighborhood = _gn
+    _NL_CACHE['on'] = True
+    _NL_CACHE['skin'] = float(skin)
+
+
 def _mp_worker(tasks, out_queue, model, device, compile_mode, use_bf16,
                eq_steps, prod_steps, interval, grid, base_seed):
     """Parallel worker: own compiled calculator on the shared GPU."""
+    # Windows: spawned workers race on the shared triton cache (Permission
+    # error on .cubin). Give each worker its own sub-cache; single-worker
+    # runs keep the plain shared .cache/triton.
+    for _ev in ('TRITON_CACHE_DIR', 'TORCHINDUCTOR_CACHE_DIR'):
+        _base = os.environ.get(_ev)
+        if _base:
+            os.environ[_ev] = os.path.join(
+                _base, 'pid{}'.format(os.getpid()))
     calc = FastMACECalculator(model_paths=model, device=device,
                               compile_mode=compile_mode, use_bf16=use_bf16)
     for comp, T in tasks:
@@ -356,12 +447,25 @@ def main():
     ap.add_argument('--grid', type=int, default=None,
                     help='supercell replication N: atoms=4*N^3 '
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
+    ap.add_argument('--lc', type=float, default=None,
+                    help='seed lattice constant in Angstrom; default: '
+                         'LC_TABLE by system (pt=MACE-MP-0 EOS fit 4.0065, '
+                         'fe/fept=historical 3.615 seed)')
+    ap.add_argument('--nl-skin', type=float, default=1.0,
+                    help='Verlet skin in Angstrom for the cached neighbour '
+                         'list (D lever; merged after gate: 56.0->52.5 '
+                         'ms/step). 0 = off, rebuild every step.')
     ap.add_argument('--out', default=None,
                     help='output directory (default <proj>/results_mace)')
     ap.add_argument('--fp32', action='store_true',
                     help='disable bf16 autocast (slower on GPU, max accuracy)')
     ap.add_argument('--no-compile', action='store_true',
                     help='disable torch.compile/triton (slower on GPU)')
+    ap.add_argument('--compile-mode', default='default',
+                    choices=['default', 'max-autotune-no-cudagraphs'],
+                    help='torch.compile mode; A lever: '
+                         'max-autotune-no-cudagraphs benchmarks triton '
+                         'tiles (long first compile, no cuda graphs)')
     ap.add_argument('--workers', type=int, default=None,
                     help='parallel GPU workers (default: 2 on cuda when '
                          '>1 point; each worker owns a compiled calculator)')
@@ -377,6 +481,15 @@ def main():
         eq_steps = args.eq or 50_000
         prod_steps = args.prod or 100_000
     grid = args.grid or (2 if args.quick else 4)
+    # Seed lattice constant (Angstrom): None = LC_TABLE by system
+    # (pt = our MACE-MP-0 EOS fit, fe/fept = historical v1.5 seed).
+    lmp.SEED_LC = args.lc
+    # D lever: skin-cached neighbour list (process-local patch; workers>1
+    # does not inherit it -> use --workers 1 when --nl-skin is on).
+    if args.nl_skin > 0:
+        _install_nl_cache(args.nl_skin)
+        print('MACE nl-skin: {:.2f} A (cached neighbour list)'.format(
+            args.nl_skin))
 
     # device
     import torch
@@ -406,7 +519,7 @@ def main():
     compile_mode = None
     use_bf16 = False
     if device.startswith('cuda'):
-        compile_mode = None if args.no_compile else 'default'
+        compile_mode = None if args.no_compile else args.compile_mode
         use_bf16 = not args.fp32
     print('MACE speed mode: compile={} bf16={}'.format(
         compile_mode or 'off', 'on' if use_bf16 else 'off'))
