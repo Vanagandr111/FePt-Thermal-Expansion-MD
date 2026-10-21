@@ -111,3 +111,55 @@ def test_update_point_merges_and_reports_change():
     assert prof['points'][0]['ms_per_step'] == 51.0
     assert est.update_point(prof, 'mace', 'cuda', 2, 25.0) is True
     assert len(prof['points']) == 2
+
+
+# ---- max_atoms_for_vram: "how many atoms fit on this machine" ----
+
+def _vprof(points, mode='mace', device='cuda'):
+    return {'points': [dict(p, mode=mode, device=device) for p in points]}
+
+
+_LINEAR_PTS = [
+    {'natoms': 100, 'vram_mb': 700.0},
+    {'natoms': 300, 'vram_mb': 1500.0},
+]
+
+
+def test_max_atoms_exact_linear_inversion():
+    # slope 4.0, intercept 300; 90% of 8000 = 7200 -> (7200-300)/4 = 1725
+    got = est.max_atoms_for_vram(_vprof(_LINEAR_PTS), total_mb=8000,
+                                 use_fraction=0.9)
+    assert got == 1725
+
+
+def test_max_atoms_needs_at_least_two_points():
+    assert est.max_atoms_for_vram(_vprof([]), 8192) is None
+    assert est.max_atoms_for_vram(
+        _vprof([{'natoms': 32, 'vram_mb': 400.0}]), 8192) is None
+
+
+def test_max_atoms_requires_card_and_positive_slope():
+    assert est.max_atoms_for_vram(_vprof(_LINEAR_PTS), total_mb=None) is None
+    assert est.max_atoms_for_vram(_vprof(_LINEAR_PTS), total_mb=0) is None
+    falling = [{'natoms': 32, 'vram_mb': 900.0},
+               {'natoms': 256, 'vram_mb': 400.0}]
+    assert est.max_atoms_for_vram(_vprof(falling), 8192) is None
+
+
+def test_max_atoms_only_for_gpu_mace():
+    assert est.max_atoms_for_vram(_vprof(_LINEAR_PTS), 8192,
+                                  mode='lammps') is None
+    assert est.max_atoms_for_vram(_vprof(_LINEAR_PTS), 8192,
+                                  device='cpu') is None
+
+
+def test_max_atoms_budget_never_overruns_card():
+    # even if fit says a huge number, the budget line is use_fraction*total
+    pts = [{'natoms': 32, 'vram_mb': 400.0},
+           {'natoms': 256, 'vram_mb': 1358.0}]
+    got = est.max_atoms_for_vram(_vprof(pts), total_mb=8192)
+    assert got is not None and got > 256
+    # the estimate at that count must stay below 95% of the card
+    slope = (1358.0 - 400.0) / (256 - 32)
+    interp_vram = 400.0 + slope * (got - 32)
+    assert interp_vram < 8192 * 0.95

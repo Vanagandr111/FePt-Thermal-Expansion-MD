@@ -159,6 +159,39 @@ def fits_memory(vram_mb, total_mb, warn=70.0, bad=87.0):
     }
 
 
+def max_atoms_for_vram(profile, total_mb, mode='mace', device='cuda',
+                       use_fraction=0.9):
+    """Largest atom count that should still fit the card (None = unknown).
+
+    Inverts the calibrated vram(natoms) dependence by a least-squares fit
+    at use_fraction of the card (leave headroom: fragmentation/OS/driver).
+    Honest by construction: >=2 points and a positive slope required,
+    GPU-mode only, otherwise None - never a made-up number.
+    """
+    if mode != 'mace' or device != 'cuda' or not total_mb:
+        return None
+    pts = [(p['natoms'], float(p['vram_mb']))
+           for p in (profile or {}).get('points', [])
+           if p.get('mode') == mode and p.get('device') == device
+           and p.get('vram_mb') is not None]
+    if len(pts) < 2:
+        return None
+    ns = [p[0] for p in pts]
+    vs = [p[1] for p in pts]
+    nmean = sum(ns) / len(ns)
+    vmean = sum(vs) / len(vs)
+    den = sum((x - nmean) ** 2 for x in ns)
+    if den <= 0:
+        return None
+    slope = sum((x - nmean) * (v - vmean) for x, v in pts) / den
+    if slope <= 0:
+        return None
+    budget = float(total_mb) * float(use_fraction) - (vmean - slope * nmean)
+    if budget <= 0:
+        return None
+    return int(budget // slope)
+
+
 def load_profile(path=None):
     try:
         with open(path or PROFILE_PATH, encoding='utf-8') as f:

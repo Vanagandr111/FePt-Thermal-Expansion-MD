@@ -39,6 +39,9 @@ button.ghost:hover { border-color:var(--acc); color:var(--acc); }
 button.tiny { padding:3px 10px; font-size:12px; border-radius:6px; }
 .presets button { margin-right:6px; }
 #atomcount { color:var(--dim); font-size:12px; }
+.cellrow { display:flex; gap:8px; }
+.cellrow input { flex:1; min-width:0; }
+#cellhint { color:var(--dim); font-size:12px; margin-top:4px; }
 .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
   background:#0b1220; border:1px solid var(--line); margin:2px 4px 2px 0; }
 .pill.ok { border-color:var(--ok); color:var(--ok); }
@@ -269,8 +272,15 @@ button.act.pulse { outline:2px solid var(--acc); }
       </div>
       <div>
         <label>Суперъячейка n×n×n — <span id="atomcount"></span></label>
-        <input id="grid" type="number" min="2" max="12" value="4"
-               oninput="atomCount()">
+        <div class="cellrow">
+          <input id="grid" type="number" min="2" max="12" value="4"
+                 title="n — сторона ячейки, всего 4·n³ атомов"
+                 oninput="atomCount()">
+          <input id="natomsin" type="number" min="4" step="4"
+                 title="Целевое число атомов — подберём ближайшее n"
+                 oninput="atomsEdited()" placeholder="атомов">
+        </div>
+        <div id="cellhint"></div>
       </div>
       <div>
         <label>Температуры K (через пробел)</label>
@@ -452,9 +462,33 @@ function tab(name) {
 /* ---------------- run form ---------------- */
 function compOut() { $('compval').textContent = (+$('comp').value).toFixed(2); }
 function setComp(v) { $('comp').value = v; compOut(); }
-function atomCount() {
-  const n = Math.max(1, +$('grid').value || 1);
-  $('atomcount').textContent = (4 * n * n * n) + ' атомов';
+let lastCellMax = 0;          // from /api/estimate: atoms that fit the card
+function atomCount() {        // edited n -> sync the target-atoms field
+  const n = Math.min(12, Math.max(2, +$('grid').value || 2));
+  const a = 4 * n * n * n;
+  $('atomcount').textContent = a + ' атомов';
+  if ($('natomsin').value !== String(a)) $('natomsin').value = a;
+  cellHint();
+}
+function atomsEdited() {      // edited target atoms -> nearest n×n×n
+  const want = Math.max(4, Math.round(+$('natomsin').value || 4));
+  const n = Math.min(12, Math.max(2, Math.round(Math.cbrt(want / 4))));
+  $('grid').value = n;
+  const a = 4 * n * n * n;
+  $('atomcount').textContent = a + ' атомов';
+  cellHint(want);
+}
+function cellHint(want) {
+  const n = Math.min(12, Math.max(2, +$('grid').value || 2));
+  const a = 4 * n * n * n;
+  let t = 'n=' + n + ' → 4·' + n + '³ = ' + a + ' атомов';
+  if (want && want !== a) t += ' · ближайшая сетка к ' + want;
+  if (lastCellMax) {
+    t += a > lastCellMax
+      ? ' · ⚠ влезает ≈ ' + lastCellMax + ' — это больше'
+      : ' · в память влезет (максимум ≈ ' + lastCellMax + ')';
+  }
+  $('cellhint').textContent = t;
 }
 function modeChanged() {
   const m = $('mode').value;
@@ -714,6 +748,9 @@ function renderEstimate(e) {
   $('est-conf').textContent = (C[e.confidence] || e.confidence) +
     (e.machine_gpu ? ' · ' + e.machine_gpu : '') +
     (e.calibrated_at ? ' · калибровка ' + e.calibrated_at : '');
+  // smart cell: how many atoms would still fit this machine
+  lastCellMax = e.max_atoms || 0;
+  cellHint();
 }
 async function calibrateEst() {
   const b = $('btn-calibrate');

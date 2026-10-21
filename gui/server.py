@@ -190,17 +190,22 @@ FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
 
 def build_estimate(form):
     """Estimate payload for a form dict (GET shows FORM; POST may override)."""
+    prof = estimator.load_profile()
     est = estimator.estimate(
-        estimator.load_profile(),
+        prof,
         form.get('mode', 'mace'), form.get('device', 'cuda'),
         int(form.get('grid', 4)), str(form.get('temps', '')),
         int(form.get('eq', 500)), int(form.get('prod', 1000)))
     want_vram = (form.get('mode') == 'mace'
                  and form.get('device') == 'cuda')
+    total_vram = sysmetrics.gpu_info().get('vram_total_mb')
     est['fits'] = estimator.fits_memory(
-        est['vram_mb'] if want_vram else None,
-        sysmetrics.gpu_info().get('vram_total_mb'))
+        est['vram_mb'] if want_vram else None, total_vram)
     est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
+    # "how many atoms still fit this card" (None until 2 calibration points)
+    est['max_atoms'] = estimator.max_atoms_for_vram(
+        prof, total_vram, form.get('mode', 'mace'),
+        form.get('device', 'cuda'))
     return est
 
 
