@@ -18,7 +18,7 @@ read_data       ../data/data.pt_pure.lmp
 
 # EAM potential (single-element, Foiles 1986)
 pair_style      eam
-pair_coeff      * * ../potentials/Pt_u3.eam
+pair_coeff      * * ../potentials/cpu/Pt_u3.eam
 
 neighbor        2.0 bin
 neigh_modify    every 1 delay 0 check yes

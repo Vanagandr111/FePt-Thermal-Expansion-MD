@@ -17,7 +17,37 @@ for each composition.
 
 ---
 
-## Research Goals
+## Web GUI (v1.8.0)
+
+One window for the whole pipeline — mode switch, dependencies, run form,
+live console, charts:
+
+```bat
+run_gui.bat            :: Windows (opens http://127.0.0.1:8321/)
+./run_gui.sh           :: Linux
+```
+or `.venv-mace/Scripts/python.exe gui/server.py` / `python3 gui/server.py`.
+
+- **Mode MACE (GPU) / LAMMPS (CPU)** — switching the mode re-points the
+  potential picker: neural weights are indexed from `potentials/gpu/`
+  (`.pt`, `.model`), classic EAM/MEAM files from `potentials/cpu/`.
+- **Dependencies tab** — torch/CUDA/GPU, mace/ase/numpy, `lmp` binary
+  lookup plus **Download LAMMPS** (official zip/tarball into `lammps/`)
+  and **Download model** (MACE-MP-0-medium) buttons.
+- **Run form** — composition, lattice grid (atom count), temperatures,
+  eq/prod steps; **console** streams the run log; charts show a(T) and
+  CTE with every number; **open results folder** jumps to the current
+  run's files.
+- **Agent control is visible**: the MCP server `gui/mcp_server.py`
+  (registered as `fept_gui`, 12 tools) edits the same server-side form,
+  and the browser pulses each touched field with an `[agent] ...` line.
+- **Single-file exe** (`dist/FePt-GUI.exe`) is built with PyInstaller
+  keeping `potentials/`, `lammps/`, `libs/` OUTSIDE the binary (only our
+  own code is bundled, third-party pieces are downloaded separately).
+  On hosts with Smart App Control the local build may be held by the
+  OS policy — use `run_gui.bat` in that case.
+
+---
 
 - Compute lattice parameter $a(T)$ for pure Pt at the fcc structure.
 - Compute lattice parameter $a(T)$ for Fe–Pt alloys at four Pt concentrations.

@@ -61,3 +61,27 @@ generate_figures.py
 # Gate / benchmark / quick-run outputs (v1.7.4)
 output_*/
 _test_zhou_eam/
+
+# Third-party LAMMPS binaries: fetched on demand by the GUI download
+# button into lammps/ (never bundled into the future single exe).
+lammps/
+# Foundation-model weights (downloaded separately, not shipped)
+potentials/gpu/*.model
+
+# Web GUI: build artifacts of the single-file exe (PyInstaller)
+dist/
+build-gui/
+build-gui2/
+build*/
+*.spec
+FePt-GUI*.exe
+buildtools-venv/
+# GUI run results (results_mace_* / results_lammps_*)
+results_*/
+# scratch test dirs
+build*.log
+# IDE/other
+*.log
+!log.lammps
+_sigtest/
+_dlltest/

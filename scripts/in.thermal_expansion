@@ -18,7 +18,7 @@ read_data       ${datafile}
 
 # --- EAM potentials ---
 pair_style      eam/alloy
-pair_coeff      * * ../potentials/Fe_Zhou.eam.alloy ../potentials/Pt_Zhou.eam.alloy Fe Pt
+pair_coeff      * * ../potentials/cpu/Fe_Zhou.eam.alloy ../potentials/cpu/Pt_Zhou.eam.alloy Fe Pt
 
 neighbor        2.0 bin
 neigh_modify    every 1 delay 0 check yes

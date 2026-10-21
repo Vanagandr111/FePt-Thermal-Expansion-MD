@@ -54,11 +54,40 @@ OUT = os.path.join(_PROJ, 'results')
 LOGS = os.path.join(OUT, 'logs')
 PLOTS = os.path.join(OUT, 'plots')
 INS = os.path.join(OUT, 'input')
-POT_LINE = "pair_coeff      * * potentials\\library.meam Fe Pt potentials\\PtFe.meam Fe Pt"
+POT_LINE = "pair_coeff      * * potentials\\cpu\\library.meam Fe Pt potentials\\cpu\\PtFe.meam Fe Pt"
 
 os.makedirs(LOGS, exist_ok=True)
 os.makedirs(PLOTS, exist_ok=True)
 os.makedirs(INS, exist_ok=True)
+
+# -- CLI (the web GUI drives these; defaults preserve the historical
+# protocol; parse_known_args keeps the manual --seed parsing below)
+import argparse as _argparse
+_P = _argparse.ArgumentParser(description='FePt LAMMPS (EAM/MEAM) runner')
+_P.add_argument("--comps", default=None,
+               help='space-separated xPt list, e.g. "0.0 0.5 1.0"')
+_P.add_argument("--temps", default=None,
+               help='space-separated temperatures, e.g. "300 1200"')
+_P.add_argument("--grid", type=int, default=8,
+               help='supercell n x n x n (8 => 2048 atoms, historical)')
+_P.add_argument("--eq", type=int, default=EQ)
+_P.add_argument("--prod", type=int, default=PROD)
+_P.add_argument("--out", default=None, help='override output directory')
+_A, _U = _P.parse_known_args()
+if _A.comps:
+    COMP = [float(x) for x in _A.comps.split()]
+if _A.temps:
+    TEMPS = [int(x) for x in _A.temps.split()]
+GRID = _A.grid
+EQ = _A.eq
+PROD = _A.prod
+if _A.out:
+    OUT = os.path.abspath(_A.out)
+    LOGS = os.path.join(OUT, 'logs')
+    PLOTS = os.path.join(OUT, 'plots')
+    INS = os.path.join(OUT, 'input')
+    for _d in (OUT, LOGS, PLOTS, INS):
+        os.makedirs(_d, exist_ok=True) 
 
 # -- Seed management --
 SEED_ARG = None
@@ -125,7 +154,7 @@ def main():
     # Generate structures
     print('\nGenerating structures...')
     for comp in COMP:
-        lmp.gen_structure(comp)
+        lmp.gen_structure(comp, nx=GRID, ny=GRID, nz=GRID)
     print('  Structures OK')
 
     # Protocol log

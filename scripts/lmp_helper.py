@@ -56,14 +56,23 @@ CPU_COUNT = os.cpu_count() or 4  # fallback if detection fails
 def find_lmp():
     """
     Search LAMMPS. Order:
-      1. PROJDIR/bin/lmp.exe (portable build)
-      2. env var LMP_EXE
+      1. PROJDIR/lammps/lmp(.exe) (GUI download folder, kept outside the
+         future single-file exe: third-party binary is fetched on demand)
+      2. PROJDIR/bin/lmp.exe (portable build)
+      3. env var LMP_EXE
       3. lmp.exe / lmp in PATH
       4. Typical Windows install paths
       5. lmp.exe in project root
     Returns command list for subprocess, or None.
     """
-    # 1. lmp.exe in bin/ (portable build)
+    # 1. lmp in lammps/ (GUI download folder; kept outside the future
+    #    single-file exe, third-party licensed binary fetched on demand)
+    lammps_lmp = os.path.join(PROJDIR, 'lammps',
+                              'lmp.exe' if os.name == 'nt' else 'lmp')
+    if os.path.isfile(lammps_lmp):
+        return [lammps_lmp]
+
+    # 2. lmp.exe in bin/ (portable build)
     bin_lmp = os.path.join(PROJDIR, 'bin', 'lmp.exe')
     if os.path.isfile(bin_lmp):
         return [bin_lmp]

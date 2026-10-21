@@ -16,7 +16,7 @@ read_data       ${datafile}
 # Mapping: atom type 1 = Fe, atom type 2 = Pt
 # Relative paths from C:\проекты\Nikolay\ work for both WSL and Windows
 pair_style      meam
-pair_coeff      * * potentials/library.meam Fe Pt potentials/PtFe.meam Fe Pt
+pair_coeff      * * potentials/cpu/library.meam Fe Pt potentials/cpu/PtFe.meam Fe Pt
 
 neighbor        2.0 bin
 neigh_modify    every 1 delay 0 check yes
