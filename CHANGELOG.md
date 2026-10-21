@@ -34,6 +34,14 @@
   `LoadLibrary(python312.dll copy)` — reproduces with one ctypes line;
   the installed original DLL loads instantly. Dev-mode launcher
   `run_gui.bat` works around it (signed python.exe).
+- **Frozen-run bugfixes** (found by running the exe): deps probe no
+  longer relaunches the exe itself (was an infinite hang — now returns a
+  clear message), engine interpreter candidates extended
+  (`libs/venv` -> `.venv-mace`/`venv`), `FEPT_PROJECT_DIR` pinned for
+  frozen so `lmp_helper` finds `lammps/` NEXT TO the exe, run start
+  errors cleanly when no engine python exists. Verified end-to-end:
+  exe on port 8321 lists potentials, reports CUDA/lmp, and completes a
+  mini MACE run (108 atoms, exit 0, 237 s).
 - **Linux**: identical code path (`xdg-open`, official linux lmp
   tarball); `run_gui.sh` equivalent.
 

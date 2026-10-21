@@ -46,6 +46,10 @@ else:
     GUI_DIR = os.path.dirname(os.path.abspath(__file__))
     PROJ = os.path.dirname(GUI_DIR)
     RESOURCE = PROJ
+# frozen: lmp_helper derives its root from __file__ (inside the bundle,
+# i.e. the temp dir) — pin it to the real root NEXT TO the exe
+if FROZEN:
+    os.environ.setdefault('FEPT_PROJECT_DIR', PROJ)
 STATIC = os.path.join(GUI_DIR, 'static')
 if not os.path.isdir(STATIC):
     STATIC = os.path.join(RESOURCE, 'gui', 'static')
@@ -101,11 +105,18 @@ def resolve_python():
     for cand in (os.path.join('libs', 'venv', 'Scripts', 'python.exe'),
                  os.path.join('libs', 'venv', 'bin', 'python'),
                  os.path.join('libs', 'python.exe'),
-                 os.path.join('libs', 'python')):
+                 os.path.join('libs', 'python'),
+                 # dev layouts on the project host
+                 os.path.join('.venv-mace', 'Scripts', 'python.exe'),
+                 os.path.join('.venv-mace', 'bin', 'python'),
+                 os.path.join('venv', 'Scripts', 'python.exe'),
+                 os.path.join('venv', 'bin', 'python')):
         p = os.path.join(PROJ, cand)
         if os.path.isfile(p):
             return p
-    return sys.executable  # last resort; the deps tab will show it
+    # NEVER fall back to sys.executable when frozen: that IS this exe,
+    # and spawning it with -c would start a second server (hangs deps).
+    return None
 
 
 _PROBE_CODE = (
@@ -133,6 +144,13 @@ def _probe_libs(python_bin):
 
     Keeps torch/ase/mace as static imports out of the exe bundle and
     makes the deps tab truthful for frozen builds (external venv)."""
+    if not python_bin:
+        return {'error': 'no engine interpreter (set FEPT_PYTHON or '
+                         'create libs/venv next to the exe)'}
+    if os.path.abspath(python_bin) == os.path.abspath(sys.executable):
+        # would re-launch this very executable (-c is not ours) -> hang
+        return {'error': 'engine interpreter resolves to the GUI itself; '
+                         'set FEPT_PYTHON to an external python'}
     try:
         cp = subprocess.run([python_bin, '-c', _PROBE_CODE],
                             capture_output=True, timeout=180)
@@ -395,9 +413,13 @@ def start_run(params):
     temps = [int(t) for t in str(merged.get('temps', '300 1200')).split()]
     stamp = time.strftime('%Y%m%d_%H%M%S')
     outdir = os.path.join(PROJ, 'results_{}_{}'.format(mode, stamp))
-
+    py = resolve_python()
+    if not py:
+        return {'ok': False,
+                'error': 'no engine python found: set FEPT_PYTHON or '
+                         'place an interpreter in libs/ (see Dependencies)'}
     if mode == 'mace':
-        cmd = [resolve_python(), '-u',
+        cmd = [py, '-u',
                os.path.join(SCRIPTS_DIR, 'run_main_mace.py')]
         model = merged.get('model')
         if not model:
