@@ -63,6 +63,7 @@ from mace.calculators import MACECalculator  # noqa: E402 (needs torch env)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lmp_helper as lmp                      # noqa: E402
+import lmpdata                                # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
 
 try:
@@ -178,51 +179,14 @@ def read_lammps_data(path):
     """Parse atomic-style LAMMPS data file written by gen_structure.py.
 
     Returns ase.Atoms with correct Fe/Pt symbols and orthorhombic cell.
-    (ase.io.read with style='atomic' cannot infer elements without a
-    Masses section — that was one of the client's crash sources.)
+    Parsing itself lives in scripts/lmpdata.py (shared with the GUI
+    structure view) — this wrapper only adapts the exception type so the
+    runner's error handling stays as before.
     """
-    with open(path) as f:
-        lines = [ln.strip() for ln in f if ln.strip()]
-
-    natoms = None
-    box = [None] * 6
-    atom_rows = []
-    i = 0
-    while i < len(lines):
-        ln = lines[i]
-        if ln.endswith('atoms'):
-            natoms = int(ln.split()[0])
-        elif 'atom types' in ln:
-            pass
-        elif ln.endswith('xlo xhi'):
-            box[0], box[1] = map(float, ln.split()[:2])
-        elif ln.endswith('ylo yhi'):
-            box[2], box[3] = map(float, ln.split()[:2])
-        elif ln.endswith('zlo zhi'):
-            box[4], box[5] = map(float, ln.split()[:2])
-        elif ln == 'Atoms':
-            # blank lines are already stripped from `lines` above
-            i += 1
-            while i < len(lines) and len(lines[i].split()) >= 5:
-                p = lines[i].split()
-                atom_rows.append((int(p[0]), int(p[1]),
-                                  float(p[2]), float(p[3]), float(p[4])))
-                i += 1
-            break
-        i += 1
-
-    if natoms is None or len(atom_rows) != natoms:
-        raise RuntimeError('bad LAMMPS data file: {}'.format(path))
-
-    atom_rows.sort(key=lambda r: r[0])
-    zmap = {1: 26, 2: 78}          # Fe, Pt
-    symbols = [zmap[r[1]] for r in atom_rows]
-    positions = np.array([[r[2], r[3], r[4]] for r in atom_rows])
-    cell = [[box[1] - box[0], 0, 0],
-            [0, box[3] - box[2], 0],
-            [0, 0, box[5] - box[4]]]
-    atoms = Atoms(numbers=symbols, positions=positions, cell=cell, pbc=True)
-    return atoms
+    try:
+        return lmpdata.read_lammps_data(path)
+    except lmpdata.DataFileError as e:
+        raise RuntimeError('bad LAMMPS data file: {}'.format(path)) from e
 
 
 # ── model search ───────────────────────────────────────────────────

@@ -61,6 +61,7 @@ if not os.path.isdir(STATIC):
     STATIC = os.path.join(RESOURCE, 'gui', 'static')
 SCRIPTS_DIR = os.path.join(RESOURCE, 'scripts')
 sys.path.insert(0, SCRIPTS_DIR)
+import lmpdata                                # noqa: E402  (scripts/)
 
 PORT = int(os.environ.get('FEPT_PORT', 8321))
 IS_WIN = os.name == 'nt'
@@ -757,6 +758,29 @@ class Handler(BaseHTTPRequestHandler):
                 sysmetrics.gpu_info().get('vram_total_mb'))
             est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
             self._json(est)
+            return
+        if path == '/api/structure':
+            # newest structure (.lmp): current run's outdir first, else the
+            # project data dir (e.g. last calibration structure)
+            import urllib.parse as _up
+            q = _up.parse_qs(_up.urlsplit(self.path).query)
+            outdir = q.get('outdir', [None])[0] or RUN.get('outdir')
+            cand = lmpdata.newest_data_file(outdir)
+            if not cand:
+                cand = lmpdata.newest_data_file(os.path.join(PROJ, 'data'))
+            if not cand:
+                self._json({'ok': False, 'error': 'нет файлов структуры'})
+                return
+            try:
+                d = lmpdata.parse_data(cand)
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)})
+                return
+            n = d['natoms'] or 1
+            self._json(dict(d, ok=True, file=os.path.basename(cand),
+                            x_pt=round(d['counts']['Pt'] / n, 4),
+                            lengths=[d['cell'][0][0], d['cell'][1][1],
+                                     d['cell'][2][2]]))
             return
         if path == '/api/metrics':
             # system resource snapshot for the header gauges

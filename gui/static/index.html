@@ -127,6 +127,20 @@ button.act.pulse { outline:2px solid var(--acc); }
 .est-cell .gv.lv-warn { color:var(--warn); }
 .est-cell .gv.lv-bad { color:var(--bad); }
 .est-cell .gv.lv-off { color:var(--dim); }
+/* --- structure viewer (Results) --- */
+.st-wrap { position:relative; background:#05080f; border:1px solid var(--line);
+  border-radius:10px; overflow:hidden; }
+#struct-canvas { display:block; width:100%; height:auto;
+  cursor:grab; touch-action:none; }
+#struct-canvas.dragging { cursor:grabbing; }
+.st-hint { position:absolute; right:10px; bottom:8px; font-size:10.5px;
+  color:#5c6a80; pointer-events:none; letter-spacing:.03em; }
+.st-legend { display:flex; gap:16px; flex-wrap:wrap; margin-top:8px;
+  font-size:12px; color:var(--dim); align-items:center; }
+.st-legend .sw { display:inline-block; width:11px; height:11px;
+  border-radius:50%; margin-right:5px; vertical-align:-1px;
+  box-shadow:inset -2px -2px 3px rgba(0,0,0,.4); }
+.st-legend b { color:var(--text); font-weight:600; }
 /* --- system resource gauges (header) --- */
 .gauges { margin-left:auto; display:flex; gap:7px; flex-wrap:wrap; }
 .gauge { background:rgba(11,18,32,.75); border:1px solid var(--line);
@@ -325,6 +339,21 @@ button.act.pulse { outline:2px solid var(--acc); }
       <b style="font-size:13px">Данные расчёта (all_results.csv)</b>
       <div style="overflow-x:auto"><div id="tbl"></div></div>
     </div>
+    <div class="struct-block">
+      <div class="cbar" style="margin:16px 0 8px">
+        <b>Структура <span id="st-caption" style="color:var(--dim);font-weight:400"></span></b>
+        <div class="row">
+          <button class="ghost tiny" id="st-auto-btn"
+                  onclick="toggleStructAuto()">⟳ Вращение</button>
+          <button class="ghost tiny" onclick="loadStructure()">Обновить</button>
+        </div>
+      </div>
+      <div class="st-wrap">
+        <canvas id="struct-canvas" width="820" height="440"></canvas>
+        <div class="st-hint">перетащить — вращение · колесо — масштаб · 2×клик — сброс</div>
+      </div>
+      <div class="st-legend" id="st-legend"></div>
+    </div>
   </div>
 </section>
 
@@ -415,7 +444,7 @@ function tab(name) {
     $('tab-' + t).classList.toggle('on', t === name);
     $('sec-' + t).classList.toggle('hidden', t !== name);
   });
-  if (name === 'res') loadResults();
+  if (name === 'res') { loadResults(); loadStructure(); }
   if (name === 'deps') loadDeps(false);
   if (name === 'run') refreshModels();
 }
@@ -696,6 +725,157 @@ async function calibrateEst() {
     if (!j.ok) alert('Ошибка калибровки: ' + j.error);
   } catch (e) { alert('Нет связи с сервером: ' + e); }
   finally { b.disabled = false; }
+}
+/* ---------------- structure viewer ---------------- */
+let S = null, stYaw = 0.7, stPitch = -0.4, stZoom = 1.0, stAuto = true;
+let stDrag = null;
+const ST_COL = {Fe: '#d8564f', Pt: '#ded6bc'};
+
+function stShade(hex, amt) {   // amt -1..1 : darken/brighten
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (amt >= 0) { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+  else { r *= 1 + amt; g *= 1 + amt; b *= 1 + amt; }
+  return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
+}
+function stProject(p, cx, cy, scale) {
+  const cyw = Math.cos(stYaw), syw = Math.sin(stYaw);
+  const cp = Math.cos(stPitch), sp = Math.sin(stPitch);
+  let x = p[0] * cyw + p[2] * syw;
+  let z = -p[0] * syw + p[2] * cyw;
+  const y = p[1] * cp - z * sp;
+  z = p[1] * sp + z * cp;
+  return [cx + x * scale, cy - y * scale, z];
+}
+function drawStructure() {
+  if (!S) return;
+  const cv = $('struct-canvas');
+  if (!cv || !cv.offsetParent) return;      // tab not visible: skip frame
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#070c17'); bg.addColorStop(1, '#04060c');
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const L = S.lengths;
+  const ctr = [L[0] / 2, L[1] / 2, L[2] / 2];
+  const diag = Math.hypot(L[0], L[1], L[2]);
+  const scale = (Math.min(W, H) * 0.60 / diag) * stZoom;
+  const cx = W / 2, cy = H / 2;
+
+  // cell frame (12 edges) behind atoms
+  const cor = [];
+  for (let i = 0; i < 8; i++) {
+    const rel = [(i & 1 ? L[0] : 0) - ctr[0],
+                 (i & 2 ? L[1] : 0) - ctr[1],
+                 (i & 4 ? L[2] : 0) - ctr[2]];
+    cor.push(stProject(rel, cx, cy, scale));
+  }
+  ctx.strokeStyle = 'rgba(122,150,196,.45)';
+  ctx.lineWidth = 1;
+  const edg = [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],
+               [4,5],[4,6],[5,7],[6,7]];
+  for (const [a, b] of edg) {
+    ctx.beginPath(); ctx.moveTo(cor[a][0], cor[a][1]);
+    ctx.lineTo(cor[b][0], cor[b][1]); ctx.stroke();
+  }
+
+  // atoms: painter's algorithm (far -> near), radial shading, depth alpha
+  const half = diag / 2;
+  const items = [];
+  for (let i = 0; i < S.positions.length; i++) {
+    const rel = [S.positions[i][0] - ctr[0],
+                 S.positions[i][1] - ctr[1],
+                 S.positions[i][2] - ctr[2]];
+    const pr = stProject(rel, cx, cy, scale);
+    items.push({x: pr[0], y: pr[1], z: pr[2], t: S.symbols[i]});
+  }
+  items.sort((a, b) => a.z - b.z);
+  for (const it of items) {
+    const d = Math.max(-1, Math.min(1, it.z / half));   // -1 far .. +1 near
+    const r = Math.max(1.6, scale * 0.92 * (1 + 0.16 * d));
+    const base = ST_COL[it.t] || '#9aa7bd';
+    const g = ctx.createRadialGradient(it.x - r * 0.35, it.y - r * 0.4,
+                                       r * 0.12, it.x, it.y, r);
+    g.addColorStop(0, stShade(base, 0.5));
+    g.addColorStop(1, stShade(base, -0.35 + 0.12 * d));
+    ctx.globalAlpha = 0.5 + 0.5 * (d + 1) / 2;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(it.x, it.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 0.6; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
+  }
+
+  // axes triad (bottom-left): x red, y green, z blue
+  const o = stProject([-ctr[0], -ctr[1], -ctr[2]], cx, cy, scale);
+  const ax = 1.6;
+  const triad = [[[ax,0,0],'#e0615c'], [[0,ax,0],'#5fbf6a'], [[0,0,ax],'#5f8fd0']];
+  ctx.lineWidth = 1.6; ctx.font = '10px Segoe UI';
+  for (const [v, col] of triad) {
+    const p = stProject([v[0] - ctr[0], v[1] - ctr[1], v[2] - ctr[2]],
+                        cx, cy, scale);
+    ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+    ctx.fillStyle = col; ctx.fillText(['x','y','z'][triad.findIndex(t=>t[0]===v)],
+                                      p[0] + 3, p[1] + 3);
+  }
+}
+function toggleStructAuto() {
+  stAuto = !stAuto;
+  $('st-auto-btn').style.opacity = stAuto ? '1' : '0.5';
+}
+async function loadStructure() {
+  try {
+    const j = await (await fetch('/api/structure')).json();
+    if (!j.ok) {
+      $('st-caption').textContent = j.error || 'нет файлов структуры';
+      return;
+    }
+    S = j;
+    $('st-caption').textContent = j.file + ' · ' + j.natoms + ' атомов';
+    const L = j.lengths.map(v => v.toFixed(2));
+    $('st-legend').innerHTML =
+      '<span><span class="sw" style="background:' + ST_COL.Fe + '"></span>Fe <b>' +
+      j.counts.Fe + '</b></span>' +
+      '<span><span class="sw" style="background:' + ST_COL.Pt + '"></span>Pt <b>' +
+      j.counts.Pt + '</b></span>' +
+      '<span>x<sub>Pt</sub> = <b>' + (j.x_pt * 100).toFixed(1) + '%</b></span>' +
+      '<span>ячейка <b>' + L.join(' × ') + ' Å</b></span>' +
+      '<span>c = a — ортогональная</span>';
+    drawStructure();
+  } catch (e) { /* server not ready */ }
+}
+function stInit() {
+  const cv = $('struct-canvas');
+  if (!cv) return;
+  cv.addEventListener('pointerdown', e => {
+    stDrag = {x: e.clientX, y: e.clientY};
+    stAuto = false;
+    $('st-auto-btn').style.opacity = '0.5';
+    cv.classList.add('dragging');
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!stDrag) return;
+    stYaw += (e.clientX - stDrag.x) * 0.008;
+    stPitch += (e.clientY - stDrag.y) * 0.008;
+    stPitch = Math.max(-1.5, Math.min(1.5, stPitch));
+    stDrag = {x: e.clientX, y: e.clientY};
+    drawStructure();
+  });
+  cv.addEventListener('pointerup', e => {
+    stDrag = null; cv.classList.remove('dragging');
+  });
+  cv.addEventListener('pointercancel', () => {
+    stDrag = null; cv.classList.remove('dragging');
+  });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    stZoom = Math.max(0.3, Math.min(6, stZoom * (e.deltaY > 0 ? 0.9 : 1.1)));
+    drawStructure();
+  }, {passive: false});
+  cv.addEventListener('dblclick', () => {
+    stYaw = 0.7; stPitch = -0.4; stZoom = 1.0; drawStructure();
+  });
 }
 async function openFolder() {
   await fetch('/api/open_folder', {method:'POST',
@@ -1167,6 +1347,13 @@ document.querySelectorAll('#sec-run input, #sec-run select')
     el.addEventListener('change', updateEstimate);
   });
 updateEstimate();
+/* structure viewer: interactions + gentle auto-rotation while visible */
+stInit();
+loadStructure();
+(function stAnimate() {
+  if (stAuto && S) drawStructure();
+  requestAnimationFrame(stAnimate);
+})();
 </script>
 </body>
 </html>
