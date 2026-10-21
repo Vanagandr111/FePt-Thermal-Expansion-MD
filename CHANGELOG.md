@@ -1,5 +1,27 @@
 # Changelog — FePt Thermal Expansion (MACE pipeline)
 
+## v1.8.1 (2026-10-22) — visible browser pop, TDD harness, tree cleanup
+- **Browser pop is now assertive**: `browser_open_chain()` tries
+  `cmd /c start` (fresh focused window) -> `os.startfile` ->
+  `webbrowser.open` on Windows, `xdg-open` on Linux; every primitive is
+  injectable so the chain is unit-tested.
+- **Frozen self-relaunch guard narrowed to FROZEN** (regression caught
+  while writing tests: the guard must NOT refuse `sys.executable` in dev
+  mode, where it IS the engine python).
+- **TDD harness**: `tests/` pytest suite (17 fast unit tests: browser
+  chain, engine interpreter resolution + frozen guard, shared form
+  state/agent logging, potential indexing) — no torch import, <1 s;
+  `pytest.ini`, `requirements-dev.txt`; heavy integration test stays in
+  `scripts/test_nl_cache.py`.
+- **Tree cleanup** (~1 GB removed, all in git history / GitHub
+  releases): hello-world exe debug artifacts, superseded release
+  archives, old `output_*` run folders and backups, dead phase-4
+  pipeline scripts (`run_phase4*`, `rebuild_phase4`, `phases_bench`,
+  `run_fe_only`, `run_pt_eam`, `phase4_analysis.m`, old `.lmp` test
+  files, `lmp_helper.py.bak_*`), May `bootstrap.bat` + its `.venv`,
+  old `results/`.  Kept: working pipeline (`run.bat`+`run_mode.py`),
+  MACE bootstraps, release tooling, docs, `bin/lmp.exe`, potentials.
+
 ## v1.8.0 (2026-10-21) — Web GUI + agent MCP + single-exe prep
 - **Web GUI** (`gui/server.py`, stdlib only, no framework): run modes
   **MACE (GPU)** vs **LAMMPS (CPU)** in one switch; potential picker is

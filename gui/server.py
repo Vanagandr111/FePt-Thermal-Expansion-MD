@@ -19,6 +19,7 @@ official linux tarball.
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -147,8 +148,9 @@ def _probe_libs(python_bin):
     if not python_bin:
         return {'error': 'no engine interpreter (set FEPT_PYTHON or '
                          'create libs/venv next to the exe)'}
-    if os.path.abspath(python_bin) == os.path.abspath(sys.executable):
-        # would re-launch this very executable (-c is not ours) -> hang
+    if FROZEN and os.path.abspath(python_bin) == os.path.abspath(sys.executable):
+        # would re-launch this very executable (-c is not ours) -> hang.
+        # Only frozen: in dev mode sys.executable IS the engine python.
         return {'error': 'engine interpreter resolves to the GUI itself; '
                          'set FEPT_PYTHON to an external python'}
     try:
@@ -788,6 +790,50 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+# ------------------------------------------------------------- browser --
+def browser_open_chain(url, popen=None, startfile=None, wb_open=None,
+                       is_nt=None):
+    """POP the browser open and VISIBLE; return the strategy that worked.
+
+    A plain webbrowser.open() is not reliable for a windowed (no-console)
+    frozen exe on Windows — it can fail silently.  The chain below starts
+    with the most assertive method (cmd `start` spawns a fresh, focused
+    browser window) and falls back down to webbrowser.  Pure enough for
+    TDD: every side-effecting primitive is injectable."""
+    if popen is None:
+        popen = subprocess.Popen
+    if startfile is None:
+        startfile = getattr(os, 'startfile', None)
+    if wb_open is None:
+        wb_open = webbrowser.open
+    if is_nt is None:
+        is_nt = os.name == 'nt'
+    if is_nt:
+        # `start` opens a NEW visible window of the default browser
+        strategies = [
+            ('cmd-start', lambda: popen(
+                ['cmd', '/c', 'start', '', url],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))),
+            ('startfile', lambda: startfile(url)),
+        ]
+    else:
+        strategies = [('xdg-open', lambda: popen(
+            ['xdg-open', url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))]
+    strategies.append(('webbrowser', lambda: wb_open(url)))
+    for name, attempt in strategies:
+        try:
+            result = attempt()
+            # webbrowser.open() reports False instead of raising
+            if result is False:
+                continue
+            return name
+        except Exception:
+            continue
+    return None
+
+
 def main():
     global PORT
     if '--port' in sys.argv:
@@ -800,7 +846,8 @@ def main():
     print('FePt GUI running at ' + url)
     print('project: ' + PROJ)
     if '--no-browser' not in sys.argv:
-        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+        # give the listener a moment, then pop the window VISIBLY
+        threading.Timer(0.7, lambda: browser_open_chain(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

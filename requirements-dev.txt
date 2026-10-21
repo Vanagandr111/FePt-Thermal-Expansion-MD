@@ -1,0 +1,2 @@
+# Development-only dependencies (the app itself is stdlib + external engine)
+pytest>=8.0

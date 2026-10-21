@@ -80,6 +80,8 @@ buildtools-venv/
 results_*/
 # scratch test dirs
 build*.log
+# triton JIT cache (runtime, per-PID)
+.cache/
 # IDE/other
 *.log
 !log.lammps

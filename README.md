@@ -45,7 +45,28 @@ or `.venv-mace/Scripts/python.exe gui/server.py` / `python3 gui/server.py`.
   keeping `potentials/`, `lammps/`, `libs/` OUTSIDE the binary (only our
   own code is bundled, third-party pieces are downloaded separately).
   On hosts with Smart App Control the local build may be held by the
-  OS policy — use `run_gui.bat` in that case.
+  OS policy — use `run_gui.bat` in that case.  On start the exe POPS a
+  visible browser window (cmd `start` -> `os.startfile` ->
+  `webbrowser.open` fallback chain).
+
+## Development — TDD
+
+Long-term project: features land test-first.
+
+```bat
+.venv-mace\Scripts\python.exe -m pytest     :: Windows (fast, no GPU needed)
+.venv-mace/bin/python -m pytest             :: Linux
+```
+
+- `tests/` — unit suite for the GUI core (browser pop-up chain, engine
+  interpreter resolution incl. the frozen self-relaunch guard, shared
+  form state + agent logging, potential indexing).  Runs in <1 s with
+  NO torch/CUDA import; heavy integrations stay in
+  `scripts/test_nl_cache.py` (run manually).
+- Workflow: write the failing test in `tests/`, make it pass with the
+  smallest change in `gui/server.py` / `scripts/`, keep the suite green
+  (`pytest` before every commit).  `requirements-dev.txt` holds dev-only
+  deps (pytest).
 
 ---
 
