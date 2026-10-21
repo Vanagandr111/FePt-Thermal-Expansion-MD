@@ -30,6 +30,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import elements
+import potfile
+import sysmetrics
 
 # windowed (no-console) builds have no sys.stdout — keep prints harmless
 if getattr(sys, 'stdout', None) is None:
@@ -641,6 +643,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/potentials':
             self._json(scan_potentials())
             return
+        if path == '/api/metrics':
+            # system resource snapshot for the header gauges
+            # (CPU ~200 ms sample; ThreadingHTTPServer -> no stall)
+            self._json(sysmetrics.sample(cpu_sample_s=0.2))
+            return
         if path == '/api/form':
             self._json({'form': dict(FORM),
                         'running': RUN['running'],
@@ -764,6 +771,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split('?')[0]
+        if path == '/api/potentials/upload':
+            # raw streamed body (models are up to ~100 MB) -> potentials/
+            import urllib.parse
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query)
+            name = (q.get('name') or [''])[0]
+            length = int(self.headers.get('Content-Length') or 0)
+
+            def chunks():
+                left = length
+                while left > 0:
+                    b = self.rfile.read(min(1 << 20, left))
+                    if not b:
+                        break
+                    left -= len(b)
+                    yield b
+
+            ok, info = potfile.save_upload(GPU_DIR, CPU_DIR, name, chunks())
+            if ok:
+                _DEPS_CACHE['t'] = 0.0
+                log('[gui] potential uploaded: ' + info)
+            self._json({'ok': ok, 'info': info})
+            return
         body = self._read_body()
         if path == '/api/run':
             self._json(start_run(body))
@@ -807,6 +837,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/open_folder':
             outdir = body.get('path') or RUN.get('outdir') \
                 or os.path.join(PROJ, 'results_mace')
+            if outdir == 'POT':  # UI shorthand: the potentials root
+                outdir = os.path.join(PROJ, 'potentials')
             if not os.path.isdir(outdir):
                 os.makedirs(outdir, exist_ok=True)
             log('[gui] open folder: ' + outdir)

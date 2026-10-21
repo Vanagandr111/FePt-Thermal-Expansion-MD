@@ -85,15 +85,63 @@ svg text { fill:var(--dim); font:11px "Segoe UI",sans-serif; }
 button.act.pulse { outline:2px solid var(--acc); }
 .h2 { font-size:14px; margin:0 0 10px; color:var(--acc); }
 .status { min-height:18px; color:var(--dim); font-size:12.5px; margin-top:8px; }
+/* --- potentials modal --- */
+#pot-drop { border:2px dashed var(--line); border-radius:10px; padding:20px;
+  text-align:center; color:var(--dim); margin-top:10px; cursor:pointer;
+  transition:border-color .2s, background .2s; }
+#pot-drop.over { border-color:var(--acc); background:rgba(56,189,248,.08);
+  color:var(--acc); }
+.pot-row { display:flex; gap:8px; align-items:center; padding:4px 6px;
+  border-bottom:1px solid var(--line); font-size:12.5px; }
+.pot-row .nm { flex:1; word-break:break-all; }
+.pot-row .sz { color:var(--dim); white-space:nowrap; }
+.pot-row .kd { font-size:10px; padding:1px 7px; border-radius:99px;
+  border:1px solid var(--line); color:var(--dim); white-space:nowrap; }
+/* --- system resource gauges (header) --- */
+.gauges { margin-left:auto; display:flex; gap:7px; flex-wrap:wrap; }
+.gauge { background:rgba(11,18,32,.75); border:1px solid var(--line);
+  border-radius:8px; padding:3px 9px 5px; min-width:84px; }
+.gauge .gl { display:block; font-size:9.5px; letter-spacing:.09em;
+  color:var(--dim); text-transform:uppercase; }
+.gauge .gv { display:block; font:600 13px "Segoe UI",sans-serif; line-height:1.3;
+  white-space:nowrap; }
+.gauge .bar { display:block; height:4px; border-radius:99px;
+  background:#0b1220; overflow:hidden; margin-top:3px; }
+.gauge .bar b { display:block; height:100%; width:0; border-radius:99px;
+  background:var(--dim); transition:width .7s ease, background .35s; }
+.gauge.g-ok .bar b  { background:linear-gradient(90deg,#22c55e,var(--ok)); }
+.gauge.g-warn .bar b { background:linear-gradient(90deg,#f59e0b,var(--warn)); }
+.gauge.g-bad .bar b  { background:linear-gradient(90deg,#ef4444,var(--bad));
+  animation:hotpulse 1s ease-in-out infinite alternate; }
+.gauge.g-acc .bar b  { background:linear-gradient(90deg,#0ea5e9,var(--acc)); }
+.gauge.g-off { opacity:.5; }
+@keyframes hotpulse { from { filter:brightness(1); } to { filter:brightness(1.5); } }
+#fsbtn { margin-left:6px; font-size:16px; }
 </style>
 </head>
 <body>
 <header>
   <h1>FePt Thermal Expansion</h1>
   <span class="ver">MD GUI · v1.8-dev</span>
+  <div class="gauges" id="gauges">
+    <div class="gauge g-off" id="g-cpu" title="Загрузка процессора">
+      <span class="gl">CPU</span><span class="gv" id="v-cpu">—</span>
+      <i class="bar"><b id="b-cpu"></b></i></div>
+    <div class="gauge g-off" id="g-ram" title="Оперативная память">
+      <span class="gl">ОЗУ</span><span class="gv" id="v-ram">—</span>
+      <i class="bar"><b id="b-ram"></b></i></div>
+    <div class="gauge g-off" id="g-vram" title="Видеопамять GPU">
+      <span class="gl">VRAM</span><span class="gv" id="v-vram">—</span>
+      <i class="bar"><b id="b-vram"></b></i></div>
+    <div class="gauge g-off" id="g-gpu" title="Занятость GPU">
+      <span class="gl">GPU</span><span class="gv" id="v-gpu">—</span>
+      <i class="bar"><b id="b-gpu"></b></i></div>
+  </div>
+  <button class="iconbtn" id="fsbtn" title="Полный экран"
+          onclick="toggleFs()">⛶</button>
 </header>
 <nav>
-  <button id="tab-run" class="on" onclick="tab('run')">Прогон</button>
+  <button id="tab-run" class="on" onclick="tab('run')">Расчёт</button>
   <button id="tab-res" onclick="tab('res')">Результаты</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
 </nav>
@@ -114,6 +162,8 @@ button.act.pulse { outline:2px solid var(--acc); }
       <div id="wrap-model" style="flex:2;min-width:260px">
         <label>Потенциал MACE (индексируется из potentials/gpu/)</label>
         <select id="model"></select>
+        <button class="ghost tiny" style="margin-top:5px"
+                onclick="openPotModal()">＋ Добавить потенциал</button>
       </div>
       <div id="wrap-device" style="flex:1;min-width:150px">
         <label>Устройство</label>
@@ -205,10 +255,10 @@ button.act.pulse { outline:2px solid var(--acc); }
 <section id="sec-res" class="hidden">
   <div class="card">
     <div class="cbar" style="margin:0 0 10px">
-      <b>Графики прогона <span id="res-dir" class="t-dim" style="color:var(--dim)"></span></b>
+      <b>Графики расчёта <span id="res-dir" class="t-dim" style="color:var(--dim)"></span></b>
       <button class="ghost" onclick="loadResults()">Обновить</button>
     </div>
-    <div id="res-empty" class="status">Нет данных — запустите прогон или обновите.</div>
+    <div id="res-empty" class="status">Нет данных — запустите расчёт или обновите.</div>
     <div id="charts" class="hidden">
       <div class="grid" style="grid-template-columns:1fr">
         <div>
@@ -220,7 +270,7 @@ button.act.pulse { outline:2px solid var(--acc); }
           <div id="chart-cte"></div>
         </div>
       </div>
-      <b style="font-size:13px">Все данные прогона (all_results.csv)</b>
+      <b style="font-size:13px">Данные расчёта (all_results.csv)</b>
       <div style="overflow-x:auto"><div id="tbl"></div></div>
     </div>
   </div>
@@ -248,7 +298,7 @@ button.act.pulse { outline:2px solid var(--acc); }
 
 <!-- ======================= CONSOLE ======================= -->
 <div class="cbar">
-  <b>Консоль прогона <span id="run-live" style="color:var(--dim)"></span></b>
+  <b>Консоль вычислений <span id="run-live" style="color:var(--dim)"></span></b>
   <button class="ghost tiny" onclick="document.getElementById('console').innerHTML=''">очистить</button>
 </div>
 <div id="console"></div>
@@ -277,6 +327,22 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div class="btns">
       <button class="ghost" onclick="closeElemModal()">Отмена</button>
       <button class="act" id="em-save" onclick="saveElem()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= POTENTIALS MODAL ================= -->
+<div class="modal-back" id="pot-modal">
+  <div class="modal" style="width:min(520px,92vw)">
+    <h3>Потенциалы — индексируются из папки автоматически</h3>
+    <div id="pot-list" style="max-height:230px;overflow-y:auto"></div>
+    <div id="pot-drop">перетащите файл потенциала сюда<br>
+      <span style="font-size:11px">.model/.pt → potentials/gpu/ ·
+        EAM/MEAM → potentials/cpu/</span></div>
+    <div class="hint" id="pot-msg"></div>
+    <div class="btns">
+      <button class="ghost" onclick="openPotFolder()">📂 Открыть папку</button>
+      <button class="act" onclick="closePotModal()">Готово</button>
     </div>
   </div>
 </div>
@@ -503,7 +569,7 @@ async function startRun() {
   const r = await fetch('/api/run', {method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)});
   const j = await r.json();
-  $('run-status').textContent = j.ok ? 'Прогон запущен → ' + j.outdir
+  $('run-status').textContent = j.ok ? 'Расчёт запущен → ' + j.outdir
                                      : 'Ошибка: ' + j.error;
   $('btn-start').disabled = !!j.ok;
 }
@@ -757,6 +823,124 @@ async function dlModel(name) {
   appendLines(['[gui] загрузка модели ' + name + ' — смотрите консоль…']);
 }
 
+/* ---------------- system gauges ---------------- */
+function setGauge(key, percent, label, cls, title) {
+  const g = $('g-' + key);
+  g.className = 'gauge ' + cls;
+  $('v-' + key).textContent = label;
+  $('b-' + key).style.width =
+    (percent == null ? 0 : Math.max(0, Math.min(100, percent))) + '%';
+  if (title !== undefined) g.title = title;
+}
+async function pollMetrics() {
+  try {
+    const m = await (await fetch('/api/metrics')).json();
+    const L = m.levels || {};
+    const cls = k => ({ok:'g-ok', warn:'g-warn',
+                       bad:'g-bad'})[L[k]] || 'g-off';
+    // CPU
+    if (m.cpu && m.cpu.percent != null) {
+      const p = Math.round(m.cpu.percent);
+      setGauge('cpu', p, p + '%', cls('cpu'),
+               'Загрузка процессора (сэмпл 0.2 с)');
+    } else setGauge('cpu', null, '—', 'g-off', 'CPU недоступен');
+    // RAM
+    if (m.ram && m.ram.available) {
+      const gb = x => (x / 1024).toFixed(1);
+      setGauge('ram', m.ram.percent,
+               gb(m.ram.used_mb) + ' / ' + gb(m.ram.total_mb) + ' ГБ',
+               cls('ram'),
+               'Оперативная память: ' + m.ram.percent + '% занято');
+    } else setGauge('ram', null, '—', 'g-off', 'ОЗУ недоступно');
+    // VRAM
+    if (m.gpu && m.gpu.available) {
+      const gb = x => (x / 1024).toFixed(1);
+      setGauge('vram', m.gpu.vram_percent,
+               gb(m.gpu.vram_used_mb) + ' / ' + gb(m.gpu.vram_total_mb) + ' ГБ',
+               cls('vram'),
+               'Видеопамять: ' + m.gpu.vram_percent + '% занято' +
+               (m.gpu.temp_c != null ? ' · ' + m.gpu.temp_c + ' °C' : '') +
+               (m.gpu.power_w != null ? ' · ' + Math.round(m.gpu.power_w) +
+                ' W' : ''));
+      // GPU util: activity meter (accent, not traffic light)
+      const u = Math.round(m.gpu.gpu_util || 0);
+      setGauge('gpu', u, u + '%', u > 2 ? 'g-acc' : 'g-off',
+               'Занятость GPU (вычисления)' +
+               (m.gpu.temp_c != null ? ' · ' + m.gpu.temp_c + ' °C' : ''));
+    } else {
+      setGauge('vram', null, '—', 'g-off', 'GPU недоступен (nvidia-smi)');
+      setGauge('gpu', null, '—', 'g-off', 'GPU недоступен');
+    }
+  } catch (e) {
+    ['cpu','ram','vram','gpu'].forEach(k =>
+      setGauge(k, null, '—', 'g-off', 'нет связи с сервером'));
+  }
+  setTimeout(pollMetrics, 2500);
+}
+function toggleFs() {
+  const d = document;
+  if (d.fullscreenElement) d.exitFullscreen();
+  else (d.documentElement.requestFullscreen ||
+        d.documentElement.webkitRequestFullscreen).call(d.documentElement);
+}
+
+/* ---------------- potentials modal ---------------- */
+async function openPotModal() {
+  $('pot-modal').classList.add('on');
+  await refreshPotList();
+}
+function closePotModal() { $('pot-modal').classList.remove('on'); }
+async function refreshPotList() {
+  try {
+    const j = await (await fetch('/api/potentials')).json();
+    let h = '';
+    [['gpu', 'MACE'], ['cpu', 'EAM/MEAM']].forEach(([k, tag]) => {
+      (j[k] || []).forEach(p =>
+        h += '<div class="pot-row"><span class="kd">' + tag + '</span>' +
+             '<span class="nm">' + p.name + '</span>' +
+             '<span class="sz">' + p.mb + ' MB</span></div>');
+    });
+    $('pot-list').innerHTML = h || '<div class="hint">пока пусто</div>';
+  } catch (e) {
+    $('pot-list').innerHTML = '<div class="hint">ошибка чтения списка</div>';
+  }
+}
+async function openPotFolder() {
+  await fetch('/api/open_folder', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: 'POT'})});
+  $('pot-msg').textContent = 'Папка открыта поверх окна — файл можно ' +
+    'перетащить в зону выше или положить вручную.';
+}
+function potDropInit() {
+  const dz = $('pot-drop');
+  ['dragover', 'dragenter'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('over');
+  }));
+  ['dragleave', 'dragend'].forEach(ev => dz.addEventListener(ev, () =>
+    dz.classList.remove('over')));
+  dz.addEventListener('drop', async e => {
+    e.preventDefault(); dz.classList.remove('over');
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    for (const f of files) {
+      $('pot-msg').textContent = 'Загрузка ' + f.name + ' (' +
+        Math.round(f.size / 1e6) + ' МБ)…';
+      try {
+        const r = await fetch('/api/potentials/upload?name=' +
+          encodeURIComponent(f.name), {method: 'POST', body: f});
+        const j = await r.json();
+        $('pot-msg').textContent = j.ok ? '✓ сохранён: ' + j.info
+                                        : 'Ошибка: ' + j.info;
+      } catch (err) {
+        $('pot-msg').textContent = 'Ошибка передачи: ' + err;
+      }
+    }
+    await refreshPotList();
+    await refreshModels();
+  });
+  dz.addEventListener('click', openPotFolder);
+}
+
 /* ---------------- boot ---------------- */
 (async () => {
   try {
@@ -769,6 +953,8 @@ refreshModels();
 atomCount();
 connectLog();
 loadElements();
+pollMetrics();
+potDropInit();
 </script>
 </body>
 </html>
