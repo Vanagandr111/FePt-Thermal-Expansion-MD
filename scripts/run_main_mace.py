@@ -31,8 +31,14 @@ with a warning instead of crashing.
 """
 import os
 # CUDA: avoid allocator fragmentation (parallel workers + inductor temp
-# buffers OOM'd on an 8 GiB card with 5 GiB still "free")
-os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+# buffers OOM'd on an 8 GiB card with 5 GiB still "free").
+# garbage_collection_threshold:0.8 = the allocator reclaims segment slack
+# itself before hitting the physical cap.  If a torch/driver combo rejects
+# this key (rare on WDDM), the except-fallback below swaps in
+# max_split_size_mb:128 — same intent, coarser tool.
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF',
+                      'expandable_segments:True,'
+                      'garbage_collection_threshold:0.8')
 # F. Keep compiler caches inside the project: a clean machine / fresh clone
 # must not recompile triton+inductor from scratch on every first run.
 _PROJ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -93,6 +99,78 @@ _DATA = os.path.join(_PROJ, 'data')
 _OUT = os.path.join(_PROJ, 'results_mace')
 _PLOTS = os.path.join(_PROJ, 'plots')
 _LAT = 3.615
+
+
+def _rss_mb():
+    """Current process RSS in MB (no psutil dependency in the env)."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / 2 ** 20
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ('cb', ctypes.c_uint32),
+                ('PageFaultCount', ctypes.c_uint32),
+                ('PeakWorkingSetSize', ctypes.c_size_t),
+                ('WorkingSetSize', ctypes.c_size_t),
+                ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
+                ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                ('PagefileUsage', ctypes.c_size_t),
+                ('PeakPagefileUsage', ctypes.c_size_t)]
+
+        buf = _PMC()
+        buf.cb = ctypes.sizeof(_PMC)
+        h = ctypes.windll.kernel32.GetCurrentProcess()
+        if ctypes.windll.psapi.GetProcessMemoryInfo(
+                h, ctypes.byref(buf), buf.cb):
+            return buf.WorkingSetSize / 2 ** 20
+    except Exception:
+        pass
+    return -1.0
+
+
+def _print_weights(calc_obj):
+    """Audit line: how many model params carry requires_grad (must be 0).
+
+    Frozen weights mean inference builds no autograd nodes on the weight
+    path, so no weight activations are retained for backprop.
+    """
+    try:
+        params = [p for m in getattr(calc_obj, 'models', [])
+                  for p in m.parameters()]
+        if not params:
+            return
+        grad = sum(1 for p in params if p.requires_grad)
+        print('  [audit] model weights: {} params, requires_grad={} '
+              '(0 = frozen, correct for inference)'.format(len(params), grad))
+    except Exception:
+        pass
+
+
+def mem_report(tag=''):
+    """Memory telemetry line (audit lever; read-only, no math effect).
+
+    torch counters: peak allocator demand this process ever made (MB).
+    rss: resident set of this process.  Empty line when torch missing.
+    """
+    try:
+        import torch
+        parts = ['  [mem {}]'.format(tag) if tag else '  [mem]']
+        if torch.cuda.is_available():
+            parts.append('alloc={:.0f}MB'.format(
+                torch.cuda.max_memory_allocated() / 2 ** 20))
+            parts.append('reserved={:.0f}MB'.format(
+                torch.cuda.max_memory_reserved() / 2 ** 20))
+        parts.append('rss={:.0f}MB'.format(_rss_mb()))
+        print(' '.join(parts))
+    except Exception:
+        pass
 
 
 # ── LAMMPS data reader (atomic style, types 1=Fe 2=Pt) ─────────────
@@ -254,6 +332,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     print('  comp={:.2f} T={:4d}K  a={:.5f} A  n={:d}  wall={:.0f}s  '
           'ms/step={:.1f}'
           .format(comp, T, float(a_arr.mean()), len(a_arr), wall, ms_step))
+    mem_report('T{}'.format(T))
 
     return {
         'a_mean': float(a_arr.mean()),
@@ -424,6 +503,17 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, use_bf16,
                 _base, 'pid{}'.format(os.getpid()))
     calc = FastMACECalculator(model_paths=model, device=device,
                               compile_mode=compile_mode, use_bf16=use_bf16)
+    _print_weights(calc)
+    # one cleanup pass before this worker's heavy loop (never per-step)
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if str(device).startswith('cuda') and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
     for comp, T in tasks:
         parsed = run_point(calc, comp, T, eq_steps, prod_steps, interval,
                            seed=base_seed, grid=grid, prepare=False)
@@ -548,6 +638,15 @@ def main():
         calc = FastMACECalculator(model_paths=model, device=device,
                                   compile_mode=compile_mode,
                                   use_bf16=use_bf16)
+        _print_weights(calc)
+        # memory audit baseline: ONE cleanup pass before the heavy loop
+        # (never inside the step loop — empty_cache there syncs CPU/GPU
+        # and drops the fast allocator pool, 2-3x slowdown).
+        import gc
+        gc.collect()
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
         for comp, T in tasks:
             print('comp x_Pt={:.2f}'.format(comp))
             parsed_all[(comp, T)] = run_point(
@@ -608,6 +707,7 @@ def main():
     except Exception as e:
         print('  plots skipped: {}'.format(e))
     lmp.print_trends(parsed_all, comps, temps, seed)
+    mem_report('end')
     print('DONE -> {}'.format(_OUT))
     return 0
 

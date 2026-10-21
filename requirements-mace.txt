@@ -10,5 +10,8 @@ mace-torch==0.3.16
 matplotlib==3.11.2
 torch-ema==0.3
 torchmetrics==1.9.0
+# [mem]-telemetry in run_main_mace.py: process RSS in the audit lines
+# (the ctypes fallback works but psutil is the primary source)
+psutil>=5.9
 # torch.compile (triton) backend; on Linux triton ships with the torch wheel
 triton-windows; sys_platform == 'win32'

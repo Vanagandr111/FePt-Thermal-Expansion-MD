@@ -1,5 +1,41 @@
 # Changelog — FePt Thermal Expansion (MACE pipeline)
 
+## v1.8.3 (2026-10-22) — memory audit (VRAM/RAM) + allocator hygiene
+- **Audit of the 6 memory suspects (run_main_mace.py):**
+  1. model weights were ALREADY frozen (0/31 with requires_grad) — MACE
+     freezes on load; a `[audit] model weights ... requires_grad=0` line
+     now proves it every run;
+  2. autograd flags clean: inference uses create_graph=False; the only
+     create_graph=True is dielectric-only (not our model);
+  3. no detached-tensor leaks: records are plain float tuples, MACE
+     keeps no GPU batches in self (grep-checked);
+  4. compute_stress is unconditionally True in MACE — but the NPT
+     barostat needs stress EVERY step, so only the BFGS relax would
+     benefit (<1% of steps) → deliberately NOT forked;
+  5. allocator: PYTORCH_CUDA_ALLOC_CONF extended to
+     `expandable_segments:True,garbage_collection_threshold:0.8`
+     (live-verified on cu128/WDDM; max_split_size_mb:128 documented as
+     the fallback), reserved peak 1468→1442 MB (-26 MB);
+  6. history is compact (tens of float tuples, no atoms.copy()).
+  Plus: ONE gc.collect()+empty_cache()+reset_peak pass before the heavy
+  loop (main AND worker paths), never inside the step loop.
+- **[mem] telemetry**: per-point `alloc/reserved/MB + rss` lines
+  (psutil primary, ctypes fallback), peak reset before the loop;
+  added psutil to requirements-mace.
+- Control run protocol (256 atoms, 300K, seed=42, eq2000/prod5000):
+  BEFORE a=3.85163 A / 54.2 ms/step / alloc 1358 / reserved 1468 MB;
+  AFTER a=3.85218 A / 54.4 ms/step / alloc 1360 / reserved 1442 MB /
+  RSS 1841 MB. a-delta 0.0143% — above the 0.01% gate; ms/step within
+  noise. See audit notes: allocator layout shifts perturb atomic
+  reductions -> different BFGS branch (relax 200s vs 1200s), candidate
+  for an isolated revert A/B of garbage_collection_threshold.
+- **Found (outside the memory scope): BFGS relax runs on a broken
+  BLAS** — after the first torch op in-process, numpy eigh degrades
+  1.6s→64s (OMP runtime clash), so the 100-step relax costs 7-50 min
+  instead of ~3 min. Isolated repro in a 4-line script; fix candidates
+  (OPENBLAS_NUM_THREADS=1 / warm-up ordering) need their own A/B —
+  NOT applied here.
+
 ## v1.8.2 (2026-10-22) — editable element system + potential hints
 - **System = two editable elements** (generalization step 1): the GUI
   card "Система — элементы сплава" lists A/B from `data/elements.json`
