@@ -30,6 +30,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import elements
+import estimator
 import potfile
 import sysmetrics
 
@@ -96,7 +97,7 @@ _DEPS_CACHE = {'t': 0.0, 'data': None}
 FORM = {
     'mode': 'mace', 'model': '', 'device': 'cuda',
     'comp': 0.5, 'grid': 4, 'temps': '300 1200',
-    'eq': 500, 'prod': 1000,
+    'eq': 500, 'prod': 1000, 'seed': 42,
     'elem_a': 'Fe', 'elem_b': 'Pt',
 }
 def resolve_python():
@@ -183,7 +184,7 @@ def _probe_libs(python_bin):
 
 
 FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
-             'elem_a', 'elem_b')
+             'seed', 'elem_a', 'elem_b')
 
 
 def state_update(diff, source=None):
@@ -456,10 +457,11 @@ def start_run(params):
         if not model:
             return {'ok': False, 'error': 'no model selected'}
         device = merged.get('device', 'cuda')
+        seed = int(merged.get('seed', 42))
         cmd += ['--device', device, '--model', model,
                 '--comps', str(comp), '--temps'] + [str(t) for t in temps] + \
                ['--grid', str(grid), '--eq', str(eq), '--prod', str(prod),
-                '--out', outdir]
+                '--seed', str(seed), '--out', outdir]
     elif mode == 'lammps':
         cmd = [resolve_python(), '-u',
                os.path.join(SCRIPTS_DIR, 'run_main.py'),
@@ -505,11 +507,31 @@ def start_run(params):
         return {'ok': False, 'error': str(e)}
 
     RUN.update(proc=proc, running=True, outdir=outdir, mode=mode,
-               start=time.time())
+               start=time.time(),
+               run_device=merged.get('device', 'cuda'),
+               run_grid=grid)
 
     def pump():
+        import re
+        ms_re = re.compile(r'ms/step=([0-9.]+)')
         for line in proc.stdout:
             log(line)
+            m = ms_re.search(line)
+            if m and RUN.get('mode') == 'mace':
+                # auto-calibration: every finished production window
+                # refreshes the estimator point for this grid/device
+                try:
+                    prof = estimator.load_profile()
+                    if estimator.update_point(
+                            prof, 'mace', RUN.get('run_device', 'cuda'),
+                            RUN.get('run_grid', 4), float(m.group(1))):
+                        estimator.save_profile(prof)
+                        log('[gui] estimator profile updated: {} atoms, '
+                            '{} ms/step'.format(
+                                estimator.natoms_of(RUN.get('run_grid', 4)),
+                                m.group(1)))
+                except Exception as e:
+                    log('[gui] estimator update failed: ' + str(e))
         proc.wait()
         RUN['proc'] = None
         RUN['running'] = False
@@ -721,6 +743,21 @@ class Handler(BaseHTTPRequestHandler):
             # progress bar state for the deps tab (DL is module-level)
             self._json(dict(DL))
             return
+        if path == '/api/estimate':
+            # pre-run time/memory estimate for the CURRENT form values
+            est = estimator.estimate(
+                estimator.load_profile(),
+                FORM.get('mode', 'mace'), FORM.get('device', 'cuda'),
+                int(FORM.get('grid', 4)), str(FORM.get('temps', '')),
+                int(FORM.get('eq', 500)), int(FORM.get('prod', 1000)))
+            want_vram = (FORM.get('mode') == 'mace'
+                         and FORM.get('device') == 'cuda')
+            est['fits'] = estimator.fits_memory(
+                est['vram_mb'] if want_vram else None,
+                sysmetrics.gpu_info().get('vram_total_mb'))
+            est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
+            self._json(est)
+            return
         if path == '/api/metrics':
             # system resource snapshot for the header gauges
             # (CPU ~200 ms sample; ThreadingHTTPServer -> no stall)
@@ -928,6 +965,44 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'ok': True})
             except Exception as e:
                 self._json({'ok': False, 'error': str(e)})
+            return
+        if path == '/api/calibrate':
+            # quick on-machine calibration of the estimator (~3-5 min:
+            # force+stress calls at 32/108/256 atoms, NO relax/MD)
+            if DL['active']:
+                self._json({'ok': False,
+                            'error': 'another transfer is already active'})
+                return
+            py = resolve_python()
+            if not py:
+                self._json({'ok': False, 'error': 'no engine python'})
+                return
+            cmd = [py, '-u',
+                   os.path.join(SCRIPTS_DIR, 'calibrate_profile.py'),
+                   '--device',
+                   'cuda' if FORM.get('device') == 'cuda' else 'cpu',
+                   '--grids', '2', '3', '4']
+            model = FORM.get('model')
+            if model and os.path.isfile(model):
+                cmd += ['--model', model]
+
+            def _calib_job():
+                dl_begin('Калибровка оценки (инференс, без MD)', 'indeterminate')
+                try:
+                    r = subprocess.run(cmd, cwd=PROJ,
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT,
+                                       timeout=1200,
+                                       encoding='utf-8', errors='replace')
+                    for ln in (r.stdout or '').splitlines():
+                        log('[calib] ' + ln)
+                except Exception as e:
+                    log('[calib] ERROR: ' + str(e))
+                finally:
+                    dl_end('калибровка оценки завершена')
+
+            threading.Thread(target=_calib_job, daemon=True).start()
+            self._json({'ok': True})
             return
         if path == '/api/install_lib':
             name = body.get('name')

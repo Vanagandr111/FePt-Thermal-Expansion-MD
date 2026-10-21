@@ -87,3 +87,6 @@ build*.log
 !log.lammps
 _sigtest/
 _dlltest/
+
+# machine-specific estimator calibration (per-GPU, regenerate locally)
+data/estim_profile.json

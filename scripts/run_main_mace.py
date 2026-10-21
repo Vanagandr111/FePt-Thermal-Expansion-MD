@@ -241,12 +241,14 @@ def find_model(cli_model):
     for c in cands:
         if c and os.path.isfile(c):
             return os.path.abspath(c)
-    # any .model/.pt under potentials/ as last resort
-    pot = os.path.join(_PROJ, 'potentials')
-    if os.path.isdir(pot):
-        for fn in sorted(os.listdir(pot)):
-            if fn.endswith(('.model', '.pt', '.ckpt')):
-                return os.path.abspath(os.path.join(pot, fn))
+    # any .model/.pt under potentials/ or potentials/gpu/ as last resort
+    # (the GUI indexes potentials/gpu — keep the CLI search in sync)
+    for sub in ('potentials', os.path.join('potentials', 'gpu')):
+        pot = os.path.join(_PROJ, sub)
+        if os.path.isdir(pot):
+            for fn in sorted(os.listdir(pot)):
+                if fn.endswith(('.model', '.pt', '.ckpt')):
+                    return os.path.abspath(os.path.join(pot, fn))
     return None
 
 
@@ -559,6 +561,9 @@ def main():
     ap.add_argument('--workers', type=int, default=None,
                     help='parallel GPU workers (default: 2 on cuda when '
                          '>1 point; each worker owns a compiled calculator)')
+    ap.add_argument('--seed', type=int, default=42,
+                    help='RNG seed for the NPT initialization '
+                         '(default 42)')
     args = ap.parse_args()
 
     if args.quick:
@@ -622,7 +627,7 @@ def main():
           .format(len(comps), len(temps), eq_steps, prod_steps,
                   4 * grid ** 3, grid))
 
-    seed = 42
+    seed = args.seed
     parsed_all = {}
     tasks = [(comp, T) for comp in comps for T in temps]
     workers = args.workers
