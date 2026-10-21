@@ -97,6 +97,22 @@ button.act.pulse { outline:2px solid var(--acc); }
 .pot-row .sz { color:var(--dim); white-space:nowrap; }
 .pot-row .kd { font-size:10px; padding:1px 7px; border-radius:99px;
   border:1px solid var(--line); color:var(--dim); white-space:nowrap; }
+/* --- deps tab --- */
+.dep-row { display:flex; align-items:center; gap:10px; padding:7px 4px;
+  border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.dep-row .nm { width:84px; font-weight:600; }
+.dep-row .st { flex:1; font-size:12px; color:var(--dim);
+  word-break:break-all; min-width:120px; }
+.dep-row .btns { display:flex; gap:5px; }
+.dl-bar { margin:8px 0 4px; }
+.dl-lbl { font-size:12px; color:var(--dim); margin-bottom:4px; }
+.dl-track { height:8px; border-radius:99px; background:#0b1220;
+  border:1px solid var(--line); overflow:hidden; position:relative; }
+.dl-track b { display:block; height:100%; width:0;
+  background:linear-gradient(90deg,#0ea5e9,var(--acc));
+  transition:width .5s; }
+.dl-bar.indet .dl-track b { width:35%; animation:dlslide 1.1s linear infinite; }
+@keyframes dlslide { from { margin-left:-35%; } to { margin-left:100%; } }
 /* --- system resource gauges (header) --- */
 .gauges { margin-left:auto; display:flex; gap:7px; flex-wrap:wrap; }
 .gauge { background:rgba(11,18,32,.75); border:1px solid var(--line);
@@ -282,9 +298,13 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div class="cbar" style="margin:0 0 10px">
       <b>Проверка зависимостей</b>
       <div>
-        <button class="ghost" onclick="loadDeps(true)">Проверить</button>
-        <button class="ghost" onclick="dlLammps()">⬇ Скачать LAMMPS</button>
+        <button class="ghost" id="btn-deps-refresh"
+                onclick="refreshDepsBtn()">Обновить / проверить</button>
       </div>
+    </div>
+    <div id="dl-bar" class="dl-bar hidden">
+      <div class="dl-lbl" id="dl-lbl"></div>
+      <div class="dl-track"><b id="dl-fill"></b></div>
     </div>
     <div id="deps-body" class="status">Загрузка…</div>
   </div>
@@ -771,28 +791,56 @@ async function loadResults() {
 async function loadDeps(refresh) {
   $('deps-body').textContent = 'Проверка…';
   const j = await (await fetch('/api/deps' + (refresh ? '?refresh=1' : ''))).json();
-  let h = '<div><span class="pill ok">Python ' + j.python + '</span>' +
-          '<span class="pill">' + j.platform + '</span>' +
-          '<span class="pill ' + (j.libs.mace ? 'ok' : 'bad') + '">mace: ' +
-          (j.libs.mace ? 'ok' : 'НЕТ') + '</span>' +
-          '<span class="pill ' + (j.libs.ase ? 'ok' : 'bad') + '">ase: ' +
-          (j.libs.ase ? 'ok' : 'НЕТ') + '</span>' +
-          '<span class="pill ' + (j.libs.numpy ? 'ok' : 'bad') + '">numpy: ' +
-          (j.libs.numpy ? 'ok' : 'НЕТ') + '</span>';
-  const t = j.libs.torch;
-  if (t.installed && !t.error)
-    h += '<span class="pill ok">torch ' + t.version +
-         (t.cuda_available ? ' · CUDA ' + t.cuda + ' · ' + t.device
-                           : ' · ' + (t.cuda || 'CPU')) + '</span>';
-  else
-    h += '<span class="pill bad">torch: ' +
-         (t.error || 'НЕТ') + '</span>';
-  h += '<span class="pill ' + (j.lammps.found ? 'ok' : 'bad') + '">LAMMPS: ' +
-       (j.lammps.found ? j.lammps.path : 'НЕТ — нажмите «Скачать LAMMPS»') +
-       '</span></div>';
-  h += '<div style="margin-top:8px" class="status">Python: ' + j.executable +
-       '<br>Папки: potentials/gpu · potentials/cpu · lammps — ' +
-       (j.folders ? j.folders.lammps : '') + '</div>';
+  let h = '';
+  const L = j.libs;
+  const depRow = (key, title, ok, detail, installJs, installLabel) => {
+    let b = '<div class="dep-row"><span class="nm">' + title + '</span>' +
+      '<span class="pill ' + (ok ? 'ok' : 'bad') + '">' +
+      (ok ? 'есть' : 'НЕТ') + '</span>' +
+      '<span class="st">' + (detail || '') + '</span><span class="btns">';
+    if (installJs)
+      b += '<button class="ghost tiny" onclick="' + installJs + '">' +
+           (installLabel || 'Установить') + '</button>';
+    b += '<button class="ghost tiny" onclick="window.open(\'' +
+         (DEPS_LINKS[key] || DEPS_LINKS.python) + '\')">Ссылка</button>';
+    return b + '</span></div>';
+  };
+  h += depRow('python', 'Python', true,
+       'v' + j.python + ' · ' + (j.executable || ''), null);
+  h += depRow('numpy', 'numpy', L.numpy,
+       L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в движке',
+       "installLib('numpy')");
+  h += depRow('scipy', 'scipy', L.scipy,
+       L.scipy ? ('v' + (L.scipy_v || '?')) : 'не найдено в движке',
+       "installLib('scipy')");
+  h += depRow('pandas', 'pandas', L.pandas,
+       L.pandas ? ('v' + (L.pandas_v || '?')) : 'не найдено в движке',
+       "installLib('pandas')");
+  h += depRow('mace', 'mace', L.mace,
+       L.mace ? ('v' + (L.mace_v || '?') + ' (пакет mace-torch)')
+              : 'не найдено в движке', "installLib('mace')");
+  h += depRow('ase', 'ase', L.ase,
+       L.ase ? ('v' + (L.ase_v || '?')) : 'не найдено в движке',
+       "installLib('ase')");
+  const t = L.torch;
+  const tOk = t.installed && !t.error;
+  h += depRow('torch', 'torch', tOk,
+       tOk ? ('v' + t.version + (t.cuda_available
+             ? ' · CUDA ' + t.cuda + ' · ' + t.device
+             : ' · ' + (t.cuda || 'CPU')))
+           : (t.error || 'не найдено в движке'),
+       "installLib('torch')", 'Установить (CUDA 12.8)');
+  h += depRow('lammps', 'LAMMPS', j.lammps.found,
+       j.lammps.found ? j.lammps.path
+                      : 'не найдено — нажмите «Установить»',
+       j.lammps.found ? null : 'dlLammps()', 'Установить');
+  if (L.probe_error)
+    h += '<div class="status">Ошибка пробы движка: ' + L.probe_error + '</div>';
+  h += '<div style="margin-top:8px" class="status">Интерпретатор движка: ' +
+       (j.engine_python || j.executable) +
+       '<br>Папки: ' + (j.folders
+         ? j.folders.gpu + ' · ' + j.folders.cpu + ' · ' + j.folders.lammps
+         : '') + '</div>';
   $('deps-body').innerHTML = h;
 
   let m = '<div class="status">Модели в potentials/gpu/:</div>';
@@ -810,17 +858,72 @@ async function loadDeps(refresh) {
   m += '</div>';
   $('dl-models').innerHTML = m;
 }
+/* ---------------- deps tab ---------------- */
+const DEPS_LINKS = {
+  python: 'https://www.python.org/downloads/',
+  numpy: 'https://pypi.org/project/numpy/',
+  scipy: 'https://pypi.org/project/scipy/',
+  pandas: 'https://pypi.org/project/pandas/',
+  mace: 'https://pypi.org/project/mace-torch/',
+  ase: 'https://pypi.org/project/ase/',
+  torch: 'https://pytorch.org/get-started/locally/',
+  lammps: 'https://docs.lammps.org/'
+};
+async function refreshDepsBtn() {
+  const b = $('btn-deps-refresh');
+  b.disabled = true; b.textContent = 'Проверка…';
+  try { await loadDeps(true); }
+  finally { b.disabled = false; b.textContent = 'Обновить / проверить'; }
+}
+async function installLib(name) {
+  try {
+    const r = await fetch('/api/install_lib', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name})});
+    const j = await r.json();
+    if (!j.ok) alert('Ошибка установки: ' + j.error);
+  } catch (e) { alert('Нет связи с сервером: ' + e); }
+}
+let dlWasActive = false;
+async function pollDl() {
+  try {
+    const s = await (await fetch('/api/download_status')).json();
+    const bar = $('dl-bar');
+    if (s.active) {
+      bar.classList.remove('hidden');
+      bar.classList.toggle('indet', s.mode !== 'bytes');
+      if (s.mode === 'bytes' && s.total) {
+        const pc = Math.min(100, Math.round(100 * s.have / s.total));
+        $('dl-lbl').textContent = s.label + ' · ' + pc + '% · ' +
+          (s.have / 1e6).toFixed(0) + ' / ' + (s.total / 1e6).toFixed(0) +
+          ' МБ';
+        $('dl-fill').style.width = pc + '%';
+      } else {
+        $('dl-lbl').textContent = s.label + ' …';
+      }
+      dlWasActive = true;
+    } else {
+      bar.classList.add('hidden');
+      $('dl-fill').style.width = '0';
+      if (dlWasActive) {          // a transfer just finished -> refresh
+        dlWasActive = false;
+        loadDeps(true);
+      }
+    }
+  } catch (e) { /* server not ready */ }
+  setTimeout(pollDl, 1000);
+}
 async function dlLammps() {
   await fetch('/api/download_lammps', {method:'POST', body:'{}'});
-  tab('run');
-  appendLines(['[gui] загрузка LAMMPS началась — смотрите консоль ниже…']);
+  appendLines(['[gui] загрузка LAMMPS началась — прогресс виден наверху ' +
+               'этой вкладки, лог — в консоли ниже…']);
 }
 async function dlModel(name) {
   await fetch('/api/download_model', {method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:name})});
-  tab('run');
-  appendLines(['[gui] загрузка модели ' + name + ' — смотрите консоль…']);
+  appendLines(['[gui] загрузка модели ' + name + ' — прогресс виден ' +
+               'наверху этой вкладки, лог — в консоли ниже…']);
 }
 
 /* ---------------- system gauges ---------------- */
@@ -955,6 +1058,7 @@ connectLog();
 loadElements();
 pollMetrics();
 potDropInit();
+pollDl();
 </script>
 </body>
 </html>

@@ -131,7 +131,17 @@ _PROBE_CODE = (
     "d = {'torch': u.find_spec('torch') is not None,\n"
     "     'mace': u.find_spec('mace') is not None,\n"
     "     'ase': u.find_spec('ase') is not None,\n"
-    "     'numpy': u.find_spec('numpy') is not None}\n"
+    "     'numpy': u.find_spec('numpy') is not None,\n"
+    "     'scipy': u.find_spec('scipy') is not None,\n"
+    "     'pandas': u.find_spec('pandas') is not None}\n"
+    "from importlib.metadata import version\n"
+    "for k in ('numpy', 'scipy', 'pandas', 'ase', 'mace-torch'):\n"
+    "    key = 'mace' if k == 'mace-torch' else k\n"
+    "    if d.get(key):\n"
+    "        try:\n"
+    "            d[key + '_v'] = version(k)\n"
+    "        except Exception:\n"
+    "            pass\n"
     "if d['torch']:\n"
     "    try:\n"
     "        import torch\n"
@@ -266,8 +276,15 @@ def collect_deps(refresh=False):
         'libs': {
             'torch': torch_info,
             'mace': probe.get('mace', False),
+            'mace_v': probe.get('mace_v'),
             'ase': probe.get('ase', False),
+            'ase_v': probe.get('ase_v'),
             'numpy': probe.get('numpy', False),
+            'numpy_v': probe.get('numpy_v'),
+            'scipy': probe.get('scipy', False),
+            'scipy_v': probe.get('scipy_v'),
+            'pandas': probe.get('pandas', False),
+            'pandas_v': probe.get('pandas_v'),
             'probe_error': probe.get('error'),
         },
         'lammps': {'found': bool(lammps), 'path': lammps},
@@ -504,26 +521,81 @@ def start_run(params):
     return {'ok': True, 'outdir': outdir}
 
 
+# --------------------- download / install status (progress bar) ---------
+# Shared with the deps tab: the UI polls /api/download_status.
+DL = {'active': False, 'label': '', 'have': 0, 'total': 0, 'mode': 'bytes',
+      'done_msg': ''}
+
+INSTALL_SPECS = {
+    'numpy': ['numpy'],
+    'scipy': ['scipy'],
+    'pandas': ['pandas'],
+    'ase': ['ase'],
+    'mace': ['mace-torch'],
+    'torch': ['torch', '--index-url',
+              'https://download.pytorch.org/whl/cu128'],
+}
+
+
+def dl_begin(label, mode='bytes', total=0):
+    DL.update(active=True, label=label, have=0, total=total, mode=mode,
+              done_msg='')
+
+
+def dl_end(msg=''):
+    DL.update(active=False, done_msg=msg)
+
+
+def install_lib(name):
+    """pip-install a whitelisted dependency into the ENGINE interpreter."""
+    spec = INSTALL_SPECS.get((name or '').lower())
+    if not spec:
+        log('[gui] install: unknown package ' + repr(name))
+        return
+    py = resolve_python()
+    log('[gui] pip install {} into {}'.format(spec[0], py))
+    dl_begin('pip install ' + spec[0], mode='indeterminate')
+    try:
+        r = subprocess.run([py, '-m', 'pip', 'install'] + spec,
+                           capture_output=True, text=True, timeout=1800)
+        for line in (r.stdout or '').strip().splitlines()[-4:]:
+            log('[gui]   ' + line)
+        if r.returncode != 0:
+            log('[gui] pip FAILED (code {}): {}'.format(
+                r.returncode, (r.stderr or '')[-400:]))
+        else:
+            log('[gui] pip OK: ' + spec[0])
+        _DEPS_CACHE['t'] = 0.0
+    except Exception as e:
+        log('[gui] pip error: ' + str(e))
+    finally:
+        dl_end('pip install завершён: ' + spec[0])
+
+
 def download_url(url, dest, label):
     """Stream-download with progress into the console log."""
     log('[gui] download {} <- {}'.format(label, url))
     tmp = dest + '.part'
     req = urllib.request.Request(url, headers={'User-Agent': 'fept-gui'})
     done = 0
+    dl_begin(label)
     with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as w:
         total = int(r.headers.get('Content-Length') or 0)
+        DL['total'] = total
         while True:
             chunk = r.read(1 << 20)
             if not chunk:
                 break
             w.write(chunk)
             done += len(chunk)
+            DL['have'] = done
             if total and done % (50 << 20) < (1 << 20):
                 log('[gui]   {:.0f} / {:.0f} MB'.format(done / 1e6,
                                                          total / 1e6))
     os.replace(tmp, dest)
     size = os.path.getsize(dest)
     log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
+    dl_end('сохранён: ' + os.path.basename(dest))
     return dest
 
 
@@ -553,12 +625,14 @@ def download_lammps():
                                                        'lammps_setup.exe'),
                                  'LAMMPS Windows installer')
         log('[gui] silent install into ' + LAMMPS_DIR + ' ...')
+        dl_begin('LAMMPS: тихая установка', mode='indeterminate')
         try:
             subprocess.run([installer, '/S',
                             '/D={}'.format(LAMMPS_DIR)],
                            check=False, timeout=600)
         except Exception as e:
             log('[gui] installer error: ' + str(e))
+        dl_end('LAMMPS: установка завершена')
         for probe in ('lmp.exe', os.path.join('bin', 'lmp.exe')):
             if os.path.isfile(os.path.join(LAMMPS_DIR, probe)):
                 log('[gui] OK: ' + os.path.join(LAMMPS_DIR, probe))
@@ -642,6 +716,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/potentials':
             self._json(scan_potentials())
+            return
+        if path == '/api/download_status':
+            # progress bar state for the deps tab (DL is module-level)
+            self._json(dict(DL))
             return
         if path == '/api/metrics':
             # system resource snapshot for the header gauges
@@ -851,7 +929,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._json({'ok': False, 'error': str(e)})
             return
+        if path == '/api/install_lib':
+            name = body.get('name')
+            if (name or '').lower() not in INSTALL_SPECS:
+                self._json({'ok': False, 'error': 'unknown package'})
+                return
+            if DL['active']:
+                self._json({'ok': False,
+                            'error': 'another transfer is already active'})
+                return
+            threading.Thread(target=install_lib, args=(name,),
+                             daemon=True).start()
+            self._json({'ok': True})
+            return
         if path == '/api/download_lammps':
+            if DL['active']:
+                self._json({'ok': False,
+                            'error': 'another transfer is already active'})
+                return
             threading.Thread(target=download_lammps, daemon=True).start()
             self._json({'ok': True})
             return
@@ -860,6 +955,10 @@ class Handler(BaseHTTPRequestHandler):
             url = body.get('url') or MODEL_URLS.get(name)
             if not name or not url:
                 self._json({'ok': False, 'error': 'unknown model'})
+                return
+            if DL['active']:
+                self._json({'ok': False,
+                            'error': 'another transfer is already active'})
                 return
             os.makedirs(GPU_DIR, exist_ok=True)
             dest = os.path.join(GPU_DIR, name)
