@@ -43,6 +43,25 @@ button.tiny { padding:3px 10px; font-size:12px; border-radius:6px; }
   background:#0b1220; border:1px solid var(--line); margin:2px 4px 2px 0; }
 .pill.ok { border-color:var(--ok); color:var(--ok); }
 .pill.bad { border-color:var(--bad); color:var(--bad); }
+/* --- element system picker --- */
+.sysrow { display:flex; gap:6px; align-items:center; }
+.sysrow select { flex:1; }
+.iconbtn { background:#0b1220; color:var(--dim); border:1px solid var(--line);
+  border-radius:6px; width:30px; height:30px; cursor:pointer; font-size:14px; }
+.iconbtn:hover { color:var(--acc); border-color:var(--acc); }
+.hint { color:var(--dim); font-size:11px; margin-top:3px; }
+.compat { margin-top:10px; font-size:12.5px; }
+/* modal overlay */
+.modal-back { position:fixed; inset:0; background:rgba(2,6,16,.72);
+  display:none; align-items:center; justify-content:center; z-index:50; }
+.modal-back.on { display:flex; }
+.modal { background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:18px 20px; width:min(430px,92vw);
+  box-shadow:0 18px 60px rgba(0,0,0,.5); }
+.modal h3 { margin:0 0 12px; font-size:15px; }
+.modal .fld { margin-bottom:10px; }
+.modal .err { color:var(--bad); font-size:12px; min-height:16px; }
+.modal .btns { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
 #console { background:#060a14; border:1px solid var(--line); border-radius:10px;
   height:230px; overflow-y:auto; padding:10px 12px;
   font:12px/1.5 Consolas,"Cascadia Mono",monospace; white-space:pre-wrap; }
@@ -104,6 +123,39 @@ button.act.pulse { outline:2px solid var(--acc); }
         </select>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2 class="h2">Система — элементы сплава</h2>
+    <div class="grid">
+      <div>
+        <label>Элемент A (основа, доля = 1 − x)</label>
+        <div class="sysrow">
+          <select id="elemA" onchange="elemChanged('A')"></select>
+          <button class="iconbtn" title="Настройки выбранного элемента"
+                  onclick="openElemModal('edit','A')">⚙</button>
+          <button class="iconbtn" title="Удалить выбранный элемент"
+                  onclick="deleteElem('A')">🗑</button>
+          <button class="iconbtn" title="Добавить новый элемент"
+                  onclick="openElemModal('add','A')">＋</button>
+        </div>
+      </div>
+      <div>
+        <label>Элемент B (доля x задаётся ползунком ниже)</label>
+        <div class="sysrow">
+          <select id="elemB" onchange="elemChanged('B')"></select>
+          <button class="iconbtn" title="Настройки выбранного элемента"
+                  onclick="openElemModal('edit','B')">⚙</button>
+          <button class="iconbtn" title="Удалить выбранный элемент"
+                  onclick="deleteElem('B')">🗑</button>
+          <button class="iconbtn" title="Добавить новый элемент"
+                  onclick="openElemModal('add','B')">＋</button>
+        </div>
+      </div>
+    </div>
+    <div class="hint">⚙ — настройки элемента (символ, подпись, стартовая решётка),
+      🗑 — удалить из списка, ＋ — добавить новый. Список хранится в data/elements.json.</div>
+    <div id="sys-compat" class="compat"></div>
   </div>
 
   <div class="card">
@@ -202,6 +254,33 @@ button.act.pulse { outline:2px solid var(--acc); }
 <div id="console"></div>
 </main>
 
+<!-- ================= ELEMENT MODAL ================= -->
+<div class="modal-back" id="elem-modal">
+  <div class="modal">
+    <h3 id="elem-modal-title">Новый элемент</h3>
+    <div class="fld">
+      <label>Химический символ</label>
+      <input id="em-symbol" placeholder="Например: Cu, Ni, Al, Ag" maxlength="3">
+      <div class="hint">Как в таблице Менделеева: заглавная + опциональная строчная (Fe, Cu, Pt).</div>
+    </div>
+    <div class="fld">
+      <label>Подпись (название)</label>
+      <input id="em-label" placeholder="Например: Медь, Никель (fcc)" maxlength="80">
+      <div class="hint">Как элемент подписывается в списке и в подписях результатов.</div>
+    </div>
+    <div class="fld">
+      <label>Стартовая решётка a, Å (необязательно)</label>
+      <input id="em-lc" placeholder="Например: 3.615 — или пусто" inputmode="decimal">
+      <div class="hint">С чего стартует fcc-ячейка. Справка: Fe 3.56, Pt 4.01, Cu 3.61, Al 4.05, Ni 3.52. Пусто = возьмём разумное значение.</div>
+    </div>
+    <div class="err" id="em-err"></div>
+    <div class="btns">
+      <button class="ghost" onclick="closeElemModal()">Отмена</button>
+      <button class="act" id="em-save" onclick="saveElem()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -234,6 +313,7 @@ function modeChanged() {
                         $('prod').value = 5000; }
   else { $('grid').value = 4; $('eq').value = 500; $('prod').value = 1000; }
   atomCount();
+  checkCompat();
 }
 function modeView() {
   const m = $('mode').value;
@@ -262,6 +342,11 @@ function applyState(st) {
   modeView();
   compOut();
   atomCount();
+  if (f.elem_a || f.elem_b) {
+    if (f.elem_a) sysSel.a = String(f.elem_a);
+    if (f.elem_b) sysSel.b = String(f.elem_b);
+    renderSystem();
+  }
   if (st.source === 'agent') {
     if (touched.length) appendLines(touched.map(s => '[agent] ' + s));
     const bar = $('run-live');
@@ -279,6 +364,115 @@ function quickPreset() {
   $('temps').value = '300 1200'; atomCount();
   setComp(0.5);
 }
+/* ---------- element system picker ---------- */
+let ELEMENTS = [];
+const sysSel = { a: 'Fe', b: 'Pt' };
+async function loadElements() {
+  try {
+    const r = await (await fetch('/api/elements')).json();
+    ELEMENTS = r.elements || [];
+  } catch (e) { ELEMENTS = []; }
+  if (!ELEMENTS.length) {
+    ELEMENTS = [{symbol:'Fe', label:'Железо (fcc)', lc:3.5647},
+                {symbol:'Pt', label:'Платина', lc:4.0065}];
+  }
+  renderSystem();
+}
+function renderSystem() {
+  for (const key of ['a', 'b']) {
+    const sel = $(key === 'a' ? 'elemA' : 'elemB');
+    sel.innerHTML = '';
+    ELEMENTS.forEach(e => {
+      const o = document.createElement('option');
+      o.value = e.symbol;
+      o.textContent = (e.label ? e.label + ' — ' : '') + e.symbol;
+      sel.appendChild(o);
+    });
+    const cur = ELEMENTS.some(e => e.symbol === sysSel[key])
+      ? sysSel[key] : (ELEMENTS[0] || {}).symbol;
+    sel.value = cur; sysSel[key] = cur;
+  }
+  syncSysForm();
+  checkCompat();
+}
+function syncSysForm() {
+  fetch('/api/form', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({elem_a: sysSel.a, elem_b: sysSel.b})}).catch(() => {});
+}
+async function elemChanged(which) {
+  sysSel[which === 'A' ? 'a' : 'b'] = $(which === 'A' ? 'elemA' : 'elemB').value;
+  syncSysForm(); checkCompat();
+}
+function openElemModal(mode, which) {
+  const sel = $(which === 'A' ? 'elemA' : 'elemB');
+  const sym = sel && sel.value;
+  const editing = mode === 'edit' && !!sym;
+  const cur = editing ? (ELEMENTS.find(e => e.symbol === sym) || {}) : {};
+  $('elem-modal-title').textContent = editing
+    ? ('Настройки элемента ' + sym) : 'Новый элемент';
+  $('em-symbol').value = editing ? (cur.symbol || '') : '';
+  $('em-label').value = editing ? (cur.label || '') : '';
+  $('em-lc').value = (editing && cur.lc != null) ? cur.lc : '';
+  $('em-err').textContent = '';
+  $('elem-modal').classList.add('on');
+  $('em-symbol').focus();
+}
+function closeElemModal() { $('elem-modal').classList.remove('on'); }
+async function saveElem() {
+  const item = {symbol: $('em-symbol').value.trim(),
+                label: $('em-label').value.trim(),
+                lc: $('em-lc').value.trim()};
+  let r;
+  try {
+    r = await (await fetch('/api/elements', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'save', item})})).json();
+  } catch (e) { r = {ok: false, error: 'server unreachable'}; }
+  if (!r.ok) { $('em-err').textContent = r.error || 'Ошибка сохранения'; return; }
+  ELEMENTS = r.elements; closeElemModal(); renderSystem();
+}
+async function deleteElem(which) {
+  const sel = $(which === 'A' ? 'elemA' : 'elemB');
+  const sym = sel.value;
+  if (!confirm('Удалить элемент ' + sym + ' из списка системы?')) return;
+  const r = await (await fetch('/api/elements', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'delete', symbol: sym})})).json();
+  if (r.ok) { ELEMENTS = r.elements; renderSystem(); }
+}
+async function checkCompat() {
+  const box = $('sys-compat');
+  if (!box) return;
+  const mode = $('mode') ? $('mode').value : 'mace';
+  let file = '';
+  if (mode === 'mace') {
+    const sel = $('model'); file = sel ? sel.value : '';
+  } else {
+    file = '';   /* server falls back to the default MEAM file */
+  }
+  try {
+    const sys = encodeURIComponent(sysSel.a + ',' + sysSel.b);
+    const u = '/api/elements/compat?system=' + sys +
+              (file ? '&file=' + encodeURIComponent(file) : '');
+    const r = await (await fetch(u)).json();
+    if (!r.ok) { box.innerHTML = ''; return; }
+    if (r.status === 'universal')
+      box.innerHTML = '<span class="pill ok">✓ Потенциал универсален — поддерживает все элементы</span>';
+    else if (r.status === 'ok')
+      box.innerHTML = '<span class="pill ok">✓ Потенциал содержит: ' +
+        r.potential_elements.join(', ') + ' — ваша система поддерживается</span>';
+    else if (r.status === 'partial')
+      box.innerHTML = '<span class="pill bad">⚠ Потенциал знает ' +
+        (r.potential_elements || []).join(', ') + ', но НЕ содержит: ' +
+        r.missing.join(', ') + '</span>';
+    else if (r.status === 'none')
+      box.innerHTML = '<span class="pill bad">⚠ Потенциал не содержит ваши элементы (есть: ' +
+        (r.potential_elements || []).join(', ') + ')</span>';
+    else
+      box.innerHTML = '<span class="pill">? Потенциал не распознан — совместимость неизвестна</span>';
+  } catch (e) { box.innerHTML = ''; }
+}
 async function refreshModels() {
   const r = await (await fetch('/api/potentials')).json();
   const sel = $('model'); sel.innerHTML = '';
@@ -293,6 +487,7 @@ async function refreshModels() {
     o.value = ''; o.textContent = '— нет моделей, скачайте во вкладке «Зависимости» —';
     sel.appendChild(o);
   }
+  checkCompat();
 }
 async function startRun() {
   const p = {
@@ -573,6 +768,7 @@ async function dlModel(name) {
 refreshModels();
 atomCount();
 connectLog();
+loadElements();
 </script>
 </body>
 </html>

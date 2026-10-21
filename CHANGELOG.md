@@ -1,5 +1,25 @@
 # Changelog — FePt Thermal Expansion (MACE pipeline)
 
+## v1.8.2 (2026-10-22) — editable element system + potential hints
+- **System = two editable elements** (generalization step 1): the GUI
+  card "Система — элементы сплава" lists A/B from `data/elements.json`
+  with per-element ⚙ edit / 🗑 delete / ＋ add; both open a MODAL form
+  (symbol / label / seed lattice a) with inline hints and validation
+  messages.  Server: `GET/POST /api/elements`, module `gui/elements.py`
+  (CRUD + validation + atomic save), form fields `elem_a`/`elem_b`
+  (MCP-visible).
+- **Potential compatibility hints**: `GET /api/elements/compat` reads a
+  potential file and reports whether it contains the chosen elements —
+  parser understands EAM setfl/alloy headers ("16 Cu Ag ..."), old EAM
+  blocks ("1 Fe"), Z-headers ("78 195.09 FCC"), MEAM library lines
+  ("'Pt' 'fcc'"), MEAM alloy comments ("# Element 1 = Fe"), and treats
+  MACE weights as universal; the UI shows ✓/⚠ pills and refreshes on
+  mode/model/system change; project-escape guard on the file param.
+- **Broken downloads cleanup**: removed six potentials that were
+  actually "404: Not Found" pages saved as .eam.alloy (Fe_Zhou,
+  Pt_Zhou, Pt_Zhou04*); remaining set verified byte-wise.
+- TDD: +22 unit tests (39 total, <0.2 s).
+
 ## v1.8.1 (2026-10-22) — visible browser pop, TDD harness, tree cleanup
 - **Browser pop is now assertive**: `browser_open_chain()` tries
   `cmd /c start` (fresh focused window) -> `os.startfile` ->

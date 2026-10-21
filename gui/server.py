@@ -29,6 +29,8 @@ import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import elements
+
 # windowed (no-console) builds have no sys.stdout — keep prints harmless
 if getattr(sys, 'stdout', None) is None:
     import io as _io
@@ -62,6 +64,7 @@ IS_WIN = os.name == 'nt'
 LAMMPS_DIR = os.path.join(PROJ, 'lammps')
 GPU_DIR = os.path.join(PROJ, 'potentials', 'gpu')
 CPU_DIR = os.path.join(PROJ, 'potentials', 'cpu')
+ELEMENTS_PATH = os.path.join(PROJ, 'data', 'elements.json')
 GH_API_LATEST = 'https://api.github.com/repos/lammps/lammps/releases/latest'
 # Direct model mirrors (licenses are not ours: fetched on demand only)
 MODEL_URLS = {
@@ -92,6 +95,7 @@ FORM = {
     'mode': 'mace', 'model': '', 'device': 'cuda',
     'comp': 0.5, 'grid': 4, 'temps': '300 1200',
     'eq': 500, 'prod': 1000,
+    'elem_a': 'Fe', 'elem_b': 'Pt',
 }
 def resolve_python():
     """Interpreter that runs the engine scripts.
@@ -166,7 +170,8 @@ def _probe_libs(python_bin):
         return {'error': str(e)[:300]}
 
 
-FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod')
+FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
+             'elem_a', 'elem_b')
 
 
 def state_update(diff, source=None):
@@ -642,6 +647,34 @@ class Handler(BaseHTTPRequestHandler):
                         'outdir': RUN.get('outdir'),
                         'state_n': RUN['state_n']})
             return
+        if path == '/api/elements':
+            self._json({'elements': elements.load_elements(ELEMENTS_PATH),
+                        'file': ELEMENTS_PATH})
+            return
+        if path == '/api/elements/compat':
+            import urllib.parse
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query)
+            pot = os.path.realpath((q.get('file') or [''])[0])
+            if not os.path.isfile(pot):
+                # lammps mode sends no file: fall back to the default
+                # MEAM the engine currently uses
+                for cand in (os.path.join(CPU_DIR, 'PtFe.meam'),):
+                    if os.path.isfile(cand):
+                        pot = os.path.realpath(cand)
+                        break
+            # never read outside the project tree
+            if not pot.startswith(os.path.realpath(PROJ) + os.sep):
+                self._json({'ok': False, 'error': 'path outside project'})
+                return
+            chosen = [s.strip() for s in
+                      (q.get('system') or [''])[0].split(',') if s.strip()]
+            items = elements.load_elements(ELEMENTS_PATH)
+            if chosen:
+                items = [{'symbol': s} for s in chosen]
+            self._json({'ok': True,
+                        **elements.compatibility(items, pot)})
+            return
         if path == '/api/results':
             outdir = None
             if 'outdir=' in self.path:
@@ -743,6 +776,29 @@ class Handler(BaseHTTPRequestHandler):
             state_update(updates, source=body.get('source'))
             self._json({'ok': True, 'form': dict(FORM),
                         'state_n': RUN['state_n']})
+            return
+        if path == '/api/elements':
+            action = body.get('action')
+            items = elements.load_elements(ELEMENTS_PATH)
+            if action == 'save':
+                item = body.get('item') or {}
+                ok, err = elements.validate_element(item)
+                if not ok:
+                    self._json({'ok': False, 'error': err})
+                    return
+                items, idx = elements.upsert_element(items, item)
+                elements.save_elements(items, ELEMENTS_PATH)
+                log('[gui] element saved: ' + items[idx]['symbol'])
+                self._json({'ok': True, 'elements': items, 'index': idx})
+                return
+            if action == 'delete':
+                sym = str(body.get('symbol') or '').strip()
+                items = elements.remove_element(items, sym)
+                elements.save_elements(items, ELEMENTS_PATH)
+                log('[gui] element removed: ' + sym)
+                self._json({'ok': True, 'elements': items})
+                return
+            self._json({'ok': False, 'error': 'unknown action'})
             return
         if path == '/api/stop':
             stop_run()
