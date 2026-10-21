@@ -188,6 +188,22 @@ FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
              'seed', 'elem_a', 'elem_b')
 
 
+def build_estimate(form):
+    """Estimate payload for a form dict (GET shows FORM; POST may override)."""
+    est = estimator.estimate(
+        estimator.load_profile(),
+        form.get('mode', 'mace'), form.get('device', 'cuda'),
+        int(form.get('grid', 4)), str(form.get('temps', '')),
+        int(form.get('eq', 500)), int(form.get('prod', 1000)))
+    want_vram = (form.get('mode') == 'mace'
+                 and form.get('device') == 'cuda')
+    est['fits'] = estimator.fits_memory(
+        est['vram_mb'] if want_vram else None,
+        sysmetrics.gpu_info().get('vram_total_mb'))
+    est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
+    return est
+
+
 def state_update(diff, source=None):
     """Merge form changes; log every agent touch into the console."""
     clean = {}
@@ -746,18 +762,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/estimate':
             # pre-run time/memory estimate for the CURRENT form values
-            est = estimator.estimate(
-                estimator.load_profile(),
-                FORM.get('mode', 'mace'), FORM.get('device', 'cuda'),
-                int(FORM.get('grid', 4)), str(FORM.get('temps', '')),
-                int(FORM.get('eq', 500)), int(FORM.get('prod', 1000)))
-            want_vram = (FORM.get('mode') == 'mace'
-                         and FORM.get('device') == 'cuda')
-            est['fits'] = estimator.fits_memory(
-                est['vram_mb'] if want_vram else None,
-                sysmetrics.gpu_info().get('vram_total_mb'))
-            est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
-            self._json(est)
+            # (POST {form:{...}} may override values for that query only)
+            self._json(build_estimate(FORM))
             return
         if path == '/api/structure':
             # newest structure (.lmp): current run's outdir first, else the
@@ -989,6 +995,45 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'ok': True})
             except Exception as e:
                 self._json({'ok': False, 'error': str(e)})
+            return
+        if path == '/api/estimate':
+            # same estimate, but the request form dict overrides values
+            # for THIS query only (agents ask "what if grid=8?" without
+            # touching the human's form)
+            form = dict(FORM)
+            if isinstance(body.get('form'), dict):
+                form.update({k: v for k, v in body['form'].items()
+                             if k in FORM_KEYS and v is not None})
+            self._json(build_estimate(form))
+            return
+        if path == '/api/potentials/copy':
+            # server-side import of a local file (agent/MCP path): same
+            # validation + atomic save as the browser upload route
+            src = str(body.get('path') or '').strip().strip('"')
+            if not src:
+                self._json({'ok': False, 'error': 'path is required'})
+                return
+            if not os.path.isfile(src):
+                self._json({'ok': False,
+                            'error': 'file not found: ' + src})
+                return
+            name = os.path.basename(src)
+            try:
+                with open(src, 'rb') as f:
+                    def _chunks(fh=f):
+                        while True:
+                            b = fh.read(1 << 20)
+                            if not b:
+                                break
+                            yield b
+                    saved = potfile.save_upload(GPU_DIR, CPU_DIR, name,
+                                                 _chunks())
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)})
+                return
+            log('[gui] potential copied from {}: {}'.format(src, saved))
+            self._json({'ok': True, 'saved': saved,
+                        'potentials': scan_potentials()})
             return
         if path == '/api/calibrate':
             # quick on-machine calibration of the estimator (~3-5 min:
