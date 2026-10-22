@@ -596,8 +596,8 @@ def main():
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
     ap.add_argument('--lc', type=float, default=None,
                     help='seed lattice constant in Angstrom; default: '
-                         'LC_TABLE by system (pt=MACE-MP-0 EOS fit 4.0065, '
-                         'fe/fept=historical 3.615 seed)')
+                         'LC_TABLE by system (pt=experimental fcc 3.9242 A, '
+                         'fe/MACE-EOS 3.5647, fept=historical 3.615 seed)')
     ap.add_argument('--nl-skin', type=float, default=1.0,
                     help='Verlet skin in Angstrom for the cached neighbour '
                          'list (D lever; merged after gate: 56.0->52.5 '

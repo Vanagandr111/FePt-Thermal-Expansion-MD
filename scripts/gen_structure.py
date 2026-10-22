@@ -34,9 +34,12 @@ except Exception:
 #       computed one. It is kept only where changing it would break
 #       comparability with every past run.
 LC_TABLE = {
-    # Pure Pt: our own MACE-MP-0 EOS fit (scripts/eos_pt.py): E(V) parabola,
-    # fp32, a(0K)=4.0065 A (+2.21% vs experimental 3.92 A).
-    'pt': 4.0065,
+    # Pure Pt: EXPERIMENTAL fcc lattice a=3.9242 A (293K). The old seed
+    # was our MACE-MP-0 EOS fit a(0K)=4.0065 A - honest, but +2.21% vs
+    # experiment right at t=0, which the client saw as 'нечёткое значение
+    # с большой погрешностью'. NPT equilibrates to the model volume
+    # anyway; the seed itself is now experimentally exact.
+    'pt': 3.9242,
     # Pure Fe (fcc/gamma): our MACE-MP-0 EOS fit (scripts/eos_pt.py
     # --comp 0.00), same method as pt; a(0K)=3.5647 A.
     'fe': 3.5647,
@@ -55,7 +58,7 @@ def lattice_constant(comp_pt, lc_override=None):
     if lc_override is not None:
         return float(lc_override), 'explicit override'
     if comp_pt >= 0.999:
-        return LC_TABLE['pt'], 'table[pt] = MACE-MP-0 EOS fit'
+        return LC_TABLE['pt'], 'table[pt] = experimental fcc 3.9242 A (293K)'
     if comp_pt <= 0.001:
         return LC_TABLE['fe'], 'table[fe] = MACE-MP-0 EOS fit (fcc)'
     return LC_TABLE['fept'], 'table[fept] = historical seed (v1.5, old-run comparability)'

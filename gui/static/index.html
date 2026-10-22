@@ -95,6 +95,14 @@ svg text { fill:var(--dim); font:11px "Segoe UI",sans-serif; }
 button.act.pulse { outline:2px solid var(--acc); }
 .h2 { font-size:14px; margin:0 0 10px; color:var(--acc); }
 .status { min-height:18px; color:var(--dim); font-size:12.5px; margin-top:8px; }
+/* header app-status badge: ok / warn / error / update */
+.hstatus { font-size:12px; padding:3px 10px; border-radius:999px;
+  border:1px solid var(--line); color:var(--dim); cursor:default;
+  margin-left:8px; white-space:nowrap; }
+.hstatus.s-ok { color:#4ade80; border-color:#16653433; background:#16653422; }
+.hstatus.s-warn { color:#fbbf24; border-color:#92400e33; background:#92400e22; }
+.hstatus.s-error { color:#f87171; border-color:#7f1d1d33; background:#7f1d1d22; }
+.hstatus.s-update { color:#60a5fa; border-color:#1e3a8a33; background:#1e3a8a22; }
 /* --- potentials modal --- */
 #pot-drop { border:2px dashed var(--line); border-radius:10px; padding:20px;
   text-align:center; color:var(--dim); margin-top:10px; cursor:pointer;
@@ -177,6 +185,9 @@ button.act.pulse { outline:2px solid var(--acc); }
 <header>
   <h1>FePt Thermal Expansion</h1>
   <span class="ver">MD GUI · v1.8-dev</span>
+  <span class="hstatus" id="hdr-status"
+        title="Сводка: зависимости, ошибки расчёта, наличие обновления"
+        onclick="tab('about')">status: …</span>
   <div class="gauges" id="gauges">
     <div class="gauge g-off" id="g-cpu" title="Загрузка процессора">
       <span class="gl">CPU</span><span class="gv" id="v-cpu">—</span>
@@ -199,6 +210,7 @@ button.act.pulse { outline:2px solid var(--acc); }
   <button id="tab-res" onclick="tab('res')">Результаты</button>
   <button id="tab-prof" onclick="tab('prof')">Машина</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
+  <button id="tab-about" onclick="tab('about')">О программе</button>
 </nav>
 <main>
 
@@ -326,8 +338,27 @@ button.act.pulse { outline:2px solid var(--acc); }
       <button class="ghost" onclick="openFolder()">📂 Открыть папку результатов</button>
       <button class="ghost" onclick="quickPreset()">⚡ Быстрый тест</button>
     </div>
+    <div class="est-card" id="prog-card">
+      <div class="est-title">Текущий прогон — факт
+        <span id="prog-state" class="t-dim"
+              style="color:var(--dim);font-size:11px"></span></div>
+      <div class="est-grid">
+        <div class="est-cell"><span class="gl">Точек</span>
+          <span class="gv" id="pg-points">—</span></div>
+        <div class="est-cell"><span class="gl">Скорость</span>
+          <span class="gv" id="pg-rate">—</span></div>
+        <div class="est-cell"><span class="gl">Осталось (ETA)</span>
+          <span class="gv" id="pg-eta">—</span></div>
+        <div class="est-cell"><span class="gl">Прошло</span>
+          <span class="gv" id="pg-elapsed">—</span></div>
+      </div>
+      <div class="bar" style="margin-top:8px">
+        <div class="fill" id="pg-bar" style="width:0%"></div></div>
+      <div class="hint" id="pg-conf">Скорость и ETA считаются по первым
+        завершённым точкам; полоса выровнена под ETA.</div>
+    </div>
     <div class="est-card" id="est-card">
-      <div class="est-title">Предварительная оценка расчёта
+      <div class="est-title">Предварительная оценка расчёта (план, не факт)
         <button class="ghost tiny" id="btn-calibrate"
                 onclick="calibrateEst()">🔬 Откалибровать (~3-5 мин)</button></div>
       <div class="est-grid">
@@ -449,6 +480,50 @@ button.act.pulse { outline:2px solid var(--acc); }
 <div id="console"></div>
 </main>
 
+<!-- ======================= ABOUT ======================= -->
+<section id="sec-about" class="hidden">
+  <div class="card">
+    <div class="cbar"><b>О программе</b>
+      <span class="t-dim" id="ab-version" style="color:var(--dim)"></span>
+      <div class="row">
+        <button class="act" id="btn-update"
+                onclick="doUpdate()">🔄 Обновить с GitHub</button>
+        <button class="ghost"
+                onclick="window.open('https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases','_blank')">📦 Релизы</button>
+        <button class="ghost"
+                onclick="window.open('https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD','_blank')">🐙 Исходники</button>
+      </div>
+    </div>
+    <div id="up-status" class="status"></div>
+    <h3 style="margin:14px 0 6px">Статус приложения (хедер)</h3>
+    <div class="status" id="ab-status-list">загрузка…</div>
+    <div class="hint">Статусы: <b>ok</b> — все зависимости на месте,
+      ошибок не было; <b>warn</b> — что-то не установлено или не найдено
+      (модель, интерпретатор), расчёт может не стартовать;
+      <b>error</b> — последний расчёт завершился с ошибкой или базовая
+      зависимость отсутствует; <b>update</b> — на GitHub вышла более
+      свежая версия — нажмите «Обновить». Клик по бейджу открывает эту
+      вкладку.</div>
+    <h3 style="margin:14px 0 6px">Как работает</h3>
+    <div class="hint">
+      • <b>Расчёт</b>: ASE-MD (NPT: Langevin-термостат + MTK-баростат,
+      1 fs/шаг) с нейронным потенциалом <b>MACE</b> на GPU (fp16/bf16/fp32,
+      torch.compile) или CPU; модели скачиваются on-demand из каталога
+      ACEsuit и лежат в potentials/gpu/.<br>
+      • <b>MCP</b> (для ИИ-агентов): сервер JSON-RPC на
+      http://127.0.0.1:8321 (клиент fept_gui) — инструменты
+      gui_set_form, gui_start_run, gui_status, gui_get_form,
+      gui_calibrate, gui_list_potentials, gui_download_model и др.;
+      переменная FEPT_GUI_URL перенаправляет адрес.<br>
+      • <b>CLI</b>: движком управляется и напрямую —
+      <code>python scripts/run_main_mace.py --help</code> и
+      <code>python scripts/run_main.py --help</code> (LAMMPS-режим);
+      все прогоны пишут CSV/XLSX/графики/md_*.log в results_*/.<br>
+      • <b>Тесты</b>: <code>python -m pytest -q</code> (~30 с, без сети и GPU).
+    </div>
+  </div>
+</section>
+
 <!-- ================= ELEMENT MODAL ================= -->
 <div class="modal-back" id="elem-modal">
   <div class="modal">
@@ -457,6 +532,7 @@ button.act.pulse { outline:2px solid var(--acc); }
       <label>Химический символ</label>
       <input id="em-symbol" placeholder="Например: Cu, Ni, Al, Ag" maxlength="3">
       <div class="hint">Как в таблице Менделеева: заглавная + опциональная строчная (Fe, Cu, Pt).</div>
+      <div class="hint" id="em-info" style="min-height:16px"></div>
     </div>
     <div class="fld">
       <label>Подпись (название)</label>
@@ -466,7 +542,7 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div class="fld">
       <label>Стартовая решётка a, Å (необязательно)</label>
       <input id="em-lc" placeholder="Например: 3.615 — или пусто" inputmode="decimal">
-      <div class="hint">С чего стартует fcc-ячейка. Справка: Fe 3.56, Pt 4.01, Cu 3.61, Al 4.05, Ni 3.52. Пусто = возьмём разумное значение.</div>
+      <div class="hint">С чего стартует fcc-ячейка. Справка: Fe 3.5647, Pt 3.9242 (эксп., 293K), Cu 3.615, Al 4.05, Ni 3.52. Пусто = возьмём разумное значение.</div>
     </div>
     <div class="err" id="em-err"></div>
     <div class="btns">
@@ -806,6 +882,102 @@ async function startRun() {
 async function stopRun() {
   await fetch('/api/stop', {method:'POST', body:'{}'});
 }
+/* ---------------- element modal: live atom hint ---------------- */
+let _symT = 0;
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('em-symbol');
+  if (el) el.addEventListener('input', () => {
+    clearTimeout(_symT);
+    _symT = setTimeout(async () => {
+      const v = el.value.trim();
+      const box = document.getElementById('em-info');
+      if (!v) { box.textContent = ''; return; }
+      try {
+        const j = await (await fetch('/api/symbol_info?symbol=' +
+          encodeURIComponent(v))).json();
+        if (j.ok) {
+          box.textContent = j.symbol + ' — ' + j.ru + ', Z=' + j.z +
+            ', масса ' + j.mass.toFixed(3) + ' а.е.м. · система видит атом';
+          box.style.color = 'var(--ok, #4ade80)';
+        } else {
+          box.textContent = '«' + v + '» не найдено в справочнике — ' +
+            'система НЕ увидит такой атом';
+          box.style.color = '#f87171';
+        }
+      } catch (e) { box.textContent = ''; }
+    }, 250);
+  });
+});
+
+/* ---------------- current-run progress card ---------------- */
+const fmtDurP = s => fmtDur(s);
+async function pollProgress() {
+  try {
+    const p = await (await fetch('/api/progress')).json();
+    const card = $('prog-card');
+    const seen = p.done > 0 || p.running;
+    card.style.opacity = seen ? '1' : '0.55';
+    $('pg-points').textContent = p.total ? (p.done + ' / ' + p.total) : '—';
+    $('pg-rate').textContent = p.rate_per_min > 0
+      ? p.rate_per_min.toFixed(2) + ' точ/мин' : '—';
+    $('pg-eta').textContent = (p.eta_s !== null && p.eta_s !== undefined)
+      ? fmtDurP(p.eta_s) : '—';
+    $('pg-elapsed').textContent = p.elapsed_s > 0
+      ? fmtDurP(p.elapsed_s) : '—';
+    $('pg-bar').style.width = Math.min(100, p.pct || 0) + '%';
+    if (p.running) {
+      $('prog-state').textContent = 'идёт…';
+    } else if (p.done > 0 && p.total && p.done >= p.total) {
+      $('prog-state').textContent = 'точки завершены (' +
+        (p.last_exit === 0 ? 'exit 0' : 'exit ' + p.last_exit) + ')';
+    } else if (p.last_exit !== null && p.last_exit !== undefined) {
+      $('prog-state').textContent = 'прерван (exit ' + p.last_exit + ')';
+    } else {
+      $('prog-state').textContent = '';
+    }
+  } catch (e) { /* server restarting */ }
+}
+setInterval(pollProgress, 2000);
+pollProgress();
+
+/* ---------------- header status badge + About ---------------- */
+async function pollStatus() {
+  try {
+    const j = await (await fetch('/api/status_summary')).json();
+    const el = $('hdr-status');
+    el.textContent = 'status: ' + j.level;
+    el.className = 'hstatus s-' + j.level;
+    el.title = j.checks.join('; ');
+    $('ab-version').textContent = 'версия v' + j.version +
+      (j.latest ? ' (GitHub: v' + j.latest + ')' : '');
+    $('ab-status-list').innerHTML = j.checks.map(c =>
+      '<div>• ' + c + '</div>').join('');
+    return j;
+  } catch (e) { return null; }
+}
+setInterval(pollStatus, 60000);
+pollStatus();
+
+async function doUpdate() {
+  const box = $('up-status');
+  box.textContent = 'проверяю GitHub…';
+  try {
+    const j = await (await fetch('/api/update', {method: 'POST'})).json();
+    if (!j.ok) { box.textContent = 'ошибка: ' + (j.error || '?'); return; }
+    if (j.action === 'up-to-date') {
+      box.textContent = 'уже актуально: v' + j.version + ' — свежайшая.';
+    } else if (j.action === 'staged-not-frozen') {
+      box.textContent = 'файл обновления подготовлен: ' + j.staged +
+        ' (' + Math.round((j.size || 0) / 1e6) + ' МБ); в dev-режиме exe ' +
+        'не заменяется — в установке нажмите Обновить.';
+    } else if (j.action === 'restart-pending') {
+      box.textContent = 'обновление v' + j.version + ' → v' + j.latest +
+        ' загружено (' + Math.round((j.size || 0) / 1e6) + ' МБ). GUI ' +
+        'перезапустится через пару секунд…';
+    }
+  } catch (e) { box.textContent = 'ошибка соединения: ' + e; }
+}
+
 /* ---------------- pre-run estimate ---------------- */
 let estT = 0;
 function fmtDur(s) {

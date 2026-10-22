@@ -170,6 +170,8 @@ RUN = {
     'proc': None, 'lines': [], 'n': 0, 'running': False,
     'outdir': None, 'mode': None, 'start': 0.0,
     'state_n': 0, 'last_source': None,
+    # live progress of the CURRENT run (points of the planned grid):
+    'done_points': 0, 'plan_total': 0, 'last_exit': None,
 }
 COND = threading.Condition()
 _DEPS_CACHE = {'t': 0.0, 'data': None}
@@ -571,6 +573,8 @@ def start_run(params):
     eq = int(merged.get('eq', 500))
     prod = int(merged.get('prod', 1000))
     temps = [int(t) for t in str(merged.get('temps', '300 1200')).split()]
+    RUN['done_points'] = 0
+    RUN['plan_total'] = len(temps)  # one composition per run
     stamp = time.strftime('%Y%m%d_%H%M%S')
     outdir = os.path.join(PROJ, 'results_{}_{}'.format(mode, stamp))
     py = resolve_python()
@@ -663,8 +667,14 @@ def start_run(params):
     def pump():
         import re
         ms_re = re.compile(r'ms/step=([0-9.]+)')
+        pt_re = re.compile(r'^\s+comp=[\d.]+\s+T=\s*\d+K\s+a=')
         for line in proc.stdout:
             log(line)
+            if pt_re.match(line):
+                RUN['done_points'] += 1
+                log('[gui] point done {}/{}'.format(
+                    RUN['done_points'], RUN['plan_total']))
+                continue
             m = ms_re.search(line)
             if m and RUN.get('mode') == 'mace':
                 # auto-calibration: every finished production window
@@ -684,12 +694,206 @@ def start_run(params):
         proc.wait()
         RUN['proc'] = None
         RUN['running'] = False
+        RUN['last_exit'] = proc.returncode
         log('[gui] === run finished (exit {}), took {:.1f} s'.format(
             proc.returncode, time.time() - RUN['start']))
         log('[gui] results: ' + outdir)
 
     threading.Thread(target=pump, daemon=True).start()
     return {'ok': True, 'outdir': outdir}
+
+
+# --------------------- run progress (points, rate, ETA) -----------------
+def progress_summary():
+    """Live progress of the CURRENT run for the progress card.
+
+    The client wanted a card that cannot lie: points done out of the
+    planned grid, speed measured from the FIRST finished points and an
+    ETA that the bar is aligned against (bar = done/total, ETA from the
+    measured rate - both converge as points land).
+    """
+    total = int(RUN.get('plan_total') or 0)
+    done = int(RUN.get('done_points') or 0)
+    start = float(RUN.get('start') or 0.0)
+    running = bool(RUN.get('running'))
+    elapsed = (time.time() - start) if start else 0.0
+    if not running and RUN.get('last_exit') is not None:
+        # frozen final elapsed of the finished run
+        elapsed = elapsed or 0.0
+    rate = (done / elapsed * 60.0) if (done > 0 and elapsed > 0) else 0.0
+    eta = ((total - done) * elapsed / done) if (done > 0 and total > done
+                                               and elapsed > 0) else None
+    pct = (100.0 * done / total) if total > 0 else 0.0
+    return {
+        'running': running,
+        'total': total,
+        'done': done,
+        'pct': round(min(100.0, pct), 1),
+        'elapsed_s': round(elapsed, 1),
+        'rate_per_min': round(rate, 2),
+        'eta_s': (round(eta, 1) if eta is not None else None),
+        'last_exit': RUN.get('last_exit'),
+        'outdir': RUN.get('outdir'),
+    }
+
+
+# --------------------- app status (ok / warn / error / update) ----------
+APP_VERSION = '1.8.1'
+UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
+                'err': None}
+UPDATE_TTL = 6 * 3600.0
+REPO_REL = ('https://api.github.com/repos/'
+            'Vanagandr111/FePt-Thermal-Expansion-MD/releases/latest')
+
+
+def _release_json(url=None):
+    """Latest release info. FEPT_UPDATE_JSON overrides the endpoint
+    (tests / staged rollouts point it at a local file or server)."""
+    u = url or os.environ.get('FEPT_UPDATE_JSON') or REPO_REL
+    if u.startswith('file://'):
+        u = u[len('file://'):]
+    req = urllib.request.Request(
+        u, headers={'User-Agent': 'fept-gui/1.8',
+                    'Accept': 'application/vnd.github+json'})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+def check_latest_release(force=False):
+    """Cached lookup of the newest release tag + exe asset."""
+    if not force and UPDATE_CACHE['latest'] and \
+            time.time() - UPDATE_CACHE['checked_at'] < UPDATE_TTL:
+        return UPDATE_CACHE
+    try:
+        rel = _release_json()
+        tag = str(rel.get('tag_name') or '').lstrip('vV')
+        asset = None
+        for a in rel.get('assets') or []:
+            if a.get('name') == 'FePt-GUI.exe':
+                asset = a
+                break
+        UPDATE_CACHE.update(latest=tag, asset=asset, err=None,
+                            checked_at=time.time())
+    except Exception as e:
+        UPDATE_CACHE.update(err=str(e), checked_at=time.time())
+    return UPDATE_CACHE
+
+
+def _ver_tuple(v):
+    parts = []
+    for p in str(v or '0').split('.'):
+        digits = ''.join(c for c in p if c.isdigit())
+        parts.append(int(digits or 0))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def update_available():
+    """(bool_newer, latest_tag)."""
+    c = check_latest_release()
+    if not c['latest'] or c['err']:
+        return False, c['latest']
+    return _ver_tuple(c['latest']) > _ver_tuple(APP_VERSION), c['latest']
+
+
+def status_summary():
+    """One badge for the header: are dependencies OK, did the last run
+    fail, is there an update? Levels: error > update > warn > ok."""
+    checks = []
+    level = 'ok'
+    last_exit = RUN.get('last_exit')
+    if last_exit not in (None, 0):
+        level = 'error'
+        checks.append('последний расчёт завершился с кодом {}'.format(
+            last_exit))
+    if not resolve_python():
+        level = 'error' if level == 'error' else 'warn'
+        checks.append('не найден интерпретатор движка (Dependencies)')
+    model = FORM.get('model') or ''
+    if FORM.get('mode') == 'mace' and (
+            not model or not os.path.exists(model)):
+        if level == 'ok':
+            level = 'warn'
+        checks.append('не выбрана/не найдена модель MACE')
+    newer, latest = update_available()
+    if newer and level == 'ok':
+        level = 'update'
+    if newer:
+        checks.append('доступна версия v{} (у вас v{})'.format(
+            latest, APP_VERSION))
+    if not checks:
+        checks.append('все зависимости на месте, ошибок нет')
+    return {'level': level, 'text': 'status: ' + level,
+            'version': APP_VERSION, 'latest': latest,
+            'update_available': bool(newer), 'checks': checks,
+            'frozen': FROZEN}
+
+
+def build_update_bat(self_pid, new_exe, cur_exe):
+    """Batch file that swaps the frozen exe after we exit.
+
+    A running one-file exe cannot overwrite itself, so the updater
+    downloads to .new, writes this bat and defers: the bat kills our
+    PID, moves .new over the exe, relaunches and deletes itself.
+    """
+    return (
+        '@echo off\r\n'
+        'chcp 65001 >nul\r\n'
+        'timeout /t 2 /nobreak >nul\r\n'
+        'taskkill /F /PID {pid} >nul 2>nul\r\n'
+        'timeout /t 1 /nobreak >nul\r\n'
+        'move /Y "{new}" "{cur}" >nul\r\n'
+        'start "" "{cur}"\r\n'
+        'del "%~f0"\r\n'
+    ).format(pid=int(self_pid), new=new_exe, cur=cur_exe)
+
+
+def run_self_update():
+    """Download the newest exe (never over a running file) and arm the
+    swap batch. Returns a dict for /api/update."""
+    newer, latest = update_available()
+    c = check_latest_release()
+    if not newer or not c.get('asset'):
+        return {'ok': True, 'action': 'up-to-date',
+                'version': APP_VERSION, 'latest': latest}
+    url = os.environ.get('FEPT_UPDATE_ASSET') or \
+        c['asset']['browser_download_url']
+    upd_dir = os.path.join(PROJ, 'update_staging')
+    os.makedirs(upd_dir, exist_ok=True)
+    new_exe = os.path.join(upd_dir, 'FePt-GUI.exe.new')
+    _download(url, new_exe)
+    size = os.path.getsize(new_exe)
+    if not FROZEN:
+        return {'ok': True, 'action': 'staged-not-frozen',
+                'version': APP_VERSION, 'latest': latest,
+                'staged': new_exe, 'size': size,
+                'note': 'dev mode: файл обновления подготовлен, '
+                        'exe не заменяется'}
+    cur = os.path.abspath(sys.executable)
+    bat = os.path.join(upd_dir, 'apply_update.bat')
+    with open(bat, 'w', newline='') as f:
+        f.write(build_update_bat(os.getpid(), new_exe, cur))
+    log('[gui] update v{} -> v{} staged ({} bytes); restarting '
+        'via {}'.format(APP_VERSION, latest, size, bat))
+    threading.Timer(2.0, lambda: subprocess.Popen(
+        [bat], cwd=upd_dir, creationflags=NOWIN,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)).start()
+    return {'ok': True, 'action': 'restart-pending',
+            'version': APP_VERSION, 'latest': latest, 'size': size}
+
+
+def _download(url, dest):
+    req = urllib.request.Request(url,
+                                 headers={'User-Agent': 'fept-gui/1.8'})
+    with urllib.request.urlopen(req, timeout=600) as r, \
+            open(dest + '.part', 'wb') as w:
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            w.write(chunk)
+    os.replace(dest + '.part', dest)
 
 
 # --------------------- download / install status (progress bar) ---------
@@ -926,6 +1130,28 @@ class Handler(BaseHTTPRequestHandler):
             # progress bar state for the deps tab (DL is module-level)
             self._json(dict(DL))
             return
+        if path == '/api/symbol_info':
+            import urllib.parse
+            q = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query)
+            sym = (q.get('symbol') or [''])[0]
+            self._json(elements.symbol_info(sym))
+            return
+        if path == '/api/progress':
+            self._json(progress_summary())
+            return
+        if path == '/api/status_summary':
+            self._json(status_summary())
+            return
+        if path == '/api/update':
+            if self.command != 'POST':
+                self._json(status_summary())
+                return
+            try:
+                self._json(run_self_update())
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)})
+            return
         if path == '/api/estimate':
             # pre-run time/memory estimate for the CURRENT form values
             # (POST {form:{...}} may override values for that query only)
@@ -1123,6 +1349,12 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_body()
         if path == '/api/run':
             self._json(start_run(body))
+            return
+        if path == '/api/update':
+            try:
+                self._json(run_self_update())
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)})
             return
         if path == '/api/form':
             # agent / UI form edits; source='agent' makes it visible
