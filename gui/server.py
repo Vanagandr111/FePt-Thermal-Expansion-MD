@@ -604,6 +604,10 @@ def start_run(params):
                 '--comps', str(comp), '--temps'] + [str(t) for t in temps] + \
                ['--grid', str(grid), '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
+        if not compile_enabled():
+            cmd.append('--no-compile')
+            log('[gui] torch.compile OFF for this run (default; '
+                'FEPT_COMPILE=1 opts back in where triton works)')
     elif mode == 'lammps':
         cmd = [resolve_python(), '-u',
                os.path.join(SCRIPTS_DIR, 'run_main.py'),
@@ -706,6 +710,18 @@ def start_run(params):
     return {'ok': True, 'outdir': outdir}
 
 
+# --------------------- torch.compile switch (FEPT_COMPILE) --------------
+def compile_enabled():
+    """GUI default: torch.compile OFF for engine runs (blocked ptxas on
+    client machines killed runs with [WinError 5]; uncompiled always
+    finishes). FEPT_COMPILE=1 turns compilation back on for machines
+    where it works -- the engine's preflight/rescue then still guards it.
+    Mirrors the client-side fix shipped on the customer's PC.
+    """
+    return str(os.environ.get('FEPT_COMPILE', '')).strip().lower() in (
+        '1', 'true', 'yes', 'on')
+
+
 # --------------------- run progress (points, rate, ETA) -----------------
 def progress_summary():
     """Live progress of the CURRENT run for the progress card.
@@ -741,7 +757,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.8.3'
+APP_VERSION = '1.8.4'
 UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
                 'err': None}
 UPDATE_TTL = 6 * 3600.0

@@ -121,3 +121,17 @@ def test_update_bat_kills_moves_and_relaunches():
            '"C:\\\\p\\\\FePt-GUI.exe"' in bat
     assert 'start "" "C:\\\\p\\\\FePt-GUI.exe"' in bat
     assert bat.strip().endswith('del "%~f0"')
+
+
+# ---------------- torch.compile switch (FEPT_COMPILE) ------------------
+def test_compile_disabled_by_default_and_opt_in_via_env(monkeypatch):
+    # GUI default (client-side fix): no torch.compile for engine runs
+    monkeypatch.delenv('FEPT_COMPILE', raising=False)
+    assert server.compile_enabled() is False
+    for v in ('0', '', 'false', 'no'):
+        monkeypatch.setenv('FEPT_COMPILE', v)
+        assert server.compile_enabled() is False
+    # working machines opt back in
+    for v in ('1', 'true', 'yes', 'on'):
+        monkeypatch.setenv('FEPT_COMPILE', v)
+        assert server.compile_enabled() is True

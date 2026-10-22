@@ -561,9 +561,13 @@ button.act.pulse { outline:2px solid var(--acc); }
     <h3 style="margin:14px 0 6px">Как работает</h3>
     <div class="hint">
       • <b>Расчёт</b>: ASE-MD (NPT: Langevin-термостат + MTK-баростат,
-      1 fs/шаг) с нейронным потенциалом <b>MACE</b> на GPU (fp16/bf16/fp32,
-      torch.compile) или CPU; модели скачиваются on-demand из каталога
-      ACEsuit и лежат в potentials/gpu/.<br>
+      1 fs/шаг) с нейронным потенциалом <b>MACE</b> на GPU (fp16/bf16/fp32)
+      или CPU; модели скачиваются on-demand из каталога ACEsuit и лежат
+      в potentials/gpu/. <b>torch.compile по умолчанию выключен</b> в GUI
+      (на части ПК антивирус резал ptxas с WinError 5); на машинах, где
+      он работает, включается переменной окружения
+      <code>FEPT_COMPILE=1</code> — тогда движок сам проверит компилятор
+      до старта и при блоке всё равно продолжит без него.<br>
       • <b>MCP</b> (для ИИ-агентов): сервер JSON-RPC на
       http://127.0.0.1:8321 (клиент fept_gui) — инструменты
       gui_set_form, gui_start_run, gui_status, gui_get_form,
