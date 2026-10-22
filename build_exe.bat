@@ -30,6 +30,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if defined FEPT_SKIP_SMOKE goto :smoke_skipped
 echo  [3/4] Smoke test: launching the exe and hitting /api/metrics ...
 start "" /b dist\FePt-GUI.exe
 set TRIES=0
@@ -56,6 +57,11 @@ echo  DONE. dist\FePt-GUI.exe is ready for the release.
 echo  Next: gh release create vX.Y.Z dist\FePt-GUI.exe
 echo ================================================================
 pause
+exit /b 0
+
+:smoke_skipped
+echo   [skip] smoke test + pause skipped (FEPT_SKIP_SMOKE=1)
+echo   DONE. dist\FePt-GUI.exe is ready for the release.
 exit /b 0
 
 :fail

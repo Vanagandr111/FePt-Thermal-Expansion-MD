@@ -1627,8 +1627,29 @@ async function loadDeps(refresh) {
          (DEPS_LINKS[key] || DEPS_LINKS.python) + '\')">Ссылка</button>';
     return b + '</span></div>';
   };
-  h += depRow('python', 'Python', true,
-       'v' + j.python + ' · ' + (j.executable || ''), null);
+  h += depRow('python', 'Python', !j.no_engine_python,
+       j.no_engine_python
+           ? (j.python_system
+               ? ('системный: ' + j.python_system + ' — venv создастся при установке')
+               : 'не найден - движку нужен Python 3.10…3.14')
+           : ('v' + (j.engine_python ? '' : j.python) +
+              (j.engine_python || j.executable)), null);
+  // link-install block only when NO python exists at all; a system
+  // python alone is enough (first install makes .venv-mace from it)
+  if (j.no_engine_python && !j.python_system) {
+    h += '<div class="dep-row" style="flex-wrap:wrap;gap:6px">' +
+      '<span class="nm">Установка Python</span>' +
+      '<input id="pyurl" style="flex:1 1 55%;min-width:240px" ' +
+      'placeholder="ссылка на .tar.gz/.zip дистрибутив Python ' +
+      '(напр. python-build-standalone)">' +
+      '<span class="btns">' +
+      '<button class="ghost tiny" onclick="pyHint()">Подобрать</button>' +
+      '<button class="ghost tiny" onclick="pyInstall()">Установить</button>' +
+      '</span><span class="st" id="pystatus">' +
+      (j.python_system ? 'системный: ' + j.python_system
+                       : 'системный Python не найден') +
+      '</span></div>';
+  }
   h += depRow('numpy', 'numpy', L.numpy,
        L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в движке',
        "installLib('numpy')");
@@ -1703,6 +1724,38 @@ async function refreshDepsBtn() {
   b.disabled = true; b.textContent = 'Проверка…';
   try { await loadDeps(true); }
   finally { b.disabled = false; b.textContent = 'Обновить / проверить'; }
+}
+async function pyHint() {
+  const st = $('pystatus');
+  if (st) st.textContent = 'Подбираю ссылку…';
+  try {
+    const r = await (await fetch('/api/python_hint')).json();
+    if (r.ok) {
+      $('pyurl').value = r.url;
+      if (st) st.textContent = 'Готово - нажми Установить';
+    } else if (st) {
+      st.textContent = 'Подобрать не удалось (' + (r.error || '') +
+        ') - вставь ссылку вручную';
+    }
+  } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
+}
+async function pyInstall() {
+  const url = ($('pyurl') || {}).value || '';
+  const st = $('pystatus');
+  if (!/^https?:\/\//.test(url)) {
+    if (st) st.textContent = 'Нужна http(s)-ссылка';
+    return;
+  }
+  if (st) st.textContent = 'Отправляю…';
+  try {
+    const r = await (await fetch('/api/install_python', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: url})})).json();
+    if (!r.ok) { if (st) st.textContent = r.error || 'ошибка'; return; }
+    if (st) st.textContent = 'Скачивание и установка идут - смотри полосу';
+    pollDl();
+    setTimeout(() => loadDeps(true), 6000);
+  } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
 }
 async function installLib(name) {
   try {

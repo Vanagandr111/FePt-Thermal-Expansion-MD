@@ -16,17 +16,21 @@ Then: http://127.0.0.1:8321  (auto-opens in the default browser)
 Linux: identical, open-folder uses xdg-open, lmp download unpacks the
 official linux tarball.
 """
+import glob
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.request
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import elements
@@ -209,6 +213,8 @@ def resolve_python():
             ('libs', 'venv', 'bin', 'python'),
             ('libs', 'python.exe'),
             ('libs', 'python'),
+            ('libs', 'python-dist', 'python.exe'),
+            ('libs', 'python-dist', 'bin', 'python'),
             ('.venv-mace', 'Scripts', 'python.exe'),
             ('.venv-mace', 'bin', 'python'),
             ('venv', 'Scripts', 'python.exe'),
@@ -223,6 +229,222 @@ def resolve_python():
     # NEVER fall back to sys.executable when frozen: that IS this exe,
     # and spawning it with -c would start a second server (hangs deps).
     return None
+
+
+def find_system_python():
+    """An external interpreter 3.10..3.14 we could build a venv from.
+
+    Clean machines have NO venv next to the exe, and some have no Python
+    at all -> the caller then offers a python-build-standalone link.
+    """
+    tries = []
+    envp = os.environ.get('FEPT_BASE_PYTHON')
+    if envp:
+        tries.append([envp])
+    if IS_WIN:
+        pyp = shutil.which('py')
+        if pyp:
+            tries.append([pyp, '-3'])
+        p = shutil.which('python')
+        if p:
+            tries.append([p])
+        # right after a .exe installer THIS process has an unchanged
+        # PATH, so look in the default per-user install location too
+        for g in sorted(glob.glob(os.path.join(
+                os.environ.get('LOCALAPPDATA', ''),
+                'Programs', 'Python', 'Python*', 'python.exe'))):
+            tries.append([g])
+    else:
+        for name in ('python3', 'python'):
+            p = shutil.which(name)
+            if p:
+                tries.append([p])
+        tries.append(['/usr/bin/python3'])
+    gate = ('import sys; v = sys.version_info; '
+            'sys.exit(0 if (3, 10) <= v[:2] <= (3, 14) else 1)')
+    for t in tries:
+        try:
+            r = subprocess.run(t + ['-c', gate], capture_output=True,
+                               timeout=20, creationflags=NOWIN)
+            if r.returncode == 0:
+                return t[0]
+        except Exception:
+            continue
+    return None
+
+
+def ensure_engine_python():
+    """(interpreter, need_url): the engine python, creating .venv-mace
+    from a system Python on first use. need_url=True means nothing
+    usable exists -> the deps tab must offer the Python-link block.
+    """
+    py = resolve_python()
+    if py or not FROZEN:
+        return py, False
+    base = find_system_python()
+    if not base:
+        log('[gui] engine python NOT FOUND and no system Python 3.10-3.14')
+        return None, True
+    log('[gui] creating .venv-mace from ' + base)
+    venv_dir = os.path.join(PROJ, '.venv-mace')
+    try:
+        r = subprocess.run([base, '-m', 'venv', venv_dir],
+                           capture_output=True, text=True, timeout=300,
+                           creationflags=NOWIN, cwd=PROJ)
+        if r.returncode != 0:
+            log('[gui] venv FAILED: ' + ((r.stderr or '')[-300:] or
+                                         (r.stdout or '')[-300:]))
+            log('[gui] this Python cannot make venvs (no ensurepip) -> '
+                'install Python from a link in the deps tab')
+            return None, True
+    except Exception as e:
+        log('[gui] venv error: ' + str(e))
+        return None, True
+    py = resolve_python()
+    if py:
+        log('[gui] venv ready: ' + py)
+        return py, False
+    return None, True
+
+
+_PY_HINT = {'t': 0.0, 'url': ''}
+
+
+def python_hint():
+    """Newest python-build-standalone install-only tarball for THIS OS."""
+    now = time.time()
+    if _PY_HINT['url'] and now - _PY_HINT['t'] < 6 * 3600:
+        return {'ok': True, 'url': _PY_HINT['url']}
+    triple = ('x86_64-pc-windows-msvc-install_only.tar.gz' if IS_WIN else
+              'x86_64-unknown-linux-gnu-install_only.tar.gz')
+    try:
+        req = urllib.request.Request(
+            'https://api.github.com/repos/astral-sh/'
+            'python-build-standalone/releases/latest',
+            headers={'User-Agent': 'fept-gui/1.9',
+                     'Accept': 'application/vnd.github+json'})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            rel = json.loads(r.read())
+        best = (None, (-1, -1, -1))
+        # torch/mace wheels stop at the CPython the engine gates on
+        # (3.10..3.14): a newer standalone python installs fine but
+        # then 'torch from cu128' has NO wheel for it -> refuse to offer
+        for a in rel.get('assets') or []:
+            name = a.get('name') or ''
+            if not name.endswith(triple) or 'debug' in name:
+                continue
+            # stable releases only: 'cpython-3.13.5+2025...'; prereleases
+            # carry an a/b/rc marker ('cpython-3.16.0a1+...') and must
+            # not be offered - they break mace/torch pins
+            m = re.search(r'cpython-(\d+)\.(\d+)\.(\d+)\+', name)
+            if not m:
+                continue
+            ver = tuple(int(x) for x in m.groups())
+            if ver[0] != 3 or ver[1] < 10 or ver[1] > 14:
+                continue  # engine/torch support window
+            if ver > best[1]:
+                best = (a.get('browser_download_url'), ver)
+        if not best[0]:
+            return {'ok': False, 'error': 'no asset for ' + triple}
+        _PY_HINT.update(t=now, url=best[0])
+        return {'ok': True, 'url': best[0]}
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+
+
+def _find_python_bin(root):
+    """First python executable unpacked under root (or None)."""
+    for dirpath, _dirs, files in os.walk(root):
+        if dirpath[len(root):].count(os.sep) > 3:
+            _dirs[:] = []
+            continue
+        for cand in ('python3', 'python3.exe', 'python', 'python.exe'):
+            if cand in files:
+                p = os.path.join(dirpath, cand)
+                if os.path.isfile(p):
+                    return p
+    return None
+
+
+def _safe_extract_tar(tf, stage):
+    for m in tf.getmembers():
+        first = (m.name or '').replace('\\', '/').split('/')[0]
+        if not m.name or m.name.startswith('/') or ':' in first or \
+                '..' in m.name.split('/'):
+            raise RuntimeError('unsafe path in archive: ' + m.name)
+    tf.extractall(stage)
+
+
+def install_python_job(url):
+    """Download Python from a user link and turn it into .venv-mace so
+    the deps tab becomes usable (python_hint() offers a known-good
+    python-build-standalone URL to paste).
+    """
+    url = (url or '').strip()
+    if not re.match(r'^https?://', url):
+        dl_end('python: нужна http(s)-ссылка')
+        return
+    if DL['active']:
+        dl_end('другая загрузка уже идёт')
+        return
+    fname = os.path.basename(url.split('?')[0]) or 'python-dist'
+    cache = os.path.join(tempfile.gettempdir(), 'fept-python')
+    os.makedirs(cache, exist_ok=True)
+    dest = os.path.join(cache, re.sub(r'[^A-Za-z0-9._+-]', '_', fname))
+    try:
+        if not (os.path.isfile(dest) and os.path.getsize(dest) > 1 << 20):
+            download_url(url, dest, 'python dist', attempts=3)
+        dl_begin('python install', mode='indeterminate')
+        stage = os.path.join(cache, 'stage')
+        shutil.rmtree(stage, ignore_errors=True)
+        os.makedirs(stage, exist_ok=True)
+        if tarfile.is_tarfile(dest):
+            with tarfile.open(dest, 'r:*') as tf:
+                _safe_extract_tar(tf, stage)
+        elif zipfile.is_zipfile(dest):
+            with zipfile.ZipFile(dest) as zf:
+                for zi in zf.infolist():
+                    first = zi.filename.replace('\\', '/').split('/')[0]
+                    if zi.filename.startswith('/') or '..' in zi.filename.split('/') or ':' in first:
+                        raise RuntimeError('unsafe path in zip: ' + zi.filename)
+                zf.extractall(stage)
+        else:
+            raise RuntimeError('не tar.gz и не zip: ' + fname)
+        base = _find_python_bin(stage)
+        if not base:
+            raise RuntimeError('python executable not found inside ' + fname)
+        if not IS_WIN:
+            os.chmod(base, 0o755)
+        venv_dir = os.path.join(PROJ, '.venv-mace')
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        r = subprocess.run([base, '-m', 'venv', venv_dir],
+                           capture_output=True, text=True, timeout=600,
+                           creationflags=NOWIN, cwd=PROJ)
+        if r.returncode != 0:
+            raise RuntimeError('venv: ' + ((r.stderr or '')[-400:] or
+                                           (r.stdout or '')[-400:]))
+        py = resolve_python()
+        if not py:
+            raise RuntimeError('venv created but resolve_python missed it')
+        gate = subprocess.run(
+            [py, '-c', 'import sys; v = sys.version_info; '
+                       'sys.exit(0 if (3, 10) <= v[:2] <= (3, 14) else 1)'],
+            capture_output=True, timeout=30, creationflags=NOWIN)
+        if gate.returncode != 0:
+            ver = subprocess.run([py, '-c', 'import sys; print(*sys.version_info[:2])'],
+                                 capture_output=True, text=True, timeout=30,
+                                 creationflags=NOWIN).stdout.strip()
+            shutil.rmtree(venv_dir, ignore_errors=True)
+            raise RuntimeError(
+                'python ' + ver + ' не подходит движку (нужен 3.10..3.14; '
+                'под него есть torch/mace wheel) - возьми ссылку из кнопки '
+                '"Подобрать"')
+        log('[gui] python installed -> engine venv: ' + py)
+        _DEPS_CACHE['t'] = 0.0
+        dl_end('Python установлен: ' + py)
+    except Exception as e:
+        log('[gui] python install FAILED: ' + str(e))
+        dl_end('python: ' + str(e))
 
 
 _PROBE_CODE = (
@@ -413,8 +635,12 @@ def collect_deps(refresh=False):
             torch_info['error'] = probe['terr']
 
     lammps = find_lmp()
+    engine_py = resolve_python()
     data = {
         'python': sys.version.split()[0],
+        'no_engine_python': engine_py is None,
+        'python_system': (find_system_python() if engine_py is None
+                          else None),
         'executable': sys.executable,
         'engine_python': resolve_python(),
         'frozen': FROZEN,
@@ -611,13 +837,21 @@ def start_run(params):
         cmd = [py, '-u',
                os.path.join(SCRIPTS_DIR, 'run_main_mace.py')]
         model = merged.get('model')
+        if model and not os.path.isfile(model):
+            # accept a bare filename too: resolve it inside the gpu
+            # folder (agents/UI may send 'mace-mp-0-small.model')
+            cand = os.path.join(GPU_DIR, model)
+            if os.path.isfile(cand):
+                model = cand
+                state_update({'model': model}, source=params.get('source'))
         if not model:
             pot = scan_potentials()['gpu']
             if pot:
                 model = pot[0]['path']
                 state_update({'model': model}, source=params.get('source'))
-        if not model:
-            return {'ok': False, 'error': 'no model selected'}
+        if not model or not os.path.isfile(model):
+            return {'ok': False,
+                    'error': 'no model selected (download one on the Models tab first)'}
         device = merged.get('device', 'cuda')
         seed = int(merged.get('seed', 42))
         precision = str(merged.get('precision') or 'fp16').lower()
@@ -781,7 +1015,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.8.5'
+APP_VERSION = '1.9.0'
 UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
                 'err': None}
 UPDATE_TTL = 6 * 3600.0
@@ -810,9 +1044,10 @@ def check_latest_release(force=False):
     try:
         rel = _release_json()
         tag = str(rel.get('tag_name') or '').lstrip('vV')
+        want = 'FePt-GUI.exe' if IS_WIN else 'FePt-GUI-linux-x86_64'
         asset = None
         for a in rel.get('assets') or []:
-            if a.get('name') == 'FePt-GUI.exe':
+            if a.get('name') == want:
                 asset = a
                 break
         UPDATE_CACHE.update(latest=tag, asset=asset, err=None,
@@ -898,6 +1133,20 @@ def build_update_bat(self_pid, new_exe, cur_exe):
     ).format(pid=int(self_pid), new=new_exe, cur=cur_exe)
 
 
+def build_update_sh(self_pid, new_exe, cur_exe):
+    """sh twin of build_update_bat: swap the running Linux binary."""
+    return (
+        '#!/bin/sh\n'
+        'sleep 2\n'
+        'kill -9 {pid} 2>/dev/null\n'
+        'sleep 1\n'
+        'mv -f "{new}" "{cur}"\n'
+        'chmod +x "{cur}"\n'
+        'rm -f "$0"\n'
+        '"/bin/sh" -c "\"{cur}\" >/dev/null 2>&1 &"\n'
+    ).format(pid=int(self_pid), new=new_exe, cur=cur_exe)
+
+
 def run_self_update():
     """Download the newest exe (never over a running file) and arm the
     swap batch. Returns a dict for /api/update."""
@@ -910,8 +1159,11 @@ def run_self_update():
         c['asset']['browser_download_url']
     upd_dir = os.path.join(PROJ, 'update_staging')
     os.makedirs(upd_dir, exist_ok=True)
-    new_exe = os.path.join(upd_dir, 'FePt-GUI.exe.new')
+    new_exe = os.path.join(upd_dir, 'FePt-GUI.exe.new' if IS_WIN
+                           else 'FePt-GUI.new')
     _download(url, new_exe)
+    if not IS_WIN:
+        os.chmod(new_exe, 0o755)
     size = os.path.getsize(new_exe)
     if not FROZEN:
         return {'ok': True, 'action': 'staged-not-frozen',
@@ -920,14 +1172,22 @@ def run_self_update():
                 'note': 'dev mode: файл обновления подготовлен, '
                         'exe не заменяется'}
     cur = os.path.abspath(sys.executable)
-    bat = os.path.join(upd_dir, 'apply_update.bat')
-    with open(bat, 'w', newline='') as f:
-        f.write(build_update_bat(os.getpid(), new_exe, cur))
+    if IS_WIN:
+        bat = os.path.join(upd_dir, 'apply_update.bat')
+        with open(bat, 'w', newline='') as f:
+            f.write(build_update_bat(os.getpid(), new_exe, cur))
+        # .bat only starts via cmd.exe on Windows
+        runner = ['cmd', '/c', bat]
+    else:
+        bat = os.path.join(upd_dir, 'apply_update.sh')
+        with open(bat, 'w', encoding='utf-8') as f:
+            f.write(build_update_sh(os.getpid(), new_exe, cur))
+        os.chmod(bat, 0o755)
+        runner = ['sh', bat]
     log('[gui] update v{} -> v{} staged ({} bytes); restarting '
         'via {}'.format(APP_VERSION, latest, size, bat))
-    # .bat only starts via cmd.exe on Windows
     threading.Timer(2.0, lambda: subprocess.Popen(
-        ['cmd', '/c', bat], cwd=upd_dir, creationflags=NOWIN,
+        runner, cwd=upd_dir, creationflags=NOWIN,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)).start()
     return {'ok': True, 'action': 'restart-pending',
             'version': APP_VERSION, 'latest': latest, 'size': size}
@@ -984,12 +1244,23 @@ def install_lib(name):
     if not spec:
         log('[gui] install: unknown package ' + repr(name))
         return
-    py = resolve_python()
+    py, need_url = ensure_engine_python()
+    if py and name == 'mace' and not _torch_present(py):
+        # mace-torch would otherwise pull the NEWEST torch from pypi
+        # (cu130+, breaks on drivers that only do 12.9) - install our
+        # pinned cu128 build first so pip keeps it
+        log('[gui] mace needs torch first -> installing pinned torch '
+            '(cu128)')
+        install_lib('torch')
     if not py:
-        log('[gui] pip install FAILED: engine interpreter not found. '
-            'Run bootstrap.bat in the project folder (creates .venv-mace) '
-            'or set FEPT_PYTHON to a python.exe with pip.')
-        dl_end('pip install: интерпретатор не найден - запусти bootstrap.bat')
+        if need_url:
+            log('[gui] no Python at all -> paste a python link in the '
+                'deps tab (Python-установка) and press Установить')
+            dl_end('Python не найден - укажи ссылку на Python во вкладке Зависимости')
+        else:
+            log('[gui] pip install FAILED: engine interpreter not found. '
+                'Run bootstrap.bat (creates .venv-mace) or set FEPT_PYTHON.')
+            dl_end('интерпретатор не найден - запусти bootstrap.bat')
         return
     log('[gui] pip install {} into {}'.format(spec[0], py))
     dl_begin('pip install ' + spec[0], mode='indeterminate')
@@ -1023,6 +1294,18 @@ def install_lib(name):
         log('[gui] pip error: ' + str(e))
     finally:
         dl_end('pip install завершён: ' + spec[0])
+
+
+def _torch_present(py):
+    """True when the engine interpreter can already import torch."""
+    try:
+        cp = subprocess.run(
+            [py, '-c', 'import importlib.util as u, sys; '
+                       'sys.exit(0 if u.find_spec("torch") else 1)'],
+            capture_output=True, timeout=60, creationflags=NOWIN)
+        return cp.returncode == 0
+    except Exception:
+        return False
 
 
 def _triton_present(py):
@@ -1208,6 +1491,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/potentials':
             self._json(scan_potentials())
+            return
+        if path == '/api/python_hint':
+            self._json(python_hint())
             return
         if path == '/api/download_status':
             # progress bar state for the deps tab (DL is module-level)
@@ -1580,6 +1866,16 @@ class Handler(BaseHTTPRequestHandler):
 
             threading.Thread(target=_calib_job, daemon=True).start()
             self._json({'ok': True})
+            return
+        if path == '/api/install_python':
+            if DL['active']:
+                self._json({'ok': False,
+                            'error': 'другая загрузка уже идёт'})
+                return
+            url = str(body.get('url') or '')
+            threading.Thread(target=install_python_job, args=(url,),
+                             daemon=True).start()
+            self._json({'ok': True, 'url': url})
             return
         if path == '/api/install_lib':
             name = body.get('name')

@@ -41,7 +41,23 @@ def get_projdir():
 PROJDIR = os.environ.get('FEPT_PROJECT_DIR') or get_projdir()
 DATA_DIR = os.path.join(PROJDIR, 'data')
 POT_DIR = os.path.join(PROJDIR, 'potentials')
-SCRIPTS = os.path.join(PROJDIR, 'scripts')
+
+
+def get_scripts_dir():
+    """Engine scripts: <proj>/scripts when the repo sits next to the exe
+    (dev/installed layout), else the bundle's own scripts/ (frozen run on
+    a clean machine: FEPT_PROJECT_DIR points at the exe folder, which has
+    no scripts/ next to it). Data/potentials stay under PROJDIR."""
+    cand = os.path.join(PROJDIR, 'scripts')
+    if os.path.isfile(os.path.join(cand, 'gen_structure.py')):
+        return cand
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.isfile(os.path.join(here, 'gen_structure.py')):
+        return here
+    return cand
+
+
+SCRIPTS = get_scripts_dir()
 
 # ── OpenMP auto-detection ──────────────────────────────────
 CPU_COUNT = os.cpu_count() or 4  # fallback if detection fails
