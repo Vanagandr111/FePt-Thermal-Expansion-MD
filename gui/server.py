@@ -73,18 +73,97 @@ GPU_DIR = os.path.join(PROJ, 'potentials', 'gpu')
 CPU_DIR = os.path.join(PROJ, 'potentials', 'cpu')
 ELEMENTS_PATH = os.path.join(PROJ, 'data', 'elements.json')
 GH_API_LATEST = 'https://api.github.com/repos/lammps/lammps/releases/latest'
-# Direct model mirrors (licenses are not ours: fetched on demand only)
+# ACEsuit foundation-model catalog (mace-mp / mace-foundations releases).
+# Weights are fetched ON DEMAND into potentials/gpu/ - keeping ~1 GB of
+# checkpoints locally for models nobody runs is pointless, so the GUI
+# downloads any of them in one click through its own Python loader.
+# Licenses: MIT (MP family) / ASL (OMAT, MATPES, MH) - not ours.
 MODEL_URLS = {
-    'mace-mpa-0-medium.model':
-        'https://github.com/ACEsuit/mace-mpa/releases/download/'
-        'mace-mpa-0/mace-mpa-0-medium.model',
-    'mace-mp-0b3-medium.model':
-        'https://github.com/ACEsuit/mace-v0b3/releases/download/'
-        '0.3.0/mace-mp-0b3-medium.model',
+    # MACE-MP-0 (1st generation, MPTrj, PBE+U)
+    'mace-mp-0-small.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0/2023-12-10-mace-128-L0_epoch-199.model',
+    'mace-mp-0-small-energy.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model',
+    'mace-mp-0-medium.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0/2023-12-03-mace-128-L1_epoch-199.model',
+    'mace-mp-0-large.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0/2024-01-07-mace-128-L2_epoch-199.model',
+    'mace-mPtrj-2022.9.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0/MACE_MPtrj_2022.9.model',
+    # MACE-MP-0b (2nd generation: core repulsion, stable MD)
+    'mace-mp-0b-small.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b/mace-mp-0b-small.model',
+    'mace-mp-0b-medium.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b/mace-mp-0b-medium.model',
+    # MACE-MP-0b2 (high-pressure stability)
+    'mace-mp-0b2-small.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b2/mace-small-density-agnesi-stress.model',
+    'mace-mp-0b2-medium.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b2/mace-medium-density-agnesi-stress.model',
     'mace-large-0b2.model':
         'https://github.com/ACEsuit/mace-v0b2/releases/download/'
         '2025-04-24/mace-large-0b2.model',
+    # MACE-MP-0b3 (fixed phonons vs b2)
+    'mace-mp-0b3-medium.model':
+        'https://github.com/ACEsuit/mace-v0b3/releases/download/'
+        '0.3.0/mace-mp-0b3-medium.model',
+    # MACE-MPA-0 (MPTrj + sAlex, SOTA Matbench)
+    'mace-mpa-0-medium.model':
+        'https://github.com/ACEsuit/mace-mpa/releases/download/'
+        'mace-mpa-0/mace-mpa-0-medium.model',
+    # MACE-OMAT-0 (excellent phonons)
+    'mace-omat-0-medium.model':
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_omat_0/mace-omat-0-medium.model',
+    'mace-omat-0-small.model':
+        'https://github.com/ACEsuit/mace-foundations/releases/download/'
+        'mace_omat_0/mace-omat-0-small.model',
+    # MACE-MATPES (surrogate functionals)
+    'mace-matpes-pbe-0-medium.model':
+        'https://github.com/ACEsuit/mace-foundations/releases/download/'
+        'mace_matpes_0/MACE-matpes-pbe-omat-ft.model',
+    'mace-matpes-r2scan-0-medium.model':
+        'https://github.com/ACEsuit/mace-foundations/releases/download/'
+        'mace_matpes_0/MACE-matpes-r2scan-omat-ft.model',
+    # MACE-MH (hybrid OMAT/OMOL/OC20/MATPES)
+    'mace-mh-0.model':
+        'https://github.com/ACEsuit/mace-foundations/releases/download/'
+        'mace_mh_1/mace-mh-0.model',
+    'mace-mh-1.model':
+        'https://github.com/ACEsuit/mace-foundations/releases/download/'
+        'mace_mh_1/mace-mh-1.model',
 }
+
+# (file, family, human label, MB) - drives the GUI download buttons
+MODEL_CATALOG = [
+    ('mace-mp-0-small.model', 'MP-0', 'MP-0 small (L0)', 32.6),
+    ('mace-mp-0-small-energy.model', 'MP-0', 'MP-0 small, energy fit', 32.6),
+    ('mace-mp-0-medium.model', 'MP-0', 'MP-0 medium (L1)', 44.4),
+    ('mace-mp-0-large.model', 'MP-0', 'MP-0 large (L2)', 63.5),
+    ('mace-mPtrj-2022.9.model', 'MP-0', 'MPtrj 2022.9 prototype', 133.8),
+    ('mace-mp-0b-small.model', 'MP-0b', 'MP-0b small (agnesi)', 67.6),
+    ('mace-mp-0b-medium.model', 'MP-0b', 'MP-0b medium (agnesi)', 79.4),
+    ('mace-mp-0b2-small.model', 'MP-0b2', 'MP-0b2 small', 67.6),
+    ('mace-mp-0b2-medium.model', 'MP-0b2', 'MP-0b2 medium', 79.5),
+    ('mace-large-0b2.model', 'MP-0b2', 'MP-0b2 large', 98.5),
+    ('mace-mp-0b3-medium.model', 'MP-0b3', 'MP-0b3 medium (fixed phonons)', 79.5),
+    ('mace-mpa-0-medium.model', 'MPA-0', 'MPA-0 medium (MPTrj+sAlex)', 79.5),
+    ('mace-omat-0-medium.model', 'OMAT-0', 'OMAT-0 medium (excellent phonons)', 79.5),
+    ('mace-omat-0-small.model', 'OMAT-0', 'OMAT-0 small', 67.6),
+    ('mace-matpes-pbe-0-medium.model', 'MATPES', 'MATPES-PBE medium (no +U)', 79.5),
+    ('mace-matpes-r2scan-0-medium.model', 'MATPES', 'MATPES-r2SCAN medium', 79.5),
+    ('mace-mh-0.model', 'MH', 'MH-0 hybrid (crystals+surfaces)', 39.9),
+    ('mace-mh-1.model', 'MH', 'MH-1 hybrid', 59.2),
+]
 
 # ----------------------------------------------------------------- state --
 RUN = {
@@ -335,6 +414,12 @@ def collect_deps(refresh=False):
         },
         'lammps': {'found': bool(lammps), 'path': lammps},
         'potentials': scan_potentials(),
+        # on-demand model catalog: name/label/size for the download
+        # buttons (weights themselves are NOT kept locally)
+        'models': [{'name': n, 'family': fam, 'label': lab, 'mb': mb}
+                   for (n, fam, lab, mb) in MODEL_CATALOG
+                   if n not in [p.get('name')
+                                for p in scan_potentials().get('gpu', [])]],
         'folders': {'gpu': GPU_DIR, 'cpu': CPU_DIR, 'lammps': LAMMPS_DIR},
     }
     _DEPS_CACHE['t'] = now

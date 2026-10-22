@@ -1405,15 +1405,14 @@ async function loadDeps(refresh) {
     m += '<span class="pill ok">' + p.name + ' · ' + p.mb + ' MB</span>');
   if (!(j.potentials.gpu || []).length)
     m += '<span class="pill bad">пусто</span>';
-  m += '<div style="margin-top:10px">';
-  [['mace-mpa-0-medium.model','MACE-MPA-0 medium (~95 MB, ACEsuit 2025)'],
-   ['mace-mp-0b3-medium.model','MACE-MP-0b3 medium (~95 MB, 2025)'],
-   ['mace-large-0b2.model','MACE-MP-0b2 large (~99 MB, 2025)']].forEach(x => {
-    m += '<button class="ghost tiny" style="margin:3px" onclick="dlModel(\'' +
-         x[0] + '\')">⬇ ' + x[1] + '</button>';
-  });
-  m += '</div>';
+  m += '<div style="margin-top:10px"><input id="model-filter" '
+     + 'placeholder="фильтр каталога моделей…" '
+     + 'oninput="renderModelCatalog(j)" '
+     + 'style="width:98%;margin-bottom:6px"></div>';
+  window._DEPS_J = j;
+  m += '<div id="model-catalog"></div>';
   $('dl-models').innerHTML = m;
+  renderModelCatalog(j);
 }
 /* ---------------- deps tab ---------------- */
 const DEPS_LINKS = {
@@ -1474,6 +1473,21 @@ async function dlLammps() {
   await fetch('/api/download_lammps', {method:'POST', body:'{}'});
   appendLines(['[gui] загрузка LAMMPS началась — прогресс виден наверху ' +
                'этой вкладки, лог — в консоли ниже…']);
+}
+function renderModelCatalog(j) {
+  const host = $('model-catalog');
+  if (!host) return;
+  const q = (($('model-filter') || {}).value || '').toLowerCase().trim();
+  let h = '';
+  (j.models || []).forEach(p => {
+    if (q && (p.label + ' ' + p.family + ' ' + p.name)
+              .toLowerCase().indexOf(q) === -1) return;
+    h += '<button class="ghost tiny" style="margin:3px" '
+       + 'onclick="dlModel(\'' + p.name + '\')">⬇ '
+       + p.family + ': ' + p.label + ' (' + p.mb + ' MB)</button>';
+  });
+  if (!h) h = '<span class="status">все модели каталога уже локально</span>';
+  host.innerHTML = h;
 }
 async function dlModel(name) {
   await fetch('/api/download_model', {method:'POST',
