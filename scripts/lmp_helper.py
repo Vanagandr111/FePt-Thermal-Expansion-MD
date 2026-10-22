@@ -748,6 +748,31 @@ def md_log_line(step, t_ps, phase, pe, ke, temp, press, vol, a):
                     etot=pe + ke, temp=temp, press=press, vol=vol, a=a))
 
 
+def md_log_final(total_steps, log_records, log_interval, a_mean, a_std,
+                 a_min, a_max, drift, n_prod_points, runtime_s,
+                 mean_press_bar):
+    """End-of-run summary block, mirroring the client's # === FINAL ===.
+
+    Every run log (console tail AND md_*.log) must close with the same
+    stats the client already reads in their reference log: totals,
+    lattice statistics, drift, runtime and the column-mean pressure
+    cross-reference to all_results.csv.
+    """
+    return [
+        '# === FINAL ===',
+        '# total_steps_done={} log_records={} log_interval={} steps'
+        .format(total_steps, log_records, log_interval),
+        '# a_mean={:.6f} A a_std={:.6f} A a_min={:.6f} A a_max={:.6f} A'
+        .format(a_mean, a_std, a_min, a_max),
+        '# drift={:.6e} A n_prod_points={} runtime={} s'
+        .format(drift, n_prod_points, int(runtime_s)),
+        '# mean_pressure_all_results_bar={:.1f} '
+        '(column mean_press_bar in all_results.csv)'
+        .format(mean_press_bar),
+        '# last_row_above = instantaneous values at the final step',
+    ]
+
+
 # ── Print trends ────────────────────────────────────────────
 # intent: Print a(T) trends per composition with CTE and segmental analysis
 # allies: calc_cte_report (computation), print_trends, make_plots (callers)

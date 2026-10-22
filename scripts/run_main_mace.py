@@ -323,9 +323,10 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         phase['name'] = 'prod'
         t_prod0 = time.time()
         dyn_md.run(prod_steps)
-    finally:
+    except BaseException:
         if log_fh:
             log_fh.close()
+        raise
     prod_wall = time.time() - t_prod0
     ms_step = 1000.0 * prod_wall / max(1, prod_steps)
 
@@ -340,6 +341,29 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
           'ms/step={:.1f}'
           .format(comp, T, float(a_arr.mean()), len(a_arr), wall, ms_step))
     mem_report('T{}'.format(T))
+
+    # # === FINAL === end-of-run summary: console tail AND md_*.log
+    # (same stats block the client reads in their reference logs)
+    all_press = [r[1] for r in records]
+    for ln in lmp.md_log_final(
+            total_steps=eq_steps + prod_steps,
+            log_records=len(records),
+            log_interval=thermo_interval,
+            a_mean=float(a_arr.mean()) if len(a_arr) else 0.0,
+            a_std=float(a_arr.std()) if len(a_arr) else 0.0,
+            a_min=float(a_arr.min()) if len(a_arr) else 0.0,
+            a_max=float(a_arr.max()) if len(a_arr) else 0.0,
+            drift=drift,
+            n_prod_points=len(a_vals),
+            runtime_s=wall,
+            mean_press_bar=float(np.mean(all_press)) if all_press
+            else 0.0):
+        print(ln, flush=True)
+        if log_fh:
+            log_fh.write(ln + '\n')
+    if log_fh:
+        log_fh.flush()
+        log_fh.close()
 
     return {
         'a_mean': float(a_arr.mean()),

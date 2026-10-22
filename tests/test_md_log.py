@@ -48,6 +48,25 @@ def test_md_log_line_is_fixed_width_and_sums_total_energy():
     assert line2.split()[2] == 'prod'
 
 
+def test_md_log_final_mirrors_the_reference_stats_block():
+    lines = lmp.md_log_final(
+        total_steps=1500, log_records=151, log_interval=100,
+        a_mean=3.994812, a_std=0.015767, a_min=3.973837, a_max=4.020793,
+        drift=1.385530e-02, n_prod_points=10, runtime_s=54,
+        mean_press_bar=103681.2)
+    txt = '\n'.join(lines)
+    assert lines[0] == '# === FINAL ==='
+    assert 'total_steps_done=1500 log_records=151 log_interval=100 steps' in txt
+    assert 'a_mean=3.994812 A' in txt
+    assert 'a_std=0.015767 A' in txt
+    assert 'drift=1.385530e-02 A n_prod_points=10 runtime=54 s' in txt
+    assert ('mean_pressure_all_results_bar=103681.2 '
+            '(column mean_press_bar in all_results.csv)') in txt
+    assert lines[-1].startswith('# last_row_above')
+    # every line is a comment -> the file stays parseable as a log
+    assert all(ln.startswith('#') for ln in lines)
+
+
 def test_md_log_line_phases_are_short_and_printed():
     line = lmp.md_log_line(step=0, t_ps=0.0, phase='equilibration',
                            pe=0.0, ke=0.0, temp=0.0, press=0.0, vol=0.0,

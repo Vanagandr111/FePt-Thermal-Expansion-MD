@@ -42,7 +42,11 @@ or `.venv-mace/Scripts/python.exe gui/server.py` / `python3 gui/server.py`.
   the LAMMPS-style table (Step, Time_ps, phase eq/prod, PotEng, KinEng,
   TotEng, Temp, Press, Volume, Latt.a; eV / bar / A^3 / ps) and the same
   rows go per point to `results.../md_comp_XX_TYY.log`; the header
-  records x_Pt, T, atoms, grid, eq/prod steps, dt, thermo interval, seed.
+  records x_Pt, T, atoms, grid, eq/prod steps, dt, thermo interval, seed,
+  and closes every run with the client's `# === FINAL ===` stats block
+  (total_steps_done, log_records, a_mean/std/min/max, drift,
+  n_prod_points, runtime, mean_pressure_all_results_bar cross-referenced
+  to all_results.csv, last_row_above note) in both console and file.
 - **Dependencies tab** — torch/CUDA/GPU, mace/ase/numpy, `lmp` binary
   lookup, **Download LAMMPS** (official zip/tarball into `lammps/`) and
   the **on-demand model catalog**: all 18 ACEsuit foundation checkpoints
