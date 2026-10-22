@@ -575,6 +575,7 @@ def start_run(params):
     temps = [int(t) for t in str(merged.get('temps', '300 1200')).split()]
     RUN['done_points'] = 0
     RUN['plan_total'] = len(temps)  # one composition per run
+    RUN['compile_off'] = False
     stamp = time.strftime('%Y%m%d_%H%M%S')
     outdir = os.path.join(PROJ, 'results_{}_{}'.format(mode, stamp))
     py = resolve_python()
@@ -670,6 +671,8 @@ def start_run(params):
         pt_re = re.compile(r'^\s+comp=[\d.]+\s+T=\s*\d+K\s+a=')
         for line in proc.stdout:
             log(line)
+            if '[preflight] torch.compile disabled' in line:
+                RUN['compile_off'] = True
             if pt_re.match(line):
                 RUN['done_points'] += 1
                 log('[gui] point done {}/{}'.format(
@@ -816,6 +819,12 @@ def status_summary():
         if level == 'ok':
             level = 'warn'
         checks.append('не выбрана/не найдена модель MACE')
+    if RUN.get('compile_off'):
+        if level == 'ok':
+            level = 'warn'
+        checks.append('triton-компиляция отключена автоматически '
+                      '(ptxas блок AV/Policy) — расчёт идёт без '
+                      'torch.compile, медленнее, но не падает')
     newer, latest = update_available()
     if newer and level == 'ok':
         level = 'update'

@@ -542,6 +542,69 @@ def _install_nl_cache(skin):
     _NL_CACHE['skin'] = float(skin)
 
 
+_TRITON_BLOCK_HINTS = ('ptxas', 'triton', 'inductor', 'triton_heuristics')
+
+
+def is_ptxas_block(exc):
+    """True for the 'cannot start ptxas' class of failures.
+
+    Real case from a client machine: PermissionError: [WinError 5]
+    Access is denied on ptxas.exe while torch.compile built its first
+    triton kernel -> the whole run died ~90 s in. Matched against the
+    exception text AND its traceback (inductor frames may carry the
+    file path even when the message is a bare 'Access is denied').
+    """
+    try:
+        import traceback
+        text = ''.join(traceback.format_exception(exc))
+    except Exception:
+        text = '{}: {}'.format(type(exc).__name__, exc)
+    text = text.lower()
+    denied = (isinstance(exc, PermissionError)
+              or 'winerror 5' in text
+              or 'permissionerror' in text
+              or 'access is denied' in text
+              or 'errno 13' in text)
+    return denied and any(h in text for h in _TRITON_BLOCK_HINTS)
+
+
+def triton_preflight():
+    """Compile one trivial CUDA kernel for real. -> (ok, why).
+
+    Runs BEFORE the grid so a blocked toolchain (AV/Policy denying
+    ptxas on Windows) is found in the first seconds, not 90 s into the
+    first production point. Any compile failure -> caller disables
+    torch.compile and runs uncompiled (slower, but it finishes).
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return True, ''
+        fn = torch.compile(lambda x: x * 2.0 + 1.0)
+        y = fn(torch.arange(32, device='cuda', dtype=torch.float32))
+        torch.cuda.synchronize()
+        del y
+        return True, ''
+    except Exception as e:                       # noqa: BLE001
+        return False, '{}: {}'.format(type(e).__name__, str(e)[:400])
+
+
+def rescue_or_raise(exc, compile_on):
+    """True -> caller must rebuild the calculator WITHOUT torch.compile
+    and retry that point once. False -> the failure is real, raise it.
+
+    Keeps runs alive on machines where triton cannot start, without
+    silently swallowing unrelated errors.
+    """
+    if not (compile_on and is_ptxas_block(exc)):
+        return False
+    print('[preflight] triton/ptxas blocked ({}) -> torch.compile '
+          'switched OFF for this run, retrying the point uncompiled; '
+          'typical cause on Windows: AV/Policy denying ptxas.exe'
+          .format(type(exc).__name__), flush=True)
+    return True
+
+
 def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                eq_steps, prod_steps, interval, grid, base_seed,
                outdir=None):
@@ -568,12 +631,23 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
     except Exception:
         pass
     for comp, T in tasks:
-        parsed = run_point(
-            calc, comp, T, eq_steps, prod_steps, interval,
-            seed=base_seed, grid=grid, prepare=False,
-            md_log=os.path.join(
-                outdir, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T))
-            if outdir else None)
+        md_log = os.path.join(
+            outdir, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T)) \
+            if outdir else None
+        while True:
+            try:
+                parsed = run_point(
+                    calc, comp, T, eq_steps, prod_steps, interval,
+                    seed=base_seed, grid=grid, prepare=False,
+                    md_log=md_log)
+                break
+            except Exception as e:               # noqa: BLE001
+                if not rescue_or_raise(e, compile_mode):
+                    raise
+                compile_mode = None
+                calc = FastMACECalculator(
+                    model_paths=model, device=device,
+                    compile_mode=None, precision=precision)
         out_queue.put(((comp, T), parsed))
 
 
@@ -679,6 +753,15 @@ def main():
         precision = 'fp32'          # autocast only makes sense on cuda
     if device.startswith('cuda'):
         compile_mode = None if args.no_compile else args.compile_mode
+        if compile_mode:
+            ok, why = triton_preflight()
+            if not ok:
+                print('[preflight] torch.compile disabled for this run: '
+                      + why, flush=True)
+                print('[preflight]   run continues WITHOUT triton '
+                      '(slower on GPU but finishes); on Windows the usual '
+                      'cause is AV/Policy blocking ptxas.exe', flush=True)
+                compile_mode = None
     print('MACE speed mode: compile={} precision={}'.format(
         compile_mode or 'off', precision))
 
@@ -717,11 +800,22 @@ def main():
             torch.cuda.reset_peak_memory_stats()
         for comp, T in tasks:
             print('comp x_Pt={:.2f}'.format(comp))
-            parsed_all[(comp, T)] = run_point(
-                calc, comp, T, eq_steps, prod_steps, args.interval,
-                seed=seed, grid=grid,
-                md_log=os.path.join(
-                    _OUT, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T)))
+            md_log = os.path.join(
+                _OUT, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T))
+            while True:
+                try:
+                    parsed = run_point(
+                        calc, comp, T, eq_steps, prod_steps, args.interval,
+                        seed=seed, grid=grid, md_log=md_log)
+                    break
+                except Exception as e:           # noqa: BLE001
+                    if not rescue_or_raise(e, compile_mode):
+                        raise
+                    compile_mode = None
+                    calc = FastMACECalculator(
+                        model_paths=model, device=device,
+                        compile_mode=None, precision=precision)
+            parsed_all[(comp, T)] = parsed
     else:
         # spawn: each worker owns its compiled calculator on the GPU;
         # point seed stays fixed (42) so results do not depend on the
