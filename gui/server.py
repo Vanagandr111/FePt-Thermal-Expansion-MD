@@ -1015,7 +1015,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.9.1'
+APP_VERSION = '1.9.2'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -1144,6 +1144,10 @@ def status_summary():
             'frozen': FROZEN, 'lang': get_lang()}
 
 
+def _sh_quote(s):
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
 def build_update_bat(self_pid, new_exe, cur_exe):
     """Batch file that swaps the frozen exe after we exit.
 
@@ -1151,30 +1155,59 @@ def build_update_bat(self_pid, new_exe, cur_exe):
     downloads to .new, writes this bat and defers: the bat kills our
     PID, moves .new over the exe, relaunches and deletes itself.
     """
+    report = os.path.join(os.path.dirname(new_exe), 'update_report.txt')
     return (
         '@echo off\r\n'
         'chcp 65001 >nul\r\n'
+        'echo bat-start %(ver)s -> %(ts)s >> "%(report)s"\r\n'
         'timeout /t 2 /nobreak >nul\r\n'
-        'taskkill /F /PID {pid} >nul 2>nul\r\n'
+        'taskkill /F /PID %(pid)d >nul 2>nul\r\n'
+        'echo taskkill rc=%%ERRORLEVEL%% >> "%(report)s"\r\n'
+        'timeout /t 2 /nobreak >nul\r\n'
+        ':swap\r\n'
+        'move /Y "%(new)s" "%(cur)s" >nul\r\n'
+        'if exist "%(new)s" (\r\n'
+        '  echo swap-retry %%TIME%% >> "%(report)s"\r\n'
+        '  timeout /t 1 /nobreak >nul\r\n'
+        '  goto :swap\r\n'
+        ')\r\n'
+        'echo swapped %%TIME%% >> "%(report)s"\r\n'
         'timeout /t 1 /nobreak >nul\r\n'
-        'move /Y "{new}" "{cur}" >nul\r\n'
-        'start "" "{cur}"\r\n'
-        'del "%~f0"\r\n'
-    ).format(pid=int(self_pid), new=new_exe, cur=cur_exe)
+        'start "" "%(cur)s"\r\n'
+        'echo relaunched %%TIME%% >> "%(report)s"\r\n'
+        'del "%%~f0"\r\n'
+    ) % {'pid': int(self_pid), 'new': new_exe, 'cur': cur_exe,
+         'report': report, 'ver': APP_VERSION,
+         'ts': time.strftime('%F %T')}
 
 
 def build_update_sh(self_pid, new_exe, cur_exe):
     """sh twin of build_update_bat: swap the running Linux binary."""
+    report = os.path.join(os.path.dirname(new_exe),
+                          'update_report.txt').replace('\\', '/')
     return (
         '#!/bin/sh\n'
-        'sleep 2\n'
-        'kill -9 {pid} 2>/dev/null\n'
+        'set -u\n'
+        'report=' + _sh_quote(report) + '\n'
+        'echo "sh-start %(ver)s -> $(date -u +%%F_%%T)" >> "$report"\n'
         'sleep 1\n'
-        'mv -f "{new}" "{cur}"\n'
-        'chmod +x "{cur}"\n'
+        'kill -9 %(pid)d 2>/dev/null || true\n'
+        'echo "killed" >> "$report"\n'
+        'sleep 2\n'
+        'tries=0\n'
+        'while ! mv -f %(new)s %(cur)s 2>>"$report"; do\n'
+        '  tries=$((tries+1))\n'
+        '  echo "swap-retry $tries" >> "$report"\n'
+        '  [ "$tries" -lt 15 ] || { echo "swap-gave-up" >> "$report"; exit 1; }\n'
+        '  sleep 1\n'
+        'done\n'
+        'chmod +x %(cur)s 2>/dev/null || echo "chmod-failed" >> "$report"\n'
+        'echo "swapped" >> "$report"\n'
         'rm -f "$0"\n'
-        '"/bin/sh" -c "\"{cur}\" >/dev/null 2>&1 &"\n'
-    ).format(pid=int(self_pid), new=new_exe, cur=cur_exe)
+        'echo "relaunched" >> "$report"\n'
+        'nohup %(cur)s >/dev/null 2>&1 &\n'
+    ).replace('\r', '') % {'pid': int(self_pid), 'new': _sh_quote(new_exe),
+                            'cur': _sh_quote(cur_exe), 'ver': APP_VERSION}
 
 
 def run_self_update():

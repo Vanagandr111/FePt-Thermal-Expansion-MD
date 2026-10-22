@@ -60,15 +60,17 @@ def test_install_python_job_validates_url():
 def test_update_sh_script_content():
     sh = server.build_update_sh(4242, '/tmp/upd/new', '/opt/app/bin')
     assert 'kill -9 4242' in sh
-    assert 'mv -f "/tmp/upd/new" "/opt/app/bin"' in sh
+    assert "mv -f '/tmp/upd/new' '/opt/app/bin'" in sh
     assert 'chmod +x' in sh
+    # retried swap (dying process may hold the binary)
+    assert 'while ! mv' in sh
 
 
 def test_build_update_sh_is_posix():
     """The Linux self-updater must kill, swap and relaunch like the .bat."""
     s = server.build_update_sh(1234, '/tmp/u/FePt-GUI.new', '/opt/x/FePt-GUI')
     assert 'kill -9 1234' in s
-    assert 'mv -f "/tmp/u/FePt-GUI.new" "/opt/x/FePt-GUI"' in s
+    assert "mv -f '/tmp/u/FePt-GUI.new' '/opt/x/FePt-GUI'" in s
     assert 'chmod +x' in s
     assert 'rm -f "$0"' in s
     assert s.strip().startswith('#!/bin/sh')
