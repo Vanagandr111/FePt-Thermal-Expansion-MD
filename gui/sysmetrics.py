@@ -165,7 +165,10 @@ def gpu_info():
              '--query-gpu=memory.used,memory.total,utilization.gpu,'
              'temperature.gpu,power.draw',
              '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, timeout=5)
+            capture_output=True, text=True, timeout=5,
+            # Windows: this runs on every metrics poll (~5 s) - never
+            # flash a console window for it
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if r.returncode != 0:
             return {'available': False}
         return parse_gpu_csv((r.stdout or '').splitlines()[0]

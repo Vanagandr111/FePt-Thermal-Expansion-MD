@@ -56,6 +56,9 @@ else:
 # i.e. the temp dir) — pin it to the real root NEXT TO the exe
 if FROZEN:
     os.environ.setdefault('FEPT_PROJECT_DIR', PROJ)
+# Windows: background helpers (nvidia-smi probes, pip, engine pipes)
+# must never flash a console window; 0 = no-op elsewhere
+NOWIN = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 STATIC = os.path.join(GUI_DIR, 'static')
 if not os.path.isdir(STATIC):
     STATIC = os.path.join(RESOURCE, 'gui', 'static')
@@ -112,18 +115,30 @@ def resolve_python():
         return envp
     if not FROZEN:
         return sys.executable
-    for cand in (os.path.join('libs', 'venv', 'Scripts', 'python.exe'),
-                 os.path.join('libs', 'venv', 'bin', 'python'),
-                 os.path.join('libs', 'python.exe'),
-                 os.path.join('libs', 'python'),
-                 # dev layouts on the project host
-                 os.path.join('.venv-mace', 'Scripts', 'python.exe'),
-                 os.path.join('.venv-mace', 'bin', 'python'),
-                 os.path.join('venv', 'Scripts', 'python.exe'),
-                 os.path.join('venv', 'bin', 'python')):
-        p = os.path.join(PROJ, cand)
-        if os.path.isfile(p):
-            return p
+    # The engine python can live next to the exe (release layout), in
+    # the directory the exe was started from, one level up (exe in
+    # dist/) or in the project root - try ALL of them before giving up
+    # (this used to return None -> "pip install numpy into None").
+    roots = []
+    for r in (PROJ, os.getcwd(), GUI_DIR, os.path.dirname(GUI_DIR)):
+        r = os.path.abspath(r)
+        if r not in roots:
+            roots.append(r)
+    rels = (('libs', 'venv', 'Scripts', 'python.exe'),
+            ('libs', 'venv', 'bin', 'python'),
+            ('libs', 'python.exe'),
+            ('libs', 'python'),
+            ('.venv-mace', 'Scripts', 'python.exe'),
+            ('.venv-mace', 'bin', 'python'),
+            ('venv', 'Scripts', 'python.exe'),
+            ('venv', 'bin', 'python'))
+    for root in roots:
+        for rel in rels:
+            p = os.path.join(root, *rel)
+            if os.path.isfile(p):
+                return p
+    log('[gui] engine python NOT FOUND; searched: ' +
+        '; '.join(roots) + ' (patterns: libs/, .venv-mace/, venv/)')
     # NEVER fall back to sys.executable when frozen: that IS this exe,
     # and spawning it with -c would start a second server (hangs deps).
     return None
@@ -174,6 +189,7 @@ def _probe_libs(python_bin):
                          'set FEPT_PYTHON to an external python'}
     try:
         cp = subprocess.run([python_bin, '-c', _PROBE_CODE],
+                            creationflags=NOWIN,
                             capture_output=True, timeout=180)
         text = (cp.stdout or b'').decode('utf-8', errors='replace')
         for line in text.splitlines():
@@ -550,7 +566,7 @@ def start_run(params):
         proc = subprocess.Popen(
             cmd, cwd=PROJ, env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True,
-            encoding='utf-8', errors='replace')
+            encoding='utf-8', errors='replace', creationflags=NOWIN)
     except Exception as e:
         return {'ok': False, 'error': str(e)}
 
@@ -623,11 +639,18 @@ def install_lib(name):
         log('[gui] install: unknown package ' + repr(name))
         return
     py = resolve_python()
+    if not py:
+        log('[gui] pip install FAILED: engine interpreter not found. '
+            'Run bootstrap.bat in the project folder (creates .venv-mace) '
+            'or set FEPT_PYTHON to a python.exe with pip.')
+        dl_end('pip install: интерпретатор не найден - запусти bootstrap.bat')
+        return
     log('[gui] pip install {} into {}'.format(spec[0], py))
     dl_begin('pip install ' + spec[0], mode='indeterminate')
     try:
         r = subprocess.run([py, '-m', 'pip', 'install'] + spec,
-                           capture_output=True, text=True, timeout=1800)
+                           capture_output=True, text=True, timeout=1800,
+                           creationflags=NOWIN)
         for line in (r.stdout or '').strip().splitlines()[-4:]:
             log('[gui]   ' + line)
         if r.returncode != 0:
@@ -1119,7 +1142,8 @@ class Handler(BaseHTTPRequestHandler):
                                        stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT,
                                        timeout=1200,
-                                       encoding='utf-8', errors='replace')
+                                       encoding='utf-8', errors='replace',
+                                       creationflags=NOWIN)
                     for ln in (r.stdout or '').splitlines():
                         log('[calib] ' + ln)
                 except Exception as e:

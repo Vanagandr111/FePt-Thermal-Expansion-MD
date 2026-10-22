@@ -12,7 +12,12 @@ import server as gui
 
 @pytest.fixture
 def proj(tmp_path, monkeypatch):
+    # isolate ALL resolution roots: the new multi-root search checks
+    # PROJ, cwd, GUI_DIR and its parent - a stray .venv-mace in the
+    # real cwd would leak into the test
     monkeypatch.setattr(gui, 'PROJ', str(tmp_path))
+    monkeypatch.setattr(gui, 'GUI_DIR', str(tmp_path))
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
@@ -36,6 +41,21 @@ def test_frozen_without_any_venv_returns_none(proj, monkeypatch):
 def test_frozen_finds_dev_venv_next_to_exe(proj, monkeypatch):
     monkeypatch.delenv('FEPT_PYTHON', raising=False)
     monkeypatch.setattr(gui, 'FROZEN', True)
+    py = proj / '.venv-mace' / 'Scripts' / 'python.exe'
+    py.parent.mkdir(parents=True)
+    py.write_text('x')
+    assert gui.resolve_python() == str(py)
+
+
+def test_frozen_exe_in_dist_finds_venv_one_level_up(proj, monkeypatch):
+    """Release layout: exe in dist/, .venv-mace in the project root."""
+    monkeypatch.delenv('FEPT_PYTHON', raising=False)
+    monkeypatch.setattr(gui, 'FROZEN', True)
+    dist = proj / 'dist'
+    dist.mkdir()
+    monkeypatch.setattr(gui, 'PROJ', str(dist))
+    monkeypatch.setattr(gui, 'GUI_DIR', str(dist))
+    monkeypatch.chdir(dist)
     py = proj / '.venv-mace' / 'Scripts' / 'python.exe'
     py.parent.mkdir(parents=True)
     py.write_text('x')
