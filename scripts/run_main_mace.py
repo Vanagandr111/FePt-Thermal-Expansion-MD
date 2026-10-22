@@ -241,7 +241,8 @@ def _make_dynamics(atoms, T, timestep_fs):
 
 
 def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
-              timestep_fs=1.0, seed=42, grid=4, prepare=True):
+              timestep_fs=1.0, seed=42, grid=4, prepare=True,
+              md_log=None):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
@@ -270,6 +271,26 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     dyn_md = _make_dynamics(atoms, T, timestep_fs)
 
     records = []
+    _K_B = 8.617333262145e-5  # eV/K
+    phase = {'name': 'eq'}
+    emit = {'on': False}  # frames flow only after the collector attaches
+    log_fh = None
+    if md_log:
+        try:
+            d = os.path.dirname(md_log)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            log_fh = open(md_log, 'w', newline='')
+            meta = {'x_Pt': '{:.2f}'.format(comp), 'T_K': T,
+                    'atoms': len(atoms), 'grid': grid,
+                    'eq_steps': eq_steps, 'prod_steps': prod_steps,
+                    'dt_fs': timestep_fs, 'thermo_interval':
+                    thermo_interval, 'seed': seed}
+            for h in lmp.md_log_header(meta):
+                log_fh.write(h + '\n')
+            log_fh.flush()
+        except OSError:
+            log_fh = None
 
     def collect():
         # get_stress(voigt=True) already returns the 6-component voigt vector
@@ -278,13 +299,33 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         vol = atoms.get_volume()
         a_lat = (4.0 * vol / len(atoms)) ** (1.0 / 3.0)
         records.append((a_lat, p_bar, vol))
+        # one LAMMPS-style frame: console (live GUI stream) + md_*.log
+        step = int(getattr(dyn_md, 'nsteps', 0))
+        pe = float(atoms.get_potential_energy())
+        ke = float(atoms.get_kinetic_energy())
+        temp = 2.0 * ke / (3.0 * len(atoms) * _K_B)
+        if emit['on']:
+            frame = lmp.md_log_line(step, step * timestep_fs / 1000.0,
+                                    phase['name'], pe, ke, temp, p_bar,
+                                    vol, a_lat)
+            print(frame, flush=True)
+            if log_fh:
+                log_fh.write(frame + '\n')
+                log_fh.flush()
 
-    collect()  # t=0 point too
+    collect()  # t=0 point into records only (no frame yet: the attached
+    # collector fires once more at nsteps==0 right when run() starts)
+    emit['on'] = True
     dyn_md.attach(collect, interval=thermo_interval)
-    dyn_md.run(eq_steps)
-    n_eq = len(records)
-    t_prod0 = time.time()
-    dyn_md.run(prod_steps)
+    try:
+        dyn_md.run(eq_steps)
+        n_eq = len(records)
+        phase['name'] = 'prod'
+        t_prod0 = time.time()
+        dyn_md.run(prod_steps)
+    finally:
+        if log_fh:
+            log_fh.close()
     prod_wall = time.time() - t_prod0
     ms_step = 1000.0 * prod_wall / max(1, prod_steps)
 
@@ -478,7 +519,8 @@ def _install_nl_cache(skin):
 
 
 def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
-               eq_steps, prod_steps, interval, grid, base_seed):
+               eq_steps, prod_steps, interval, grid, base_seed,
+               outdir=None):
     """Parallel worker: own compiled calculator on the shared GPU."""
     # Windows: spawned workers race on the shared triton cache (Permission
     # error on .cubin). Give each worker its own sub-cache; single-worker
@@ -502,8 +544,12 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
     except Exception:
         pass
     for comp, T in tasks:
-        parsed = run_point(calc, comp, T, eq_steps, prod_steps, interval,
-                           seed=base_seed, grid=grid, prepare=False)
+        parsed = run_point(
+            calc, comp, T, eq_steps, prod_steps, interval,
+            seed=base_seed, grid=grid, prepare=False,
+            md_log=os.path.join(
+                outdir, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T))
+            if outdir else None)
         out_queue.put(((comp, T), parsed))
 
 
@@ -649,7 +695,9 @@ def main():
             print('comp x_Pt={:.2f}'.format(comp))
             parsed_all[(comp, T)] = run_point(
                 calc, comp, T, eq_steps, prod_steps, args.interval,
-                seed=seed, grid=grid)
+                seed=seed, grid=grid,
+                md_log=os.path.join(
+                    _OUT, 'md_comp_{:.2f}_T{:d}.log'.format(comp, T)))
     else:
         # spawn: each worker owns its compiled calculator on the GPU;
         # point seed stays fixed (42) so results do not depend on the
@@ -667,7 +715,8 @@ def main():
             p = ctx.Process(
                 target=_mp_worker,
                 args=(chunk, q, model, device, compile_mode, precision,
-                      eq_steps, prod_steps, args.interval, grid, seed))
+                      eq_steps, prod_steps, args.interval, grid, seed,
+                      _OUT))
             p.start()
             procs.append(p)
         # Collect with timeout: a dead worker must fail fast instead of

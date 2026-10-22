@@ -719,6 +719,35 @@ def write_protocol_log(out, script_name, eq_steps, prod_steps, tdamp, pdamp,
     print('  Protocol log: {}'.format(proto_path))
 
 
+# ── MD frame log (console stream + results md_*.log) ──
+# The client watches runs live: every thermo frame must appear BOTH in
+# the GUI console (streamed stdout) and in a real .log file inside the
+# results folder, in the familiar LAMMPS-style column table.
+MD_LOG_COLS = ('Step   Time_ps  Phase  PotEng_eV  KinEng_eV  TotEng_eV  '
+               'Temp_K  Press_bar  Volume_A3  Latt_a_A')
+
+
+def md_log_header(meta):
+    """Header lines for an md_*.log file: params first, then columns."""
+    out = ['# MACE MD frame log - Fe-Pt thermal expansion']
+    out.append('# ' + '  '.join(
+        '{}={}'.format(k, meta[k]) for k in (
+            'x_Pt', 'T_K', 'atoms', 'grid', 'eq_steps', 'prod_steps',
+            'dt_fs', 'thermo_interval', 'seed') if k in meta))
+    out.append('# units: eV, K, bar, Angstrom^3, ps  |  phase: eq/prod')
+    out.append(MD_LOG_COLS)
+    return out
+
+
+def md_log_line(step, t_ps, phase, pe, ke, temp, press, vol, a):
+    """One thermo frame in the fixed-width table used by console + file."""
+    return ('{step:>7d} {t:>9.3f} {phase:>5s} {pe:>10.4f} {ke:>10.4f} '
+            '{etot:>10.4f} {temp:>7.1f} {press:>9.2f} {vol:>10.3f} '
+            '{a:>9.5f}'
+            .format(step=step, t=t_ps, phase=phase[:5], pe=pe, ke=ke,
+                    etot=pe + ke, temp=temp, press=press, vol=vol, a=a))
+
+
 # ── Print trends ────────────────────────────────────────────
 # intent: Print a(T) trends per composition with CTE and segmental analysis
 # allies: calc_cte_report (computation), print_trends, make_plots (callers)
