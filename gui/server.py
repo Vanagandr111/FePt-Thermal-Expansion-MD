@@ -251,6 +251,27 @@ _PROBE_CODE = (
     "            d['gpu'] = torch.cuda.get_device_name(0)\n"
     "    except Exception as e:\n"
     "        d['terr'] = str(e)[:300]\n"
+    "d['triton'] = u.find_spec('triton') is not None\n"
+    "if d['triton']:\n"
+    "    from importlib.metadata import version as _v\n"
+    "    for _pkg in ('triton-windows', 'triton'):\n"
+    "        try:\n"
+    "            d['triton_v'] = v if (v := _v(_pkg)) else ''\n"
+    "            break\n"
+    "        except Exception:\n"
+    "            pass\n"
+    "    import triton as _t, os as _o\n"
+    "    _b = _o.path.join(_o.path.dirname(_t.__file__), 'backends')\n"
+    "    _found = ''\n"
+    "    if _o.path.isdir(_b):\n"
+    "        for _r, _d, _f in _o.walk(_b):\n"
+    "            for _x in _f:\n"
+    "                if _x.startswith('ptxas'):\n"
+    "                    _found = _o.path.join(_r, _x)\n"
+    "                    break\n"
+    "            if _found:\n"
+    "                break\n"
+    "    d['ptxas'] = _found\n"
     "print('PROBE_JSON:' + json.dumps(d))\n"
 )
 
@@ -412,6 +433,9 @@ def collect_deps(refresh=False):
             'scipy_v': probe.get('scipy_v'),
             'pandas': probe.get('pandas', False),
             'pandas_v': probe.get('pandas_v'),
+            'triton': probe.get('triton', False),
+            'triton_v': probe.get('triton_v'),
+            'ptxas': probe.get('ptxas'),
             'probe_error': probe.get('error'),
         },
         'lammps': {'found': bool(lammps), 'path': lammps},
@@ -757,7 +781,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.8.4'
+APP_VERSION = '1.8.5'
 UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
                 'err': None}
 UPDATE_TTL = 6 * 3600.0
@@ -927,12 +951,19 @@ def _download(url, dest):
 DL = {'active': False, 'label': '', 'have': 0, 'total': 0, 'mode': 'bytes',
       'done_msg': ''}
 
+# torch.compile needs triton; on Windows the pip package is
+# 'triton-windows' (vendor fork with ptxas.exe), plain 'triton' has no
+# win wheels. The customer's machine had deps installed ONLY from this
+# tab -> no triton at all -> 'triton dead', so the installer owns it.
+TRITON_SPEC = ['triton-windows'] if os.name == 'nt' else ['triton']
+
 INSTALL_SPECS = {
     'numpy': ['numpy'],
     'scipy': ['scipy'],
     'pandas': ['pandas'],
     'ase': ['ase'],
     'mace': ['mace-torch'],
+    'triton': list(TRITON_SPEC),
     'torch': ['torch', '--index-url',
               'https://download.pytorch.org/whl/cu128'],
 }
@@ -973,11 +1004,37 @@ def install_lib(name):
                 r.returncode, (r.stderr or '')[-400:]))
         else:
             log('[gui] pip OK: ' + spec[0])
+            if name == 'torch' and not _triton_present(py):
+                log('[gui] torch OK -> installing ' + TRITON_SPEC[0] +
+                    ' (needed by torch.compile)')
+                rt = subprocess.run([py, '-m', 'pip', 'install'] +
+                                    list(TRITON_SPEC),
+                                    capture_output=True, text=True,
+                                    timeout=1800, creationflags=NOWIN)
+                for line in (rt.stdout or '').strip().splitlines()[-3:]:
+                    log('[gui]   ' + line)
+                if rt.returncode != 0:
+                    log('[gui] pip FAILED (code {}): {}'.format(
+                        rt.returncode, (rt.stderr or '')[-300:]))
+                else:
+                    log('[gui] pip OK: ' + TRITON_SPEC[0])
         _DEPS_CACHE['t'] = 0.0
     except Exception as e:
         log('[gui] pip error: ' + str(e))
     finally:
         dl_end('pip install завершён: ' + spec[0])
+
+
+def _triton_present(py):
+    """True when the engine interpreter can see the triton module."""
+    try:
+        cp = subprocess.run(
+            [py, '-c', 'import importlib.util as u, sys; '
+                       'sys.exit(0 if u.find_spec("triton") else 1)'],
+            capture_output=True, timeout=60, creationflags=NOWIN)
+        return cp.returncode == 0
+    except Exception:
+        return False
 
 
 def download_url(url, dest, label, attempts=4):

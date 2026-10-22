@@ -1651,7 +1651,14 @@ async function loadDeps(refresh) {
              ? ' · CUDA ' + t.cuda + ' · ' + t.device
              : ' · ' + (t.cuda || 'CPU')))
            : (t.error || 'не найдено в движке'),
-       "installLib('torch')", 'Установить (CUDA 12.8)');
+       "installLib('torch')", 'Установить (CUDA 12.8 + triton)');
+  const tri = L.triton;
+  h += depRow('triton', 'Triton (компилятор torch.compile)', !!tri,
+       tri ? ('v' + (L.triton_v || '?') +
+              (L.ptxas ? ' · ptxas: есть' : ' · ptxas: НЕТ'))
+           : 'не найден — нужен только для torch.compile '
+             + '(FEPT_COMPILE=1)',
+       "installLib('triton')");
   h += depRow('lammps', 'LAMMPS', j.lammps.found,
        j.lammps.found ? j.lammps.path
                       : 'не найдено — нажмите «Установить»',
@@ -1688,6 +1695,7 @@ const DEPS_LINKS = {
   mace: 'https://pypi.org/project/mace-torch/',
   ase: 'https://pypi.org/project/ase/',
   torch: 'https://pytorch.org/get-started/locally/',
+  triton: 'https://pypi.org/project/triton-windows/',
   lammps: 'https://docs.lammps.org/'
 };
 async function refreshDepsBtn() {

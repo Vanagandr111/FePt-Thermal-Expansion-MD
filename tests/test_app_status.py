@@ -135,3 +135,21 @@ def test_compile_disabled_by_default_and_opt_in_via_env(monkeypatch):
     for v in ('1', 'true', 'yes', 'on'):
         monkeypatch.setenv('FEPT_COMPILE', v)
         assert server.compile_enabled() is True
+
+
+# ---------------- installer must ship triton ---------------------------
+def test_gui_installer_ships_triton_spec():
+    # customer machines install deps ONLY from this tab: without this
+    # entry their triton stayed missing ('dead') and compile never worked
+    spec = server.INSTALL_SPECS.get('triton')
+    assert spec, 'triton missing from INSTALL_SPECS'
+    if os.name == 'nt':
+        assert spec == ['triton-windows']   # fork with ptxas.exe
+    # the deps probe must report triton AND the ptxas binary
+    assert "'triton'" in server._PROBE_CODE
+    assert 'ptxas' in server._PROBE_CODE
+
+
+def test_triton_present_helper_sees_engine_triton():
+    # True in our engine venv (triton-windows installed via bootstrap)
+    assert server._triton_present(sys.executable) is True
