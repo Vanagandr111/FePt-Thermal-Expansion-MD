@@ -38,6 +38,11 @@ or `.venv-mace/Scripts/python.exe gui/server.py` / `python3 gui/server.py`.
 - **Machine profile tab** — live GPU/CPU/RAM gauges, calibration table,
   atom budget, one-click recalibration (calibration points are shared
   with the estimator and MCP).
+- **Live MD frame log** — every thermo frame streams into the console in
+  the LAMMPS-style table (Step, Time_ps, phase eq/prod, PotEng, KinEng,
+  TotEng, Temp, Press, Volume, Latt.a; eV / bar / A^3 / ps) and the same
+  rows go per point to `results.../md_comp_XX_TYY.log`; the header
+  records x_Pt, T, atoms, grid, eq/prod steps, dt, thermo interval, seed.
 - **Dependencies tab** — torch/CUDA/GPU, mace/ase/numpy, `lmp` binary
   lookup, **Download LAMMPS** (official zip/tarball into `lammps/`) and
   the **on-demand model catalog**: all 18 ACEsuit foundation checkpoints
