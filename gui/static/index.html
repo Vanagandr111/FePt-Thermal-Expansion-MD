@@ -28,6 +28,11 @@ label { display:block; color:var(--dim); font-size:12px; margin-bottom:4px; }
 input,select { width:100%; background:#0b1220; color:var(--fg);
   border:1px solid var(--line); border-radius:6px; padding:7px 9px; font:inherit; }
 input[type=range] { padding:0; }
+.comp-calc { display:flex; gap:12px; align-items:baseline; margin-top:7px;
+  font-size:13px; font-variant-numeric:tabular-nums; color:var(--dim); }
+.comp-calc b { font-weight:600; }
+.comp-calc .cc-sep { opacity:.4; }
+.comp-calc .cc-sum { margin-left:auto; opacity:.8; color:var(--acc); }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
 button.act { background:var(--acc); color:#082f49; border:0; border-radius:8px;
   padding:9px 18px; font:600 14px inherit; cursor:pointer; }
@@ -259,9 +264,10 @@ button.act.pulse { outline:2px solid var(--acc); }
     <h2 class="h2">Параметры системы и протокола</h2>
     <div class="grid">
       <div>
-        <label>Сплав: доля Pt x(<span id="compval">0.50</span>)</label>
+        <label>Сплав: доля <span id="compbname">Pt</span> x(<span id="compval">0.50</span>)</label>
         <input id="comp" type="range" min="0" max="1" step="0.05" value="0.5"
                oninput="compOut()">
+        <div id="compcalc" class="comp-calc" aria-live="polite"></div>
         <div class="presets" style="margin-top:6px">
           <button class="ghost tiny" onclick="setComp(0)">Fe</button>
           <button class="ghost tiny" onclick="setComp(0.25)">Fe₃Pt</button>
@@ -460,7 +466,28 @@ function tab(name) {
 }
 
 /* ---------------- run form ---------------- */
-function compOut() { $('compval').textContent = (+$('comp').value).toFixed(2); }
+function compOut() {
+  $('compval').textContent = (+$('comp').value).toFixed(2);
+  updateCompCalc();
+}
+function updateCompCalc() {
+  const x = +$('comp').value;
+  const a = sysSel.a || 'A', b = sysSel.b || 'B';
+  const ca = (typeof ST_COL !== 'undefined' && ST_COL[a]) ? ST_COL[a] : '#8fb3ff';
+  const cb = (typeof ST_COL !== 'undefined' && ST_COL[b]) ? ST_COL[b] : '#e8c98a';
+  const el = $('compcalc');
+  if (el) {
+    el.innerHTML =
+      '<span class="cc"><b style="color:' + ca + '">' + a + '</b> ' +
+      (1 - x).toFixed(2) + '</span>' +
+      '<span class="cc-sep">·</span>' +
+      '<span class="cc"><b style="color:' + cb + '">' + b + '</b> ' +
+      x.toFixed(2) + '</span>' +
+      '<span class="cc-sum">Σ ' + (((1 - x) + x)).toFixed(2) + '</span>';
+  }
+  const bn = $('compbname');
+  if (bn) bn.textContent = b;
+}
 function setComp(v) { $('comp').value = v; compOut(); }
 let lastCellMax = 0;          // from /api/estimate: atoms that fit the card
 function atomCount() {        // edited n -> sync the target-atoms field
@@ -574,12 +601,18 @@ function renderSystem() {
       o.textContent = (e.label ? e.label + ' — ' : '') + e.symbol;
       sel.appendChild(o);
     });
+    if (!ELEMENTS.length) {          /* list not loaded yet: keep the
+                                        current selection, retry later */
+      if (sysSel[key]) sel.value = sysSel[key];
+      continue;
+    }
     const cur = ELEMENTS.some(e => e.symbol === sysSel[key])
-      ? sysSel[key] : (ELEMENTS[0] || {}).symbol;
+      ? sysSel[key] : ELEMENTS[0].symbol;
     sel.value = cur; sysSel[key] = cur;
   }
   syncSysForm();
   checkCompat();
+  updateCompCalc();
 }
 function syncSysForm() {
   fetch('/api/form', {method: 'POST',
@@ -588,7 +621,7 @@ function syncSysForm() {
 }
 async function elemChanged(which) {
   sysSel[which === 'A' ? 'a' : 'b'] = $(which === 'A' ? 'elemA' : 'elemB').value;
-  syncSysForm(); checkCompat();
+  syncSysForm(); checkCompat(); updateCompCalc();
 }
 function openElemModal(mode, which) {
   const sel = $(which === 'A' ? 'elemA' : 'elemB');
