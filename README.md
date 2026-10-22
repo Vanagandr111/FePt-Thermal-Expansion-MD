@@ -2,7 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![LAMMPS](https://img.shields.io/badge/LAMMPS-2Aug2023-orange)](https://www.lammps.org/)
-[![Release v1.6.6](https://img.shields.io/badge/release-v1.6.6-brightgreen)](https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases/tag/v1.6.6)
+[![Release v1.8.0](https://img.shields.io/badge/release-v1.8.0-brightgreen)](https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases/tag/v1.8.0)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 This repository contains the complete pipeline for computing lattice parameters and
@@ -31,19 +31,41 @@ or `.venv-mace/Scripts/python.exe gui/server.py` / `python3 gui/server.py`.
 - **Mode MACE (GPU) / LAMMPS (CPU)** — switching the mode re-points the
   potential picker: neural weights are indexed from `potentials/gpu/`
   (`.pt`, `.model`), classic EAM/MEAM files from `potentials/cpu/`.
+- **Precision selector** — fp16 (default, recommended; Turing T4+ and
+  newer), bf16 (Ampere+), fp32 (no autocast). The estimate follows the
+  mode (memory x0.95/x1.0/x1.6, fp32 ~x1.7 slower); verified with real
+  quick runs in every mode.
+- **Machine profile tab** — live GPU/CPU/RAM gauges, calibration table,
+  atom budget, one-click recalibration (calibration points are shared
+  with the estimator and MCP).
 - **Dependencies tab** — torch/CUDA/GPU, mace/ase/numpy, `lmp` binary
-  lookup plus **Download LAMMPS** (official zip/tarball into `lammps/`)
-  and **Download model** (MACE-MP-0-medium) buttons.
+  lookup, **Download LAMMPS** (official zip/tarball into `lammps/`) and
+  the **on-demand model catalog**: all 18 ACEsuit foundation checkpoints
+  (MP-0/0b/0b2/0b3, MPA-0, OMAT-0, MATPES, MH-0/1) with a filter box;
+  already-downloaded files drop out of the list; weights are fetched by
+  one click into `potentials/gpu/` (nothing heavy is stored in the repo).
 - **Run form** — composition, lattice grid (atom count), temperatures,
   eq/prod steps; **console** streams the run log; charts show a(T) and
   CTE with every number; **open results folder** jumps to the current
   run's files.
+- **Results tab** — scientific summary card (system, model, precision,
+  seed, alpha fit/chordal, R2, segmental CTE 300-600/600-900/900-1200 K
+  filled on ANY grid - the engine fits the canonical nodes, not just
+  adjacent pairs), a(T)/alpha charts, open-folder and **Excel** buttons
+  (`.xlsx` is written next to every CSV).
+- **3D visualisation** — fcc supercell with rotation/zoom, drag atoms,
+  composition colouring; **thermal motion mode** with a 100-1200 K
+  slider (amplitude ~ sqrt(T)).
 - **Agent control is visible**: the MCP server `gui/mcp_server.py`
   (registered as `fept_gui`, 12 tools) edits the same server-side form,
   and the browser pulses each touched field with an `[agent] ...` line.
-- **Single-file exe** (`dist/FePt-GUI.exe`) is built with PyInstaller
-  keeping `potentials/`, `lammps/`, `libs/` OUTSIDE the binary (only our
-  own code is bundled, third-party pieces are downloaded separately).
+- **Single-file exe** (`dist/FePt-GUI.exe`, ~9.2 MB) is built with
+  PyInstaller keeping `potentials/`, `lammps/`, `libs/` OUTSIDE the
+  binary (only our own code is bundled; torch/mace are deliberately
+  excluded - the GUI drives an external engine Python, so the bundle
+  stays small and clean). `build_exe.bat` builds it and smoke-tests the
+  result on :8321; ready-made builds ship as the release asset
+  [v1.8.0](https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases/tag/v1.8.0).
   On hosts with Smart App Control the local build may be held by the
   OS policy — use `run_gui.bat` in that case.  On start the exe POPS a
   visible browser window (cmd `start` -> `os.startfile` ->
@@ -250,10 +272,12 @@ Generated plots are in the output directory (seed 26365 in metadata):
    bootstrap.bat
    ```
 
-   This script:
-   - Creates a Python virtual environment (`.venv`)
-   - Installs required packages (`numpy`, `matplotlib`)
-   - Checks that `bin/lmp.exe` exists
+   Interactive bootstrap (Windows `bootstrap.bat` / Linux `bootstrap.sh`):
+   - Finds a WORKING Python (3.10-3.14, skips the Microsoft Store alias)
+   - Menu: [1] GPU install (torch cu128) / [2] CPU-only / [3] deps only /
+     [4] environment check without changes
+   - Creates `.venv-mace`, installs `requirements-mace.txt`
+   - Prints a final report (python / torch / CUDA / mace / ase)
 
 3. **Run the full calculation**
 
@@ -355,6 +379,33 @@ bash scripts/run_main_mace.sh --device cuda --eq 50000 --prod 100000 --grid 4
 
 `--grid 4` = 256-atom supercell (same size as the LAMMPS phase-4 runs);
 `--grid 2` = 32 atoms for smoke tests. Default grid is 4 (32 in `--quick`).
+
+**Precision modes** (`--precision fp16|bf16|fp32`, default `fp16`):
+autocast around the MACE calculator; fp16 runs on Turing T4 and newer,
+fp32 disables autocast entirely. All modes verified end-to-end (exit 0,
+artifacts written, estimator adjusted per-mode).
+
+**Foundation model catalog** — weights come from the official
+[ACEsuit/mace-foundations](https://github.com/ACEsuit/mace-foundations)
+releases (89 elements, DFT PBE+U datasets). The GUI lists all 18
+checkpoints with one-click download into `potentials/gpu/`; locally we
+keep only the models actually used. Licenses: MIT (MP family), ASL
+(OMAT/MATPES/MH). MACE-OMOL (molecules, wB97M-V) is intentionally not
+listed - wrong domain for metallic alloys.
+
+Latest benchmark, pure Pt, MACE-MP-0-large.pt, fp16, 256 atoms, 7
+temperatures (300-1200 K, 500 eq + 1000 prod steps, seed 42):
+
+| $T$ (K) | 300 | 450 | 600 | 750 | 900 | 1050 | 1200 |
+|---------|-----|-----|-----|-----|-----|------|------|
+| $a$ (Å) | 3.99307 | 4.00106 | 4.00605 | 4.01593 | 4.02404 | 4.03043 | 4.03800 |
+
+alpha_fit = 1.261e-5 /K (R^2 = 0.9967); segmental 300-600 K = 1.083e-5,
+600-900 K = 1.497e-5, 900-1200 K = 1.156e-5. The ~25-35 % overshoot
+vs experiment (9.5e-6 /K) is the usual systematic bias of an
+UNFITTED PBE+U foundation model (a(300 K) is also ~2 % above the
+experimental 3.924 A); foundation models are meant for relative
+comparisons, fine-tuning closes the gap.
 
 Verified 2026-10-19 on `FePt_potential.pt` (ScaleShiftMACE, r_max = 6 Å):
 
@@ -466,7 +517,18 @@ FePt-Thermal-Expansion-MD/
 ├── bin/                            ← LAMMPS executable + DLLs + utilities
 ├── run.bat                        ← ★ INTERACTIVE LAUNCHER (auto-detects Python)
 ├── _run_lmp.bat                   ← LAMMPS wrapper (used by Python scripts)
-├── bootstrap.bat                  ← Environment setup (Windows)
+├── gui/
+│   ├── server.py                  ← GUI server + engine orchestration
+│   ├── mcp_server.py              ← MCP tool layer for agents
+│   └── static/                    ← Web UI (tabs: form/run/deps/results/profile)
+├── potentials/
+│   ├── gpu/                       ← MACE neural weights (.pt/.model, on-demand)
+│   └── cpu/                       ← EAM/MEAM files for the LAMMPS pipeline
+├── tests/                         ← pytest suite (fast, no GPU)
+├── bootstrap.bat                  ← Interactive setup (Windows)
+├── bootstrap.sh                   ← Interactive setup (Linux)
+├── build_exe.bat                  ← PyInstaller build + smoke test
+├── FePt-GUI.spec                  ← PyInstaller spec (one-file exe)
 ├── requirements.txt               ← Python dependencies
 ├── seed.txt                       ← Last used seed
 ├── .gitattributes
