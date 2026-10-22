@@ -1,6 +1,6 @@
 #!/bin/bash
 # LAMMPS pipeline entry point (Linux), one-click.
-# First run bootstraps .venv automatically (bootstrap_lammps.sh).
+# First run bootstraps .venv automatically (bootstrap.sh).
 #
 #   bash run_lammps.sh                 # full pipeline (run_main.py)
 #   PYTHON=python3.12 bash run_lammps.sh   # pin interpreter
@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 
 if [ ! -x .venv/bin/python ]; then
     echo "  .venv not found - bootstrapping LAMMPS pipeline environment ..."
-    bash bootstrap_lammps.sh
+    bash bootstrap.sh
 fi
 
 if ! command -v lmp >/dev/null 2>&1 && [ ! -x bin/lmp ]; then

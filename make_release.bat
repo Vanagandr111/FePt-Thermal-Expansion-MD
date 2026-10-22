@@ -27,8 +27,8 @@ echo  [1/7] Copying root files...
 copy run.bat                 "%BUILD_DIR%\" >nul
 copy _run_lmp.bat            "%BUILD_DIR%\" >nul
 copy bootstrap.bat           "%BUILD_DIR%\" >nul
-copy bootstrap_mace.bat      "%BUILD_DIR%\" >nul
-copy bootstrap_mace.sh       "%BUILD_DIR%\" >nul
+copy bootstrap.bat           "%BUILD_DIR%\" >nul
+copy bootstrap.sh            "%BUILD_DIR%\" >nul
 copy run_mace.bat            "%BUILD_DIR%\" >nul
 copy requirements.txt        "%BUILD_DIR%\" >nul
 copy requirements-mace.txt   "%BUILD_DIR%\" >nul
@@ -40,7 +40,8 @@ REM ── Scripts (exclude __pycache__) ──
 echo  [2/7] Copying scripts...
 mkdir "%BUILD_DIR%\scripts"
 xcopy scripts\*.py "%BUILD_DIR%\scripts\" >nul
-copy scriptsun_main_mace.sh "%BUILD_DIR%\scripts\" >nul
+copy scripts
+un_main_mace.sh "%BUILD_DIR%\scripts\" >nul
 
 REM ── Data (pre-generated structures) ──
 echo  [3/7] Copying data files...

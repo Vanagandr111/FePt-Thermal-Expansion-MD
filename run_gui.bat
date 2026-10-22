@@ -37,7 +37,7 @@ if %errorlevel% equ 0 (
 echo.
 echo   ERROR: Python not found (venv .venv-mace or Python 3.11+).
 echo   Install Python from: https://www.python.org/downloads/
-echo   or run bootstrap_mace.bat first.
+echo   or run bootstrap.bat first.
 echo.
 pause
 exit /b 1

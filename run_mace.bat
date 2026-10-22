@@ -9,7 +9,7 @@ REM First run automatically creates .venv-mace via bootstrap_mace.bat
 
 if not exist ".venv-mace\Scripts\python.exe" (
     echo  .venv-mace not found - first run, bootstrapping environment ...
-    call bootstrap_mace.bat
+    call bootstrap.bat
     if not exist ".venv-mace\Scripts\python.exe" (
         echo  ERROR: bootstrap failed
         pause

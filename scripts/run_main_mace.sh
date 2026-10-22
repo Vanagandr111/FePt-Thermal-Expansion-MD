@@ -11,7 +11,7 @@
 set -e
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 # One-click: no .venv-mace yet -> bootstrap it automatically
-if [ ! -x "$PROJ/.venv-mace/bin/python" ] && [ -f "$PROJ/bootstrap_mace.sh" ]; then
+if [ ! -x "$PROJ/.venv-mace/bin/python" ] && [ -f "$PROJ/bootstrap.sh" ]; then
   echo "  .venv-mace not found - bootstrapping environment (first run) ..."
   bash "$PROJ/bootstrap_mace.sh"
 fi

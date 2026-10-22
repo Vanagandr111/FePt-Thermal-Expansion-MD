@@ -14,7 +14,7 @@ echo "Version: $VERSION"
 
 echo "  [1/6] Root files ..."
 cp README.md .gitattributes requirements.txt requirements-mace.txt \
-   bootstrap_mace.sh bootstrap_lammps.sh run_lammps.sh \
+   bootstrap.sh run_lammps.sh \
    _regenerate_plots.py "$BUILD/$NAME/"
 
 echo "  [2/6] Scripts ..."

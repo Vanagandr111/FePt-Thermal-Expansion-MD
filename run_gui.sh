@@ -11,7 +11,7 @@ elif command -v python3 >/dev/null 2>&1; then
     PY=python3
 else
     echo "ERROR: python3 not found (project venv .venv-mace or system python3)."
-    echo "Install python3 or run ./bootstrap_mace.sh first."
+    echo "Install python3 or run ./bootstrap.sh first."
     exit 1
 fi
 
