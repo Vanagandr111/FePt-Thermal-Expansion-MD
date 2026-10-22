@@ -97,6 +97,7 @@ _DEPS_CACHE = {'t': 0.0, 'data': None}
 # visibly follows along (fields re-render with an agent pulse).
 FORM = {
     'mode': 'mace', 'model': '', 'device': 'cuda',
+    'precision': 'fp16',        # fp16 (default, recommended) | bf16 | fp32
     'comp': 0.5, 'grid': 4, 'temps': '300 1200',
     'eq': 500, 'prod': 1000, 'seed': 42,
     'elem_a': 'Fe', 'elem_b': 'Pt',
@@ -184,7 +185,8 @@ def _probe_libs(python_bin):
         return {'error': str(e)[:300]}
 
 
-FORM_KEYS = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
+FORM_KEYS = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
+             'eq', 'prod',
              'seed', 'elem_a', 'elem_b')
 
 
@@ -195,13 +197,18 @@ def build_estimate(form):
         prof,
         form.get('mode', 'mace'), form.get('device', 'cuda'),
         int(form.get('grid', 4)), str(form.get('temps', '')),
-        int(form.get('eq', 500)), int(form.get('prod', 1000)))
+        int(form.get('eq', 500)), int(form.get('prod', 1000)),
+        precision=form.get('precision', 'fp16'))
     want_vram = (form.get('mode') == 'mace'
                  and form.get('device') == 'cuda')
     total_vram = sysmetrics.gpu_info().get('vram_total_mb')
     est['fits'] = estimator.fits_memory(
         est['vram_mb'] if want_vram else None, total_vram)
     est['ram_total_mb'] = sysmetrics.ram_info().get('total_mb')
+    # machine profile tab: the raw calibration points behind the estimate
+    est['profile'] = {'points': prof.get('points', []),
+                      'overhead': prof.get('overhead'),
+                      'calibrated_at': prof.get('calibrated_at')}
     # "how many atoms still fit this card" (None until 2 calibration points)
     est['max_atoms'] = estimator.max_atoms_for_vram(
         prof, total_vram, form.get('mode', 'mace'),
@@ -379,8 +386,11 @@ def collect_results(outdir):
                 'alpha_min': f(row, 'CTE_chordal') if fit is not None else None,
                 'alpha_max': f(row, 'CTE_300_1200') if fit is not None else None,
                 'R2': f(row, 'R2'),
-                'seg_300_600': None, 'seg_600_900': None,
-                'seg_900_1200': None,
+                # segmental CTE columns are appended by write_cte_full
+                # when the grid has >= 2 segments (legacy reports: None)
+                'seg_300_600': f(row, 'seg_300_600'),
+                'seg_600_900': f(row, 'seg_600_900'),
+                'seg_900_1200': f(row, 'seg_900_1200'),
             }
         else:
             entry = {
@@ -480,7 +490,11 @@ def start_run(params):
             return {'ok': False, 'error': 'no model selected'}
         device = merged.get('device', 'cuda')
         seed = int(merged.get('seed', 42))
+        precision = str(merged.get('precision') or 'fp16').lower()
+        if precision not in ('fp16', 'bf16', 'fp32'):
+            precision = 'fp16'
         cmd += ['--device', device, '--model', model,
+                '--precision', precision,
                 '--comps', str(comp), '--temps'] + [str(t) for t in temps] + \
                ['--grid', str(grid), '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
@@ -498,6 +512,18 @@ def start_run(params):
     log('[{}] === start {} mode | comp={} grid={} eq={} prod={} T={}'
         .format(src, mode, comp, grid, eq, prod, temps))
     log('[gui] out: ' + outdir)
+    try:
+        os.makedirs(outdir, exist_ok=True)
+        import json as _json
+        import time as _time
+        with open(os.path.join(outdir, 'meta.json'), 'w',
+                  encoding='utf-8') as _mf:
+            _json.dump({'started_at': _time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'outdir': outdir,
+                        'form': dict(FORM)}, _mf, ensure_ascii=False,
+                       indent=1)
+    except Exception as _e:
+        log('[gui] meta.json skipped: %s' % _e)
     log('[gui] cmd: ' + ' '.join(os.path.basename(c) for c in cmd[1:2]) +
         ' ' + ' '.join(cmd[2:]))
 
@@ -796,7 +822,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/metrics':
             # system resource snapshot for the header gauges
             # (CPU ~200 ms sample; ThreadingHTTPServer -> no stall)
-            self._json(sysmetrics.sample(cpu_sample_s=0.2))
+            snap = sysmetrics.sample(cpu_sample_s=0.2)
+            try:
+                if isinstance(snap.get('cpu'), dict):
+                    snap['cpu']['cores'] = os.cpu_count()
+            except Exception:
+                pass
+            self._json(snap)
             return
         if path == '/api/form':
             self._json({'form': dict(FORM),
@@ -852,7 +884,16 @@ class Handler(BaseHTTPRequestHandler):
                         if t > best_t:
                             best, best_t = cand, t
                 outdir = best or os.path.join(PROJ, 'results_mace')
-            self._json(collect_results(outdir))
+            payload = collect_results(outdir)
+            payload['outdir'] = outdir
+            try:
+                import json as _json
+                with open(os.path.join(outdir, 'meta.json'), 'r',
+                          encoding='utf-8') as _mf:
+                    payload['meta'] = _json.load(_mf)
+            except Exception:
+                payload['meta'] = None
+            self._json(payload)
             return
         if path == '/api/log':
             # REST tail of the console buffer (MCP reads logs from here)
@@ -991,6 +1032,17 @@ class Handler(BaseHTTPRequestHandler):
                 outdir = os.path.join(PROJ, 'potentials')
             if not os.path.isdir(outdir):
                 os.makedirs(outdir, exist_ok=True)
+            want_file = (body.get('file') or '').strip()
+            if want_file:
+                # "Перейти в результаты": open the exact artefact
+                cand = os.path.join(outdir, os.path.basename(want_file))
+                if os.path.isfile(cand):
+                    try:
+                        os.startfile(cand)  # noqa: S606
+                    except Exception as _e:
+                        log('[gui] open file failed: %s' % _e)
+                else:
+                    log('[gui] file not found: ' + cand)
             log('[gui] open folder: ' + outdir)
             try:
                 if IS_WIN:

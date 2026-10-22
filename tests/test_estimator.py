@@ -50,8 +50,11 @@ def test_estimate_uncalibrated_guess_mace_cuda():
     assert r['steps'] == 2 * 1500
     # guess: 54.4 ms/step * 3000 steps * 1.6 overhead + 2 * 60 s compile
     assert abs(r['seconds'] - (3000 * 54.4 / 1000 * 1.6 + 120)) < 1.0
-    # guess too is topped up: it must never under-report memory
-    assert r['vram_mb'] == round(1360 * est.VRAM_SAFETY, 0)
+    # guess too is topped up: safety margin AND the default precision
+    # (fp16 is the recommended default everywhere)
+    assert r['precision'] == 'fp16'
+    assert r['vram_mb'] == round(
+        1360 * est.VRAM_SAFETY * est.PRECISION_VRAM['fp16'], 0)
     assert r['ram_mb'] == 1850
 
 
@@ -67,8 +70,10 @@ def test_estimate_calibrated_linear_time():
     assert r['ms_step'] == 54.4
     # safety margin on top of the profile: full NPT peaks exceed the
     # simplified calibration cycle (1358 vs 2536 measured) - the estimate
-    # must never UNDER-report memory
-    assert r['vram_mb'] == round(1360 * est.VRAM_SAFETY, 0)
+    # must never UNDER-report memory (profile baseline = autocast runs,
+    # scaled by the selected precision - default fp16)
+    assert r['vram_mb'] == round(
+        1360 * est.VRAM_SAFETY * est.PRECISION_VRAM['fp16'], 0)
     assert r['machine_gpu'] == 'TestGPU 1 GB'
     # interpolation between points
     r2 = est.estimate(prof, 'mace', 'cuda', 3, '300', 0, 1000)  # 108 atoms

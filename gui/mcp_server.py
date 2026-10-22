@@ -50,7 +50,8 @@ TOOLS = [
             'Set GUI form fields. The open GUI updates LIVE: the changed '
             'field pulses blue and the console prints "[agent] key <- value". '
             'Only provided keys change. Keys: mode (mace|lammps), model '
-            '(path from potentials/gpu), device (cuda|cpu), comp (0..1), '
+            '(path from potentials/gpu), device (cuda|cpu), precision '
+            '(fp16 default/recommended, bf16 for Ampere+, fp32), comp (0..1), '
             'grid (int), temps ("300 1200"), eq (int), prod (int), '
             'seed (int, RNG seed of the NPT init).'),
         'inputSchema': {
@@ -59,6 +60,11 @@ TOOLS = [
                 'mode': {'type': 'string', 'enum': ['mace', 'lammps']},
                 'model': {'type': 'string'},
                 'device': {'type': 'string', 'enum': ['cuda', 'cpu']},
+                'precision': {
+                    'type': 'string', 'enum': ['fp16', 'bf16', 'fp32'],
+                    'description': 'compute precision: fp16 (default, '
+                                   'recommended, Turing T4+), bf16 (Ampere+), '
+                                   'fp32 (no autocast)'},
                 'comp': {'type': 'number', 'minimum': 0, 'maximum': 1},
                 'grid': {'type': 'integer', 'minimum': 2, 'maximum': 12},
                 'temps': {'type': 'string',
@@ -101,6 +107,8 @@ TOOLS = [
                 'mode': {'type': 'string', 'enum': ['mace', 'lammps']},
                 'model': {'type': 'string'},
                 'device': {'type': 'string', 'enum': ['cuda', 'cpu']},
+                'precision': {'type': 'string',
+                              'enum': ['fp16', 'bf16', 'fp32']},
                 'comp': {'type': 'number'},
                 'grid': {'type': 'integer'},
                 'temps': {'type': 'string'},
@@ -310,8 +318,8 @@ def require_gui():
 
 
 def form_keys(args):
-    keys = ('mode', 'model', 'device', 'comp', 'grid', 'temps', 'eq', 'prod',
-            'seed')
+    keys = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
+            'eq', 'prod', 'seed')
     return {k: args[k] for k in keys if k in args and args[k] is not None}
 
 

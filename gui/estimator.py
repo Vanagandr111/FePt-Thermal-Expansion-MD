@@ -34,6 +34,11 @@ OVERHEAD_DEFAULT = 1.6
 VRAM_SAFETY = 1.15      # memory estimate never UNDER-reports: the full NPT
                         # peak exceeds the simplified calibration cycle
                         # (measured 2536 vs profiled 1358 MB at 256 atoms)
+# profile points were calibrated under autocast; factors RELATIVE to that
+# baseline for each precision (speed: 94 -> 55 ms/step fp32 -> autocast
+# measured on RTX 3070 Ti; memory: fp32 keeps fp32 activations everywhere)
+PRECISION_VRAM = {'fp16': 0.95, 'bf16': 1.0, 'fp32': 1.6}
+PRECISION_MS = {'fp16': 1.0, 'bf16': 1.0, 'fp32': 1.7}
 
 
 def natoms_of(grid):
@@ -76,7 +81,7 @@ def _profile_points(profile, mode, device):
             and p.get('ms_per_step')]
 
 
-def estimate(profile, mode, device, grid, temps, eq, prod):
+def estimate(profile, mode, device, grid, temps, eq, prod, precision='fp16'):
     """One pre-run estimate dict for the GUI card.
 
     mode: 'mace'|'lammps'; device: 'cuda'|'cpu'; grid: int n;
@@ -85,6 +90,9 @@ def estimate(profile, mode, device, grid, temps, eq, prod):
     profile = profile or {}
     if mode == 'lammps':
         device = 'cpu'          # classic engine has no GPU path here
+    precision = str(precision or 'fp16').lower()
+    if precision not in PRECISION_VRAM:
+        precision = 'fp16'
     n = natoms_of(grid)
     try:
         ntemps = len(str(temps).split())
@@ -100,6 +108,8 @@ def estimate(profile, mode, device, grid, temps, eq, prod):
     ms, ms_ext = interp(pts, n) if pts else (None, False)
     if ms is None:
         ms = guess['ms_per_step']
+    if mode == 'mace' and device == 'cuda':
+        ms *= PRECISION_MS.get(precision, 1.0)
     vram = ram = None
     if calibrated:
         vp = [(p['natoms'], p['vram_mb']) for p in profile.get('points', [])
@@ -112,7 +122,9 @@ def estimate(profile, mode, device, grid, temps, eq, prod):
         ram, _ = interp(rp, n) if rp else (None, False)
     if vram is None:
         vram = guess['vram_mb']
-    vram *= VRAM_SAFETY        # never show less memory than reality
+    # never show less memory than reality: safety margin AND the precision
+    # the run will actually use (fp32 activations cost more than fp16)
+    vram *= VRAM_SAFETY * PRECISION_VRAM.get(precision, 1.0)
     if ram is None:
         ram = guess['rss_mb']
 
@@ -140,6 +152,7 @@ def estimate(profile, mode, device, grid, temps, eq, prod):
         'vram_mb': round(vram, 0),
         'ram_mb': round(ram, 0),
         'confidence': confidence,
+        'precision': precision,
         'overhead': overhead,
         'machine_gpu': (profile.get('machine') or {}).get('gpu'),
         'calibrated_at': profile.get('calibrated_at'),

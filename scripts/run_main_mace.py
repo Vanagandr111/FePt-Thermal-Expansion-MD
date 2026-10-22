@@ -328,7 +328,8 @@ def write_cte_full(parsed_all, comps, temps, out):
     with open(path, 'w', newline='') as f:
         w = _csv.writer(f, delimiter=';')
         w.writerow(['x_Pt', 'a_300K', 'a_maxT', 'dA', 'CTE_fit',
-                    'CTE_chordal', 'CTE_300_1200', 'R2', 'n_points'])
+                    'CTE_chordal', 'CTE_300_1200', 'R2', 'n_points',
+                    'seg_300_600', 'seg_600_900', 'seg_900_1200'])
         for comp in comps:
             pts = [(T, parsed_all[(comp, T)]['a_mean'])
                    for T in temps if (comp, T) in parsed_all
@@ -343,6 +344,14 @@ def write_cte_full(parsed_all, comps, temps, out):
             T_lo, T_hi = rep['T_min'], rep['T_max']
             chord = ((a_hi - a_lo) / (a_lo * (T_hi - T_lo))
                      if T_hi > T_lo else 0.0)
+            # segmental CTE per grid interval: '300-600K' -> seg_300_600
+            segs = dict(zip(rep.get('seg_labels') or [],
+                            rep.get('alpha_segmental') or []))
+
+            def _seg(label):
+                v = segs.get(label)
+                return '{:.6e}'.format(v) if v is not None else ''
+
             w.writerow([
                 '{:.2f}'.format(comp),
                 '{:.6f}'.format(a_lo),
@@ -353,36 +362,45 @@ def write_cte_full(parsed_all, comps, temps, out):
                 '{:.6e}'.format(rep['alpha_2pt']),
                 '{:.6f}'.format(rep['r_squared']),
                 rep['n_points'],
+                _seg('300-600K'),
+                _seg('600-900K'),
+                _seg('900-1200K'),
             ])
     print('  CTE: {}'.format(path))
     return path
 
 
 class FastMACECalculator(MACECalculator):
-    """MACECalculator + torch.compile (triton) + bf16 autocast.
+    """MACECalculator + torch.compile (triton) + autocast (fp16/bf16).
 
     ~1.7x faster per step on consumer GPUs (measured: 94 -> 55 ms/step on
     RTX 3070 Ti, 256 atoms). bf16 outputs are cast back to fp32 before
     mace's numpy conversion (numpy has no bfloat16).
     """
 
-    def __init__(self, *a, compile_mode='default', use_bf16=True, **kw):
+    def __init__(self, *a, compile_mode='default', precision='fp16', **kw):
         kw.setdefault('default_dtype', 'float32')
         kw['compile_mode'] = compile_mode
         super().__init__(*a, **kw)
-        self._use_bf16 = bool(use_bf16) and str(self.device).startswith('cuda')
+        # fp16: recommended default, works on Turing (T4) and newer;
+        # bf16: Ampere+; fp32: no autocast, maximum accuracy
+        cuda = str(self.device).startswith('cuda')
+        self._autocast_dtype = {
+            'fp16': 'float16', 'bf16': 'bfloat16', 'fp32': None,
+        }.get(str(precision).lower(), 'float16') if cuda else None
 
     def calculate(self, *a, **k):
-        if self._use_bf16:
+        if self._autocast_dtype:
             import torch
-            with torch.autocast('cuda', dtype=torch.bfloat16):
+            with torch.autocast('cuda',
+                                dtype=getattr(torch, self._autocast_dtype)):
                 return super().calculate(*a, **k)
         return super().calculate(*a, **k)
 
     def _create_result_tensors(self, num_models, num_atoms, batch, out):
         import torch
         out = {k: (v.float() if torch.is_tensor(v)
-                   and v.dtype == torch.bfloat16 else v)
+                   and v.dtype in (torch.bfloat16, torch.float16) else v)
                for k, v in out.items()}
         with torch.autocast('cuda', enabled=False):
             return super()._create_result_tensors(
@@ -456,7 +474,7 @@ def _install_nl_cache(skin):
     _NL_CACHE['skin'] = float(skin)
 
 
-def _mp_worker(tasks, out_queue, model, device, compile_mode, use_bf16,
+def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                eq_steps, prod_steps, interval, grid, base_seed):
     """Parallel worker: own compiled calculator on the shared GPU."""
     # Windows: spawned workers race on the shared triton cache (Permission
@@ -468,7 +486,7 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, use_bf16,
             os.environ[_ev] = os.path.join(
                 _base, 'pid{}'.format(os.getpid()))
     calc = FastMACECalculator(model_paths=model, device=device,
-                              compile_mode=compile_mode, use_bf16=use_bf16)
+                              compile_mode=compile_mode, precision=precision)
     _print_weights(calc)
     # one cleanup pass before this worker's heavy loop (never per-step)
     import gc
@@ -513,8 +531,13 @@ def main():
                          'ms/step). 0 = off, rebuild every step.')
     ap.add_argument('--out', default=None,
                     help='output directory (default <proj>/results_mace)')
+    ap.add_argument('--precision', default='fp16',
+                    choices=['fp16', 'bf16', 'fp32'],
+                    help='compute/storage precision: fp16 (default, '
+                         'recommended - works on Turing T4+), bf16 '
+                         '(Ampere+), fp32 (no autocast, max accuracy)')
     ap.add_argument('--fp32', action='store_true',
-                    help='disable bf16 autocast (slower on GPU, max accuracy)')
+                    help='legacy alias for --precision fp32')
     ap.add_argument('--no-compile', action='store_true',
                     help='disable torch.compile/triton (slower on GPU)')
     ap.add_argument('--compile-mode', default='default',
@@ -576,12 +599,15 @@ def main():
     print('Model: {}'.format(model))
 
     compile_mode = None
-    use_bf16 = False
+    precision = str(args.precision or 'fp16').lower()
+    if getattr(args, 'fp32', False):
+        precision = 'fp32'          # legacy flag wins
+    if not str(device).startswith('cuda'):
+        precision = 'fp32'          # autocast only makes sense on cuda
     if device.startswith('cuda'):
         compile_mode = None if args.no_compile else args.compile_mode
-        use_bf16 = not args.fp32
-    print('MACE speed mode: compile={} bf16={}'.format(
-        compile_mode or 'off', 'on' if use_bf16 else 'off'))
+    print('MACE speed mode: compile={} precision={}'.format(
+        compile_mode or 'off', precision))
 
     if args.out:
         _OUT = os.path.abspath(args.out)
@@ -606,7 +632,7 @@ def main():
     if workers == 1:
         calc = FastMACECalculator(model_paths=model, device=device,
                                   compile_mode=compile_mode,
-                                  use_bf16=use_bf16)
+                                  precision=precision)
         _print_weights(calc)
         # memory audit baseline: ONE cleanup pass before the heavy loop
         # (never inside the step loop — empty_cache there syncs CPU/GPU
@@ -637,7 +663,7 @@ def main():
         for chunk in chunks:
             p = ctx.Process(
                 target=_mp_worker,
-                args=(chunk, q, model, device, compile_mode, use_bf16,
+                args=(chunk, q, model, device, compile_mode, precision,
                       eq_steps, prod_steps, args.interval, grid, seed))
             p.start()
             procs.append(p)

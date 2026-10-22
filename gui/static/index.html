@@ -197,6 +197,7 @@ button.act.pulse { outline:2px solid var(--acc); }
 <nav>
   <button id="tab-run" class="on" onclick="tab('run')">Расчёт</button>
   <button id="tab-res" onclick="tab('res')">Результаты</button>
+  <button id="tab-prof" onclick="tab('prof')">Машина</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
 </nav>
 <main>
@@ -225,6 +226,16 @@ button.act.pulse { outline:2px solid var(--acc); }
           <option value="cuda">CUDA GPU</option>
           <option value="cpu">CPU (медленно)</option>
         </select>
+      </div>
+      <div id="wrap-precision" style="flex:1;min-width:180px">
+        <label>Точность хранения/расчёта</label>
+        <select id="precision">
+          <option value="fp16" selected>FP16 — рекомендуется</option>
+          <option value="bf16">BF16 — Ampere+ (RTX 30xx)</option>
+          <option value="fp32">FP32 — макс. точность</option>
+        </select>
+        <div class="hint">FP16: вдвое меньше памяти, работает на Turing
+          (T4) и новее. FP32 — автокаст выключен.</div>
       </div>
     </div>
   </div>
@@ -340,8 +351,14 @@ button.act.pulse { outline:2px solid var(--acc); }
   <div class="card">
     <div class="cbar" style="margin:0 0 10px">
       <b>Графики расчёта <span id="res-dir" class="t-dim" style="color:var(--dim)"></span></b>
-      <button class="ghost" onclick="loadResults()">Обновить</button>
+      <div class="row">
+        <button class="ghost" onclick="loadResults()">Обновить</button>
+        <button class="ghost" onclick="openResFolder()">📂 Папка</button>
+        <button class="ghost" onclick="openResFile('all_results.xlsx')">📊 Excel</button>
+        <button class="ghost" onclick="openResFile('all_results.csv')">⬇ CSV</button>
+      </div>
     </div>
+    <div id="res-summary"></div>
     <div id="res-empty" class="status">Нет данных — запустите расчёт или обновите.</div>
     <div id="charts" class="hidden">
       <div class="grid" style="grid-template-columns:1fr">
@@ -363,6 +380,14 @@ button.act.pulse { outline:2px solid var(--acc); }
         <div class="row">
           <button class="ghost tiny" id="st-auto-btn"
                   onclick="toggleStructAuto()">⟳ Вращение</button>
+          <button class="ghost tiny" id="st-therm-btn"
+                  onclick="toggleThermal()">🌡 Термоколебания</button>
+          <input type="range" id="st-therm-t" min="100" max="1200" step="50"
+                 value="900" style="width:90px"
+                 oninput="$('st-therm-k').textContent=this.value+' K';
+                          stThermalT=+this.value;">
+          <span id="st-therm-k"
+                style="font-size:11px;color:var(--dim)">900 K</span>
           <button class="ghost tiny" onclick="loadStructure()">Обновить</button>
         </div>
       </div>
@@ -372,6 +397,23 @@ button.act.pulse { outline:2px solid var(--acc); }
       </div>
       <div class="st-legend" id="st-legend"></div>
     </div>
+  </div>
+</section>
+
+<!-- ======================= MACHINE ======================= -->
+<section id="sec-prof" class="hidden">
+  <div class="card">
+    <div class="cbar" style="margin:0 0 10px">
+      <b>Профиль машины</b>
+      <div class="row">
+        <button class="ghost" onclick="loadProfile()">Обновить</button>
+        <button class="ghost" onclick="tab('run');calibrateEst()">\U0001F52C Откалибровать</button>
+      </div>
+    </div>
+    <div id="prof-cards" class="row" style="flex-wrap:wrap;gap:12px"></div>
+    <b style="font-size:13px">Точки калибровки (мс/\u0448\u0430\u0433 \u0438 VRAM)</b>
+    <div style="overflow-x:auto"><div id="prof-tbl"></div></div>
+    <div id="prof-hint" class="hint"></div>
   </div>
 </section>
 
@@ -458,11 +500,12 @@ const RUNNING_TAGS = ['⏳ идёт…', 'запущен', 'работает'];
 
 /* ---------------- tabs ---------------- */
 function tab(name) {
-  ['run','res','deps'].forEach(t => {
+  ['run','res','prof','deps'].forEach(t => {
     $('tab-' + t).classList.toggle('on', t === name);
     $('sec-' + t).classList.toggle('hidden', t !== name);
   });
   if (name === 'res') { loadResults(); loadStructure(); }
+  if (name === 'prof') loadProfile();
   if (name === 'deps') loadDeps(false);
   if (name === 'run') refreshModels();
 }
@@ -548,6 +591,7 @@ function modeChanged() {
   const m = $('mode').value;
   $('wrap-model').style.display = m === 'mace' ? '' : 'none';
   $('wrap-device').style.display = m === 'mace' ? '' : 'none';
+  $('wrap-precision').style.display = m === 'mace' ? '' : 'none';
   if (m === 'lammps') { $('grid').value = 8; $('eq').value = 2000;
                         $('prod').value = 5000; }
   else { $('grid').value = 4; $('eq').value = 500; $('prod').value = 1000; }
@@ -558,6 +602,7 @@ function modeView() {
   const m = $('mode').value;
   $('wrap-model').style.display = m === 'mace' ? '' : 'none';
   $('wrap-device').style.display = m === 'mace' ? '' : 'none';
+  $('wrap-precision').style.display = m === 'mace' ? '' : 'none';
 }
 function pulse(el) {
   el.classList.remove('pulse');
@@ -569,7 +614,7 @@ function applyState(st) {
   /* Server-side form (possibly edited by the agent via MCP) -> visible UI */
   const f = st && st.form;
   if (!f) return;
-  const ids = ['mode','model','device','comp','grid','temps','eq','prod',
+  const ids = ['mode','model','device','precision','comp','grid','temps','eq','prod',
                'seed'];
   const touched = [];
   for (const k of ids) {
@@ -745,6 +790,7 @@ function collectForm() {
     prod: +$('prod').value,
     model: $('model').value,
     device: $('device').value,
+    precision: $('precision').value,
     seed: +$('seed').value || 42,
   };
 }
@@ -812,6 +858,86 @@ function renderEstimate(e) {
   lastCellMax = e.max_atoms || 0;
   cellHint();
 }
+async function loadProfile() {
+  try {
+    const m = await (await fetch('/api/metrics')).json();
+    const e = await (await fetch('/api/estimate')).json();
+    const lvl = pct => pct === null ? '' : pct > 85 ? 'bad' : pct > 65 ? 'warn' : 'ok';
+    let cards = '';
+    const card = (title, main, sub, pct) => {
+      const l = lvl(pct);
+      return '<div class="card" style="flex:1;min-width:220px;margin:0">' +
+        '<div style="font-size:11px;color:var(--dim)">' + title + '</div>' +
+        '<div style="font-size:18px"><b>' + main + '</b></div>' +
+        '<div style="font-size:12px;color:var(--dim)">' + sub + '</div>' +
+        (pct !== null && pct !== undefined ?
+          '<div class="bar" style="margin-top:8px"><div class="fill ' + l +
+          '" style="width:' + Math.min(100, pct) + '%"></div></div>' : '') +
+        '</div>';
+    };
+    if (m.gpu) {
+      const g = m.gpu;
+      const used = g.vram_used_mb, tot = g.vram_total_mb;
+      const pct = (used !== null && used !== undefined && tot) ?
+        Math.round(used / tot * 100) : null;
+      const gname = (e.machine_gpu || g.name ||
+                     (g.available ? 'GPU' : 'нет данных'));
+      const extra = [];
+      if (pct !== null) extra.push(pct + '% занято');
+      if (g.gpu_util !== null && g.gpu_util !== undefined)
+        extra.push('загрузка ' + Math.round(g.gpu_util) + '%');
+      if (g.temp_c !== null && g.temp_c !== undefined)
+        extra.push(g.temp_c + '\u00b0C');
+      cards += card('GPU \u00b7 ' + gname,
+        (used !== null && used !== undefined && tot) ?
+          (used / 1024).toFixed(1) + ' / ' + (tot / 1024).toFixed(1) + ' GB'
+          : 'n/a',
+        extra.join(' \u00b7 ') || 'недоступно', pct);
+    }
+    if (m.cpu) {
+      const c = m.cpu;
+      cards += card('CPU',
+        (c.percent !== null && c.percent !== undefined ?
+          (+c.percent).toFixed(1) + '%' : 'n/a'),
+        (c.cores ? c.cores + ' лог. ядер' : '') +
+          (c.phys ? ' \u00b7 ' + c.phys + ' физ.' : ''), c.percent);
+    }
+    if (m.ram) {
+      const rr = m.ram;
+      const pct = rr.total_mb ? Math.round(rr.used_mb / rr.total_mb * 100) : null;
+      cards += card('RAM',
+        (rr.used_mb / 1024).toFixed(1) + ' / ' + (rr.total_mb / 1024).toFixed(1) + ' GB',
+        pct + '% занято', pct);
+    }
+    $('prof-cards').innerHTML = cards;
+    const pts = (e.profile && e.profile.points) || [];
+    let rows = '';
+    for (const p of pts)
+      rows += '<tr><td>' + (p.natoms || ('grid ' + p.grid)) + '</td>' +
+        '<td>' + p.ms_per_step + '</td><td>' +
+        (p.vram_mb !== null && p.vram_mb !== undefined ? p.vram_mb : '\u2014') +
+        '</td><td>' +
+        (p.rss_mb !== null && p.rss_mb !== undefined ? p.rss_mb : '\u2014') +
+        '</td><td>' + (p.device || '') + '/' + (p.mode || '') + '</td></tr>';
+    $('prof-tbl').innerHTML = '<table><tr><th>атомов</th><th>мс/шаг</th>' +
+      '<th>VRAM, MB</th><th>RSS, MB</th><th>устройство</th></tr>' + rows + '</table>';
+    $('prof-hint').textContent =
+      'максимум атомов для этой карты: ' +
+      (e.max_atoms !== null && e.max_atoms !== undefined ? e.max_atoms : '—') +
+      ' · уверенность оценки: ' + (e.confidence || '—') +
+      ' · профиль точек: ' + pts.length;
+  } catch (err) { /* server not ready */ }
+}
+function openResFolder() {
+  fetch('/api/open_folder', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: LAST_RES_DIR || undefined})});
+}
+function openResFile(name) {
+  fetch('/api/open_folder', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: LAST_RES_DIR || undefined, file: name})});
+}
 async function calibrateEst() {
   const b = $('btn-calibrate');
   b.disabled = true;
@@ -825,6 +951,8 @@ async function calibrateEst() {
 }
 /* ---------------- structure viewer ---------------- */
 let S = null, stYaw = 0.7, stPitch = -0.4, stZoom = 1.0, stAuto = true;
+let stThermal = false, stThermalT = 900, stTime = 0;
+let LAST_RES_DIR = null;
 let stDrag = null;
 const ST_COL = {Fe: '#d8564f', Pt: '#ded6bc'};
 
@@ -883,6 +1011,13 @@ function drawStructure() {
     const rel = [S.positions[i][0] - ctr[0],
                  S.positions[i][1] - ctr[1],
                  S.positions[i][2] - ctr[2]];
+    if (stThermal) {
+      // thermal motion: per-atom phase, amplitude ~ sqrt(T) (Lindemann)
+      const amp = 0.14 * Math.sqrt(stThermalT / 300);
+      rel[0] += amp * Math.sin(stTime * 1.7 + i * 0.70);
+      rel[1] += amp * Math.sin(stTime * 1.3 + i * 1.90);
+      rel[2] += amp * Math.sin(stTime * 2.1 + i * 3.10);
+    }
     const pr = stProject(rel, cx, cy, scale);
     items.push({x: pr[0], y: pr[1], z: pr[2], t: S.symbols[i]});
   }
@@ -919,6 +1054,11 @@ function drawStructure() {
 function toggleStructAuto() {
   stAuto = !stAuto;
   $('st-auto-btn').style.opacity = stAuto ? '1' : '0.5';
+}
+function toggleThermal() {
+  stThermal = !stThermal;
+  $('st-therm-btn').style.opacity = stThermal ? '1' : '0.5';
+  if (!stThermal) drawStructure();
 }
 async function loadStructure() {
   try {
@@ -1144,6 +1284,8 @@ function renderTable(series) {
 async function loadResults() {
   const r = await (await fetch('/api/results')).json();
   $('res-dir').textContent = r.outdir || '';
+  LAST_RES_DIR = r.outdir || LAST_RES_DIR;
+  renderSummary(r);
   const has = r.series && Object.keys(r.series).length;
   $('res-empty').classList.toggle('hidden', !!has);
   $('charts').classList.toggle('hidden', !has);
@@ -1163,6 +1305,43 @@ async function loadResults() {
     cc.innerHTML = '<div class="status">cte_report.csv не найден.</div>';
   }
   $('tbl').innerHTML = renderTable(r.series);
+}
+function renderSummary(r) {
+  const el = $('res-summary'); if (!el) return;
+  const m = r.meta || {}, f = m.form || {};
+  const cte = (r.cte && r.cte[0]) || null;
+  let h = '<div class="card" style="margin:10px 0">' +
+    '<div class="cbar" style="margin:0 0 8px"><b>Сводка расчёта</b>' +
+    '<span style="color:var(--dim);font-size:11px">' +
+    (m.started_at || '') + '</span></div>' +
+    '<div class="row" style="flex-wrap:wrap;gap:12px">';
+  const cell = (k, v) => '<div style="min-width:105px">' +
+    '<div style="font-size:11px;color:var(--dim)">' + k + '</div>' +
+    '<div><b>' + v + '</b></div></div>';
+  h += cell('Система', (f.elem_a || 'Fe') + '\u2013' + (f.elem_b || 'Pt') +
+            ', x=' + (f.comp !== undefined ? f.comp : 0.5));
+  h += cell('Модель', ((f.model || '').split('\\').pop()) || '\u2014');
+  h += cell('Точность', String(f.precision || 'fp16').toUpperCase());
+  h += cell('Seed', f.seed !== undefined ? f.seed : '\u2014');
+  h += cell('Режим', (f.mode || 'mace') + (f.device ? ' \u00b7 ' + f.device : ''));
+  if (cte) {
+    h += cell('\u03b1 (\u0444\u0438\u0442)', (cte.alpha_fit * 1e6).toFixed(2) +
+              ' \u00b7 10\u207b\u2076 K\u207b\u00b9');
+    if (cte.alpha_chordal !== null && cte.alpha_chordal !== undefined)
+      h += cell('\u03b1 (\u0445\u043e\u0440\u0434.)', (cte.alpha_chordal * 1e6).toFixed(2) +
+                ' \u00b7 10\u207b\u2076 K\u207b\u00b9');
+    const r2 = cte.R2 !== null && cte.R2 !== undefined ? cte.R2 : cte.R_squared;
+    if (r2 !== null && r2 !== undefined)
+      h += cell('R\u00b2', (+r2).toFixed(4));
+    if (cte.seg_300_600 !== null && cte.seg_300_600 !== undefined) {
+      const sg = v => (v === null || v === undefined) ? '\u2014'
+        : (+v * 1e6).toFixed(2) + ' \u00b7 10\u207b\u2076';
+      h += cell('300\u2013600 K', sg(cte.seg_300_600));
+      h += cell('600\u2013900 K', sg(cte.seg_600_900));
+      h += cell('900\u20131200 K', sg(cte.seg_900_1200));
+    }
+  }
+  el.innerHTML = h + '</div></div>';
 }
 
 /* ---------------- deps ---------------- */
@@ -1448,7 +1627,10 @@ updateEstimate();
 stInit();
 loadStructure();
 (function stAnimate() {
-  if (stAuto && S) drawStructure();
+  if ((stAuto || stThermal) && S) {
+    stTime += 0.06;
+    drawStructure();
+  }
   requestAnimationFrame(stAnimate);
 })();
 </script>
