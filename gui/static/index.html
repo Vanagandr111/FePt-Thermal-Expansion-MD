@@ -232,7 +232,11 @@ button.act.pulse { outline:2px solid var(--acc); }
 <body>
 <header>
   <h1>FePt Thermal Expansion</h1>
-  <span class="ver">MD GUI · v1.8-dev</span>
+  <span class="ver" id="hdr-ver">MD GUI</span>
+  <select id="lang-sel" title="Язык интерфейса (по умолчанию — русский)"
+          style="background:transparent;color:inherit;border:1px solid #40444e;
+                 border-radius:8px;font-size:12px;padding:3px 6px;cursor:pointer"
+          onchange="setLang(this.value)"></select>
   <span class="hstatus" id="hdr-status"
         title="Сводка: зависимости, ошибки расчёта, наличие обновления"
         onclick="tab('about')">status: …</span>
@@ -978,6 +982,7 @@ document.querySelectorAll('input[type=range]').forEach(el => {
 /* ---------------- element modal: live atom hint ---------------- */
 let _symT = 0;
 document.addEventListener('DOMContentLoaded', () => {
+  loadLang();
   const el = document.getElementById('em-symbol');
   if (el) el.addEventListener('input', () => {
     clearTimeout(_symT);
@@ -1041,6 +1046,8 @@ async function pollStatus() {
     el.textContent = 'status: ' + j.level;
     el.className = 'hstatus s-' + j.level;
     el.title = j.checks.join('; ');
+    const hv = $('hdr-ver');
+    if (hv) hv.textContent = 'MD GUI · v' + j.version;
     $('ab-version').textContent = 'версия v' + j.version +
       (j.latest ? ' (GitHub: v' + j.latest + ')' : '');
     $('ab-status-list').innerHTML = j.checks.map(c =>
@@ -1050,6 +1057,28 @@ async function pollStatus() {
 }
 setInterval(pollStatus, 60000);
 pollStatus();
+
+/* language selector: only shipped locales come from the server;
+   Russian is the default and the only one available today */
+async function loadLang() {
+  try {
+    const j = await (await fetch('/api/lang')).json();
+    const sel = $('lang-sel');
+    if (!sel) return;
+    sel.innerHTML = (j.langs || []).map(l =>
+      '<option value="' + l.code + '"' +
+      (l.code === j.lang ? ' selected' : '') + '>' + l.label + '</option>'
+    ).join('');
+  } catch (e) { /* server restarting */ }
+}
+async function setLang(code) {
+  try {
+    const j = await (await fetch('/api/lang', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({lang: code})})).json();
+    if (!j.ok) { loadLang(); alert('Язык недоступен: ' + code); }
+  } catch (e) { alert('Не удалось сохранить язык: ' + e); }
+}
 
 async function doUpdate() {
   const box = $('up-status');

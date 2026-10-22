@@ -1015,7 +1015,37 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.9.0'
+APP_VERSION = '1.9.1'
+
+# UI languages. Russian is the default AND the only one shipped today;
+# the selector reads this table, so adding a locale is one tuple.
+LANGS = [('ru', 'Русский')]
+LANG_PATH = os.path.join(PROJ, '.ui_lang')
+
+
+def get_lang():
+    """Persisted UI language code, defaulting to the current one."""
+    try:
+        with open(LANG_PATH, encoding='utf-8') as f:
+            code = f.read().strip()
+        if code in {c for c, _ in LANGS}:
+            return code
+    except OSError:
+        pass
+    return LANGS[0][0]
+
+
+def set_lang(code):
+    """Persist the chosen language; False when the code is unknown."""
+    if code not in {c for c, _ in LANGS}:
+        return False
+    try:
+        with open(LANG_PATH, 'w', encoding='utf-8') as f:
+            f.write(str(code))
+    except OSError as e:
+        log('[gui] cannot save language: ' + str(e))
+        return False
+    return True
 UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
                 'err': None}
 UPDATE_TTL = 6 * 3600.0
@@ -1111,7 +1141,7 @@ def status_summary():
     return {'level': level, 'text': 'status: ' + level,
             'version': APP_VERSION, 'latest': latest,
             'update_available': bool(newer), 'checks': checks,
-            'frozen': FROZEN}
+            'frozen': FROZEN, 'lang': get_lang()}
 
 
 def build_update_bat(self_pid, new_exe, cur_exe):
@@ -1512,6 +1542,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/status_summary':
             self._json(status_summary())
             return
+        if path == '/api/lang':
+            # current UI language + the table of available ones
+            self._json({'lang': get_lang(),
+                        'langs': [{'code': c, 'label': l}
+                                  for (c, l) in LANGS]})
+            return
         if path == '/api/update':
             if self.command != 'POST':
                 self._json(status_summary())
@@ -1718,6 +1754,14 @@ class Handler(BaseHTTPRequestHandler):
         body = self._read_body()
         if path == '/api/run':
             self._json(start_run(body))
+            return
+        if path == '/api/lang':
+            # persist the chosen language (only shipped locales accepted)
+            code = body.get('lang')
+            ok = set_lang(code)
+            self._json({'ok': ok, 'lang': get_lang(),
+                        'error': None if ok else 'unknown language: ' +
+                                 repr(code)})
             return
         if path == '/api/update':
             try:
