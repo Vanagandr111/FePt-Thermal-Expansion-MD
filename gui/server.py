@@ -876,8 +876,9 @@ def run_self_update():
         f.write(build_update_bat(os.getpid(), new_exe, cur))
     log('[gui] update v{} -> v{} staged ({} bytes); restarting '
         'via {}'.format(APP_VERSION, latest, size, bat))
+    # .bat only starts via cmd.exe on Windows
     threading.Timer(2.0, lambda: subprocess.Popen(
-        [bat], cwd=upd_dir, creationflags=NOWIN,
+        ['cmd', '/c', bat], cwd=upd_dir, creationflags=NOWIN,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)).start()
     return {'ok': True, 'action': 'restart-pending',
             'version': APP_VERSION, 'latest': latest, 'size': size}
