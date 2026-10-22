@@ -90,3 +90,4 @@ _dlltest/
 
 # machine-specific estimator calibration (per-GPU, regenerate locally)
 data/estim_profile.json
+memwatch*.csv

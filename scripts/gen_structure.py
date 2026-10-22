@@ -139,6 +139,9 @@ if __name__ == '__main__':
     # sidefx: io
     # purity: impure
     # errors: exits 1 on bad args
+    if len(sys.argv) == 2 and sys.argv[1] in ('--help', '-h'):
+        print("Usage: python gen_structure.py nx ny nz comp_pt outfile [lc_A]")
+        sys.exit(0)
     if len(sys.argv) not in (6, 7):
         print("Usage: python gen_structure.py nx ny nz comp_pt outfile [lc_A]")
         sys.exit(1)
