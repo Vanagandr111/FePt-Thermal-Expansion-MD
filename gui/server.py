@@ -741,7 +741,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.8.2'
+APP_VERSION = '1.8.3'
 UPDATE_CACHE = {'checked_at': 0.0, 'latest': None, 'asset': None,
                 'err': None}
 UPDATE_TTL = 6 * 3600.0
