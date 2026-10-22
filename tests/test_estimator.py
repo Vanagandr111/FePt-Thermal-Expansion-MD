@@ -50,7 +50,8 @@ def test_estimate_uncalibrated_guess_mace_cuda():
     assert r['steps'] == 2 * 1500
     # guess: 54.4 ms/step * 3000 steps * 1.6 overhead + 2 * 60 s compile
     assert abs(r['seconds'] - (3000 * 54.4 / 1000 * 1.6 + 120)) < 1.0
-    assert r['vram_mb'] == 1360
+    # guess too is topped up: it must never under-report memory
+    assert r['vram_mb'] == round(1360 * est.VRAM_SAFETY, 0)
     assert r['ram_mb'] == 1850
 
 
@@ -64,7 +65,10 @@ def test_estimate_calibrated_linear_time():
     r = est.estimate(prof, 'mace', 'cuda', 4, '300', 0, 1000)
     assert r['confidence'] == 'calibrated'
     assert r['ms_step'] == 54.4
-    assert r['vram_mb'] == 1360
+    # safety margin on top of the profile: full NPT peaks exceed the
+    # simplified calibration cycle (1358 vs 2536 measured) - the estimate
+    # must never UNDER-report memory
+    assert r['vram_mb'] == round(1360 * est.VRAM_SAFETY, 0)
     assert r['machine_gpu'] == 'TestGPU 1 GB'
     # interpolation between points
     r2 = est.estimate(prof, 'mace', 'cuda', 3, '300', 0, 1000)  # 108 atoms
@@ -151,6 +155,23 @@ def test_max_atoms_only_for_gpu_mace():
                                   mode='lammps') is None
     assert est.max_atoms_for_vram(_vprof(_LINEAR_PTS), 8192,
                                   device='cpu') is None
+
+
+def test_max_atoms_uses_steepest_recent_segment():
+    # VRAM grows nonlinearly (390 -> 584 -> 2536): the least-squares fit
+    # would UNDER-report the steep tail and OVER-report the atom budget.
+    # Conservative rule: invert on the LAST (steepest-capable) segment.
+    pts = [{'natoms': 32, 'vram_mb': 390.0},
+           {'natoms': 108, 'vram_mb': 584.0},
+           {'natoms': 256, 'vram_mb': 2536.0}]
+    got = est.max_atoms_for_vram(_vprof(pts), total_mb=8192)
+    # last segment: slope (2536-584)/148 = 13.19 MB/atom
+    slope = (2536.0 - 584.0) / (256 - 108)
+    intercept = 584.0 - slope * 108
+    expect = int((8192 * 0.9 - intercept) // slope)
+    assert got == expect
+    # ...and it must be FAR below the naive full-fit answer (~748)
+    assert got < 700
 
 
 def test_max_atoms_budget_never_overruns_card():

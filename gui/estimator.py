@@ -28,8 +28,12 @@ GUESS = {
     },
 }
 COMPILE_S = 60.0        # torch.compile one-time cost on cuda (real: ~53 s)
-OVERHEAD_DEFAULT = 1.6  # wall / production window (relax+io+parse; from the
-                        # real control run 646 s wall vs 381 s production)
+# wall / production window (relax+io+parse; real control run: 646 s wall
+# vs 381 s production)
+OVERHEAD_DEFAULT = 1.6
+VRAM_SAFETY = 1.15      # memory estimate never UNDER-reports: the full NPT
+                        # peak exceeds the simplified calibration cycle
+                        # (measured 2536 vs profiled 1358 MB at 256 atoms)
 
 
 def natoms_of(grid):
@@ -108,6 +112,7 @@ def estimate(profile, mode, device, grid, temps, eq, prod):
         ram, _ = interp(rp, n) if rp else (None, False)
     if vram is None:
         vram = guess['vram_mb']
+    vram *= VRAM_SAFETY        # never show less memory than reality
     if ram is None:
         ram = guess['rss_mb']
 
@@ -176,17 +181,16 @@ def max_atoms_for_vram(profile, total_mb, mode='mace', device='cuda',
            and p.get('vram_mb') is not None]
     if len(pts) < 2:
         return None
-    ns = [p[0] for p in pts]
-    vs = [p[1] for p in pts]
-    nmean = sum(ns) / len(ns)
-    vmean = sum(vs) / len(vs)
-    den = sum((x - nmean) ** 2 for x in ns)
-    if den <= 0:
-        return None
-    slope = sum((x - nmean) * (v - vmean) for x, v in pts) / den
+    pts.sort(key=lambda x: x[0])
+    # vram(natoms) is NOT linear (full NPT tail steepens: 584 -> 2536 for
+    # 108 -> 256 atoms); a global fit would under-report the steep tail and
+    # over-report the budget. Invert on the LAST segment instead - the
+    # most recent measured slope, conservative by construction.
+    (n0, v0), (n1, v1) = pts[-2], pts[-1]
+    slope = (v1 - v0) / (n1 - n0) if n1 > n0 else 0.0
     if slope <= 0:
         return None
-    budget = float(total_mb) * float(use_fraction) - (vmean - slope * nmean)
+    budget = float(total_mb) * float(use_fraction) - (v0 - slope * n0)
     if budget <= 0:
         return None
     return int(budget // slope)
