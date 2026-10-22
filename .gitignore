@@ -73,7 +73,8 @@ dist/
 build-gui/
 build-gui2/
 build*/
-*.spec
+# *.spec kept ignored EXCEPT our real build spec
+!FePt-GUI.spec
 FePt-GUI*.exe
 buildtools-venv/
 # GUI run results (results_mace_* / results_lammps_*)
