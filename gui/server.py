@@ -750,31 +750,58 @@ def install_lib(name):
         dl_end('pip install завершён: ' + spec[0])
 
 
-def download_url(url, dest, label):
-    """Stream-download with progress into the console log."""
+def download_url(url, dest, label, attempts=4):
+    """Stream-download with progress into the console log.
+
+    Failure-safety: DL['active'] is ALWAYS released (a WinError 10054
+    reset used to leave it True forever, so every later download click
+    answered 'another transfer is already active' until a restart), and
+    transient connection resets are retried before giving up.
+    """
     log('[gui] download {} <- {}'.format(label, url))
     tmp = dest + '.part'
-    req = urllib.request.Request(url, headers={'User-Agent': 'fept-gui'})
-    done = 0
-    dl_begin(label)
-    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as w:
-        total = int(r.headers.get('Content-Length') or 0)
-        DL['total'] = total
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            w.write(chunk)
-            done += len(chunk)
-            DL['have'] = done
-            if total and done % (50 << 20) < (1 << 20):
-                log('[gui]   {:.0f} / {:.0f} MB'.format(done / 1e6,
-                                                         total / 1e6))
-    os.replace(tmp, dest)
-    size = os.path.getsize(dest)
-    log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
-    dl_end('сохранён: ' + os.path.basename(dest))
-    return dest
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(
+                url, headers={'User-Agent': 'fept-gui/1.8'})
+            done = 0
+            dl_begin(label)
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r, \
+                        open(tmp, 'wb') as w:
+                    total = int(r.headers.get('Content-Length') or 0)
+                    DL['total'] = total
+                    while True:
+                        chunk = r.read(1 << 20)
+                        if not chunk:
+                            break
+                        w.write(chunk)
+                        done += len(chunk)
+                        DL['have'] = done
+                        if total and done % (50 << 20) < (1 << 20):
+                            log('[gui]   {:.0f} / {:.0f} MB'.format(
+                                done / 1e6, total / 1e6))
+            finally:
+                DL['active'] = False
+            os.replace(tmp, dest)
+            size = os.path.getsize(dest)
+            log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
+            dl_end('сохранён: ' + os.path.basename(dest))
+            return dest
+        except Exception as e:
+            last_err = e
+            DL['active'] = False
+            if attempt < attempts:
+                log('[gui] download attempt {}/{} failed ({}), '
+                    'retrying...'.format(attempt, attempts, e))
+                time.sleep(3)
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    dl_end('ошибка загрузки: ' + str(last_err))
+    raise last_err
 
 
 def download_lammps():
