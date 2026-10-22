@@ -53,3 +53,31 @@ def test_server_collect_results_exposes_segments():
             assert cte[k] > 0
         # overall fit still present
         assert cte['alpha_fit'] is not None
+
+
+def test_facet_segments_on_dense_grid():
+    """7-point sweeps fill the 300-600/600-900/900-1200 columns.
+
+    Adjacent-pair labels (300-450K, ...) never match the CSV lookups;
+    facet_seg bridges the canonical grid nodes instead.
+    """
+    import lmp_helper
+    pts = [(300, 3.993), (450, 4.001), (600, 4.006), (750, 4.016),
+           (900, 4.024), (1050, 4.030), (1200, 4.038)]
+    rep = lmp_helper.calc_cte_report(pts)
+    f = rep['facet_seg']
+    assert set(f) == {'300-600K', '600-900K', '900-1200K'}
+    # each facet CTE is close to the chord over its node pair
+    for lo, hi in ((300, 600), (600, 900), (900, 1200)):
+        a_lo = pts[[p[0] for p in pts].index(lo)][1]
+        a_hi = pts[[p[0] for p in pts].index(hi)][1]
+        chord = (a_hi - a_lo) / a_lo / (hi - lo)
+        assert abs(f['%d-%dK' % (lo, hi)] - chord) < 3e-6, (lo, hi)
+
+
+def test_facet_segments_respect_sweep_span():
+    """A sweep that stops at 600 K does not fabricate 600-900/900-1200."""
+    import lmp_helper
+    rep = lmp_helper.calc_cte_report(
+        [(300, 3.993), (400, 4.000), (500, 4.004), (600, 4.006)])
+    assert set(rep['facet_seg']) == {'300-600K'}

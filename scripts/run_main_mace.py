@@ -347,6 +347,9 @@ def write_cte_full(parsed_all, comps, temps, out):
             # segmental CTE per grid interval: '300-600K' -> seg_300_600
             segs = dict(zip(rep.get('seg_labels') or [],
                             rep.get('alpha_segmental') or []))
+            # grid-node intervals win over adjacent-pair labels (dense
+            # temperature grids never match the bare 300-600K lookups)
+            segs.update(rep.get('facet_seg') or {})
 
             def _seg(label):
                 v = segs.get(label)

@@ -950,8 +950,27 @@ def calc_cte_report(a_vals):
             alphas_seg.append(a_seg)
             seg_labels.append('{}-{}K'.format(ts[i], ts[i + 1]))
 
-    # 4. Uncertainty range
-    all_alphas = [alpha_2pt, alpha_fit] + alphas_seg
+    # 4. Facet-interval CTE between the canonical grid nodes
+    # (300/600/900/1200 K). The adjacent-pair labels above never match
+    # '300-600K' lookups on dense grids (7-point sweeps give
+    # '300-450K', ...), which is why the CSV segment columns came out
+    # empty - fit every grid interval that the sweep spans.
+    nodes = (300, 600, 900, 1200)
+    facet_seg = {}
+    for lo, hi in zip(nodes, nodes[1:]):
+        if ts[0] > lo or ts[-1] < hi:
+            continue
+        inner = [(t, a) for t, a in zip(ts, avs) if lo <= t <= hi]
+        if len(inner) < 2:
+            continue
+        tt = [x[0] for x in inner]
+        aa = [x[1] for x in inner]
+        sl, _ic, _r2f = _linear_fit(tt, aa)
+        facet_seg['{}-{}K'.format(lo, hi)] = sl / aa[0]
+
+    # 5. Uncertainty range
+    all_alphas = [alpha_2pt, alpha_fit] + alphas_seg + \
+        list(facet_seg.values())
     alpha_min = min(all_alphas)
     alpha_max = max(all_alphas)
 
@@ -968,6 +987,8 @@ def calc_cte_report(a_vals):
         'r_squared': r_sq,
         'alpha_segmental': alphas_seg,
         'seg_labels': seg_labels,
+        # grid-node interval CTEs (300-600K / 600-900K / 900-1200K)
+        'facet_seg': facet_seg,
         'alpha_min': alpha_min,
         'alpha_max': alpha_max,
         'alpha_range': alpha_max - alpha_min,
