@@ -32,6 +32,8 @@ input[type=range] { padding:0; }
   font-size:13px; font-variant-numeric:tabular-nums; color:var(--dim); }
 .comp-calc b { font-weight:600; }
 .comp-calc .cc-sep { opacity:.4; }
+.comp-calc .cc-arrow { opacity:.55; }
+.comp-calc .cc-alloy { font-weight:600; color:var(--acc); }
 .comp-calc .cc-sum { margin-left:auto; opacity:.8; color:var(--acc); }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
 button.act { background:var(--acc); color:#082f49; border:0; border-radius:8px;
@@ -466,6 +468,26 @@ function tab(name) {
 }
 
 /* ---------------- run form ---------------- */
+function alloyFormula(a, b, x) {
+  x = +x;
+  if (!(x >= 0)) x = 0;
+  if (x > 1) x = 1;
+  if (x <= 0) return a || null;
+  if (x >= 1) return b || null;
+  const gcd = (p, q) => { while (q) { const t = p % q; p = q; q = t; } return p; };
+  const toSub = n => String(n).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[+d]).join('');
+  for (const k of [1, 2, 4, 5, 10, 20]) {
+    const nA0 = (1 - x) * k, nB0 = x * k;
+    if (Math.abs(nA0 - Math.round(nA0)) > 1e-9) continue;
+    if (Math.abs(nB0 - Math.round(nB0)) > 1e-9) continue;
+    let nA = Math.round(nA0), nB = Math.round(nB0);
+    if (nA + nB === 0) return a || null;
+    const g = gcd(nA, nB) || 1;
+    nA /= g; nB /= g;
+    return (nA > 1 ? a + toSub(nA) : a) + (nB > 1 ? b + toSub(nB) : b);
+  }
+  return null;                      /* not a simple stoichiometry */
+}
 function compOut() {
   $('compval').textContent = (+$('comp').value).toFixed(2);
   updateCompCalc();
@@ -477,12 +499,17 @@ function updateCompCalc() {
   const cb = (typeof ST_COL !== 'undefined' && ST_COL[b]) ? ST_COL[b] : '#e8c98a';
   const el = $('compcalc');
   if (el) {
+    const formula = alloyFormula(a, b, x);
     el.innerHTML =
       '<span class="cc"><b style="color:' + ca + '">' + a + '</b> ' +
       (1 - x).toFixed(2) + '</span>' +
       '<span class="cc-sep">·</span>' +
       '<span class="cc"><b style="color:' + cb + '">' + b + '</b> ' +
       x.toFixed(2) + '</span>' +
+      (formula
+        ? '<span class="cc-arrow">→</span>' +
+          '<span class="cc-alloy">' + formula + '</span>'
+        : '') +
       '<span class="cc-sum">Σ ' + (((1 - x) + x)).toFixed(2) + '</span>';
   }
   const bn = $('compbname');
