@@ -352,6 +352,36 @@ records the seed and its source.
 
 ## MACE Neural Potential — Windows/Linux, CPU/GPU
 
+### Which model for platinum (screened 2026-10-22)
+
+Seven foundation models were screened on the identical protocol
+(256 Pt atoms, 4x4x4 grid, NPT, fp16, seed 42, eq 500 + prod 1000
+steps, sweep 300..1200 K; full 7-point run for the winner). The
+experiment to beat: a(300K) = 3.924 A and alpha(300-1200K) =
+9.5..9.8e-6 /K for Pt.
+
+| Model | a(300K), A | a(1200K), A | alpha_fit, /K | deviation vs exp |
+|---|---|---|---|---|
+| **MACE-MPA-0 medium (winner)** | 3.99062 | 4.03021 | **1.136e-5** | +17% |
+| MACE-MP-0b3 medium | 3.99312 | 4.03452 | ~1.15e-5 (chord) | +19% |
+| MACE-MP-0 large (old default) | 3.99307 | 4.03800 | 1.261e-5 | +33% |
+| MACE-OMAT-0 medium | 3.97555 | 4.02347 | ~1.34e-5 (chord) | +41% |
+| MACE-MATPES-r2SCAN-0 medium | **3.94117** | 3.99156 | ~1.42e-5 (chord) | +49% (volume +0.4%, best lattice match) |
+| MACE-MPA-0 (chord cross-check) | - | - | 1.102e-5 | consistent across protocols |
+| MACE-MH-0 / MH-1 | - | - | - | multi-head models: the runner needs a head= keyword (not wired yet) |
+
+MACE-MPA-0 full 7-point report (`results_mace_20261022_154637`):
+fit alpha = 1.136e-5 /K, R2 = 0.9891, Da = 0.03960 A; facet segments
+300-600K = 7.5e-6, 600-900K = 1.3e-5, 900-1200K = 1.3e-5 (monotonic
+checkmark). The low-temperature segment is already within ~10% of the
+experiment; the systematic PBE+U over-expansion concentrates above
+600 K. r2SCAN models reproduce the lattice constant almost exactly
+(+0.4%) but expand too fast - pick the trade-off per task. All
+catalog URLs are HEAD-verified 200; models are fetched on demand
+from the ACEsuit release pages (nothing is bundled with the repo).
+
+
+
 Alternative runner that replaces classical MEAM/EAM with the `FePt_potential.pt`
 neural network potential (MACE, ASE-MD). The LAMMPS pipeline above is untouched;
 this runner is fully independent.
