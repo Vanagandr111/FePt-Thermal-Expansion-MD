@@ -98,10 +98,10 @@ MODEL_URLS = {
     # MACE-MP-0b (2nd generation: core repulsion, stable MD)
     'mace-mp-0b-small.model':
         'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b/mace-mp-0b-small.model',
+        'mace_mp_0b/mace_agnesi_small.model',
     'mace-mp-0b-medium.model':
         'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b/mace-mp-0b-medium.model',
+        'mace_mp_0b/mace_agnesi_medium.model',
     # MACE-MP-0b2 (high-pressure stability)
     'mace-mp-0b2-small.model':
         'https://github.com/ACEsuit/mace-mp/releases/download/'
@@ -110,16 +110,16 @@ MODEL_URLS = {
         'https://github.com/ACEsuit/mace-mp/releases/download/'
         'mace_mp_0b2/mace-medium-density-agnesi-stress.model',
     'mace-large-0b2.model':
-        'https://github.com/ACEsuit/mace-v0b2/releases/download/'
-        '2025-04-24/mace-large-0b2.model',
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b2/mace-large-density-agnesi-stress.model',
     # MACE-MP-0b3 (fixed phonons vs b2)
     'mace-mp-0b3-medium.model':
-        'https://github.com/ACEsuit/mace-v0b3/releases/download/'
-        '0.3.0/mace-mp-0b3-medium.model',
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mp_0b3/mace-mp-0b3-medium.model',
     # MACE-MPA-0 (MPTrj + sAlex, SOTA Matbench)
     'mace-mpa-0-medium.model':
-        'https://github.com/ACEsuit/mace-mpa/releases/download/'
-        'mace-mpa-0/mace-mpa-0-medium.model',
+        'https://github.com/ACEsuit/mace-mp/releases/download/'
+        'mace_mpa_0/mace-mpa-0-medium.model',
     # MACE-OMAT-0 (excellent phonons)
     'mace-omat-0-medium.model':
         'https://github.com/ACEsuit/mace-mp/releases/download/'

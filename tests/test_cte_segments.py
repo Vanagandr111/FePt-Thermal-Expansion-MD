@@ -81,3 +81,38 @@ def test_facet_segments_respect_sweep_span():
     rep = lmp_helper.calc_cte_report(
         [(300, 3.993), (400, 4.000), (500, 4.004), (600, 4.006)])
     assert set(rep['facet_seg']) == {'300-600K'}
+
+
+def test_print_trends_judges_against_the_plan(capsys):
+    """No hardcoded "/4": a complete 2-point run is a success.
+
+    The old code printed "INCOMPLETE (2/4)" for a perfectly finished
+    2-temperature plan and "INCOMPLETE (1/4)" when the plan itself was
+    one point - both read like failures in the console.
+    """
+    import lmp_helper
+
+    def _pt(T, a):
+        return {'a_mean': a, 'a_std': 0.0, 'a_min': a, 'a_max': a}
+
+    # 1) full 2-point plan -> success, no INCOMPLETE anywhere
+    parsed = {(1.0, 300): _pt(300, 3.993), (1.0, 1200): _pt(1200, 4.038)}
+    lmp_helper.print_trends(parsed, [1.0], [300, 1200], seed=42)
+    out = capsys.readouterr().out
+    assert 'INCOMPLETE' not in out
+    assert 'a300=3.993000' in out and 'a1200=4.038000' in out
+    assert 'a_fit=' in out and 'R2=' in out
+
+    # 2) plan of 4, only one delivered -> honest count + missing list
+    parsed = {(1.0, 300): _pt(300, 3.993)}
+    lmp_helper.print_trends(parsed, [1.0], [300, 600, 900, 1200])
+    out = capsys.readouterr().out
+    assert 'INCOMPLETE (1/4)' in out
+    assert 'missing T=[600, 900, 1200]' in out
+
+    # 3) plan of 1, delivered -> not a failure
+    parsed = {(1.0, 300): _pt(300, 3.993)}
+    lmp_helper.print_trends(parsed, [1.0], [300])
+    out = capsys.readouterr().out
+    assert 'INCOMPLETE' not in out
+    assert 'single planned point' in out

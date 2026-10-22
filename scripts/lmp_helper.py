@@ -725,8 +725,16 @@ def write_protocol_log(out, script_name, eq_steps, prod_steps, tdamp, pdamp,
 # sidefx: io (stdout)
 # purity: impure
 def print_trends(parsed_all, comps, temps, seed=None):
-    """Print a(T) trends per composition."""
+    """Print a(T) trends per composition.
+
+    Completion is judged against the PLANNED temperature list, never a
+    hardcoded 4: a 2-point run that delivered both points is a SUCCESS
+    (it used to print "INCOMPLETE (2/4)" - and a 1-point plan printed
+    "INCOMPLETE (1/4)" even when everything the user asked for was
+    computed, which reads like a failure).
+    """
     seed_str = ' (seed={})'.format(seed) if seed else ''
+    n_plan = len(temps)
     print('\n' + '=' * 60)
     print('TRENDS: a(T) per composition{}'.format(seed_str))
     print('=' * 60)
@@ -736,24 +744,42 @@ def print_trends(parsed_all, comps, temps, seed=None):
             p = parsed_all.get((comp, T), {})
             if p and p.get('a_mean') is not None:
                 a_vals.append((T, p['a_mean']))
-        if len(a_vals) == 4:
+        if len(a_vals) == n_plan and n_plan >= 2:
             vals = [v[1] for v in a_vals]
-            rise = vals[3] - vals[0]
-            mono = all(vals[i + 1] >= vals[i] for i in range(3))
-            alpha_eff = rise / vals[0] / 900
+            t_lo, t_hi = a_vals[0][0], a_vals[-1][0]
+            rise = vals[-1] - vals[0]
+            mono = all(vals[i + 1] >= vals[i] for i in range(len(vals) - 1))
+            alpha_eff = rise / vals[0] / (t_hi - t_lo) if t_hi > t_lo else 0.0
             _cte = calc_cte_report(a_vals)
             if _cte:
-                seg_str = '[{:.1e},{:.1e},{:.1e}]'.format(*_cte['alpha_segmental']) if len(_cte['alpha_segmental']) == 3 else ''
-                print('  x_Pt={:.2f}: a300={:.6f} a1200={:.6f} Da={:.6f}A a2pt={:.3e} a_fit={:.3e} R2={:.4f}'.format(
-                    comp, vals[0], vals[3], rise, alpha_eff, _cte['alpha_fit'], _cte['r_squared']))
-                print('           seg: {} range={:.1e} (min={:.3e} max={:.3e}) {}'.format(
-                    seg_str, _cte['alpha_range'], _cte['alpha_min'], _cte['alpha_max'],
-                    '\u2713' if mono else '\u2717'))
+                seg_map = _cte.get('facet_seg') or dict(
+                    zip(_cte['seg_labels'], _cte['alpha_segmental']))
+                seg_str = '[' + ','.join(
+                    '{:.1e}'.format(v) for v in seg_map.values()) + ']'
+                print('  x_Pt={:.2f}: a{:.0f}={:.6f} a{:.0f}={:.6f} '
+                      'Da={:.6f}A a2pt={:.3e} a_fit={:.3e} R2={:.4f}'.format(
+                          comp, t_lo, vals[0], t_hi, vals[-1], rise,
+                          alpha_eff, _cte['alpha_fit'], _cte['r_squared']))
+                print('           seg: {} range={:.1e} (min={:.3e} '
+                      'max={:.3e}) {}'.format(
+                          seg_str, _cte['alpha_range'], _cte['alpha_min'],
+                          _cte['alpha_max'],
+                          '\u2713' if mono else '\u2717'))
             else:
-                print('  x_Pt={:.2f}: a300={:.6f} a1200={:.6f} Da={:.6f}A a_eff={:.3e} {}'.format(
-                    comp, vals[0], vals[3], rise, alpha_eff, '\u2713' if mono else '\u2717'))
+                print('  x_Pt={:.2f}: a{:.0f}={:.6f} a{:.0f}={:.6f} '
+                      'Da={:.6f}A a_eff={:.3e} {}'.format(
+                          comp, t_lo, vals[0], t_hi, vals[-1], rise,
+                          alpha_eff, '\u2713' if mono else '\u2717'))
+        elif len(a_vals) == n_plan and a_vals:
+            print('  x_Pt={:.2f}: a{:.0f}={:.6f} (single planned point, '
+                  'no CTE)'.format(comp, a_vals[0][0], a_vals[0][1]))
         else:
-            print('  x_Pt={:.2f}: INCOMPLETE ({}/4)'.format(comp, len(a_vals)))
+            missing = [T for T in temps
+                       if not (parsed_all.get((comp, T), {})
+                               .get('a_mean') is not None)]
+            print('  x_Pt={:.2f}: INCOMPLETE ({}/{}) missing T={}'.format(
+                comp, len(a_vals), n_plan, missing))
+
 
 
 # ── Integrity check ─────────────────────────────────────────
