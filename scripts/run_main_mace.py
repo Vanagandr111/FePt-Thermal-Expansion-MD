@@ -71,11 +71,23 @@ try:
 except Exception:
     pass
 
+# third-party DeprecationWarnings (torch.jit on py3.14, ASE renames) leak
+# into the GUI console on every run - keep OUR messages, silence THEIR noise
+import warnings as _warnings                       # noqa: E402
+_warnings.filterwarnings("ignore", category=DeprecationWarning,
+                         module=r"torch(\.|$)")
+
 import ase.units as units                     # noqa: E402
 from ase import Atoms                         # noqa: E402
 from ase.md.velocitydistribution import (     # noqa: E402
-    MaxwellBoltzmannDistribution,
+    MaxwellBoltzmannDistribution as _mb_legacy,
 )
+
+try:  # ASE >= 3.29 renamed it; calling the old name emits a
+      # DeprecationWarning on every single MD point -> console noise
+    from ase.md.velocitydistribution import thermalize_momenta as _mb_init
+except ImportError:  # older ASE keeps the legacy name
+    _mb_init = _mb_legacy
 from ase.optimize import BFGS                 # noqa: E402
 
 # NPT engine differs across ASE versions:
@@ -270,9 +282,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     dyn_opt = BFGS(atoms, logfile=None)
     dyn_opt.run(fmax=0.1, steps=100)
 
-    # 2. thermal velocities
-    MaxwellBoltzmannDistribution(
-        atoms, temperature_K=T, rng=np.random.default_rng(seed))
+    # 2. thermal velocities (new ASE name; same rng stream -> identical MD)
+    _mb_init(atoms, temperature_K=T, rng=np.random.default_rng(seed))
 
     # 3. NPT — THE fix: cell is free to expand
     dyn_md = _make_dynamics(atoms, T, timestep_fs)
