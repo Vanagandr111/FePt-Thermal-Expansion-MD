@@ -169,6 +169,23 @@ MODEL_CATALOG = [
     ('mace-mh-1.model', 'MH', 'MH-1 hybrid', 59.2),
 ]
 
+# Neural families ship weights through THEIR loader (sevenn / orb-models)
+# instead of a raw URL: a tiny precache job pulls the weights once, so the
+# first calculation does not stall on a silent multi-hundred-MB download.
+PRECACHE = {'active': False}
+PRECACHE_CMDS = {
+    '7net-0': 'from sevenn.calculator import SevenNetCalculator; '
+              'SevenNetCalculator(model="7net-0", device="cpu"); '
+              'print("7net-0 weights cached")',
+    '7net-omni-i12': 'from sevenn.calculator import SevenNetCalculator; '
+                     'SevenNetCalculator(model="7net-omni-i12", '
+                     'device="cpu"); print("7net-omni-i12 weights cached")',
+    'orb-v3': 'from orb_models.forcefield.pretrained import '
+              'orb_v3_conservative_20_omat; '
+              'orb_v3_conservative_20_omat(device="cpu"); '
+              'print("orb-v3 weights cached")',
+}
+
 # ----------------------------------------------------------------- state --
 RUN = {
     'proc': None, 'lines': [], 'n': 0, 'running': False,
@@ -668,7 +685,8 @@ def collect_deps(refresh=False):
         'potentials': scan_potentials(),
         # on-demand model catalog: name/label/size for the download
         # buttons (weights themselves are NOT kept locally)
-        'models': [{'name': n, 'family': fam, 'label': lab, 'mb': mb}
+        'models': [{'name': n, 'family': fam, 'label': lab, 'mb': mb,
+                    'url': MODEL_URLS.get(n, '')}
                    for (n, fam, lab, mb) in MODEL_CATALOG
                    if n not in [p.get('name')
                                 for p in scan_potentials().get('gpu', [])]],
@@ -849,7 +867,8 @@ def start_run(params):
             if pot:
                 model = pot[0]['path']
                 state_update({'model': model}, source=params.get('source'))
-        if not model or not os.path.isfile(model):
+        if not model or (not str(model).startswith(('sevennet', '7net', 'orb'))
+                        and not os.path.isfile(model)):
             return {'ok': False,
                     'error': 'no model selected (download one on the Models tab first)'}
         device = merged.get('device', 'cuda')
@@ -1015,7 +1034,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.9.3'
+APP_VERSION = '1.9.4'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -1160,21 +1179,24 @@ def build_update_bat(self_pid, new_exe, cur_exe):
         '@echo off\r\n'
         'chcp 65001 >nul\r\n'
         'echo bat-start %(ver)s -> %(ts)s >> "%(report)s"\r\n'
-        'timeout /t 2 /nobreak >nul\r\n'
+        'ping -n 3 127.0.0.1 >nul\r\n'
         'taskkill /F /PID %(pid)d >nul 2>nul\r\n'
         'echo taskkill rc=%%ERRORLEVEL%% >> "%(report)s"\r\n'
-        'timeout /t 2 /nobreak >nul\r\n'
+        'ping -n 3 127.0.0.1 >nul\r\n'
         ':swap\r\n'
         'move /Y "%(new)s" "%(cur)s" >nul\r\n'
         'if exist "%(new)s" (\r\n'
         '  echo swap-retry %%TIME%% >> "%(report)s"\r\n'
-        '  timeout /t 1 /nobreak >nul\r\n'
+        '  ping -n 2 127.0.0.1 >nul\r\n'
         '  goto :swap\r\n'
         ')\r\n'
         'echo swapped %%TIME%% >> "%(report)s"\r\n'
-        'timeout /t 1 /nobreak >nul\r\n'
+        'ping -n 4 127.0.0.1 >nul\r\n'
         'start "" "%(cur)s"\r\n'
         'echo relaunched %%TIME%% >> "%(report)s"\r\n'
+        'ping -n 12 127.0.0.1 >nul\r\n'
+        'start "" "%(cur)s"\r\n'
+        'echo watchdog-relaunch %%TIME%% >> "%(report)s"\r\n'
         'del "%%~f0"\r\n'
     ) % {'pid': int(self_pid), 'new': new_exe, 'cur': cur_exe,
          'report': report, 'ver': APP_VERSION,
@@ -1981,12 +2003,17 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not url:
                 self._json({'ok': False, 'error': 'unknown model'})
                 return
+            dest = os.path.join(GPU_DIR, os.path.basename(name))
+            if os.path.isfile(dest) and os.path.getsize(dest) > 0:
+                # never re-download (and never clobber) an existing file
+                self._json({'ok': True, 'skipped': True,
+                            'info': name + ' уже скачан'})
+                return
             if DL['active']:
                 self._json({'ok': False,
                             'error': 'another transfer is already active'})
                 return
             os.makedirs(GPU_DIR, exist_ok=True)
-            dest = os.path.join(GPU_DIR, name)
 
             def _job():
                 try:
@@ -1996,6 +2023,48 @@ class Handler(BaseHTTPRequestHandler):
                     log('[gui] download FAILED: ' + str(e))
 
             threading.Thread(target=_job, daemon=True).start()
+            self._json({'ok': True})
+            return
+        if path == '/api/potentials/precache':
+            model = body.get('model') or body.get('name') or ''
+            code = PRECACHE_CMDS.get(model)
+            if not code:
+                self._json({'ok': False, 'error': 'unknown model'})
+                return
+            if PRECACHE['active']:
+                self._json({'ok': False,
+                            'error': 'precache уже выполняется'})
+                return
+            if RUN.get('running'):
+                # a second torch in a fresh process cannot load shm.dll on
+                # Windows while a calculation holds it - refuse politely
+                self._json({'ok': False,
+                            'error': 'идёт расчёт — дождитесь окончания'})
+                return
+            py = resolve_python()
+            if not py:
+                self._json({'ok': False, 'error': 'engine python not found'})
+                return
+            PRECACHE['active'] = True
+
+            def _pc_job():
+                try:
+                    log('[gui] precache {}: запуск ({})'.format(model, py))
+                    p = subprocess.Popen(
+                        [py, '-c', code], stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True, errors='replace')
+                    for line in p.stdout:
+                        log('[gui] precache {}: {}'.format(
+                            model, line.rstrip()))
+                    p.wait()
+                    log('[gui] precache {}: rc={} (веса в кэше)'.format(
+                        model, p.returncode))
+                except Exception as e:
+                    log('[gui] precache {} FAILED: {}'.format(model, e))
+                finally:
+                    PRECACHE['active'] = False
+
+            threading.Thread(target=_pc_job, daemon=True).start()
             self._json({'ok': True})
             return
         self.send_response(404)

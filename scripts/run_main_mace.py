@@ -219,17 +219,24 @@ def find_model(cli_model):
 # ── per-point MD ───────────────────────────────────────────────────
 def _make_dynamics(atoms, T, timestep_fs):
     """Build NPT integrator for the installed ASE version."""
+    # Absolute-zero test points (T=0 in the form): thermostats are not
+    # defined at exactly zero target temperature, so simulate at a 1 K
+    # floor - the extrapolated 0 K lattice constant is unaffected.
+    T_sim = float(T)
+    if T_sim < 1.0:
+        print('[gui] T={} K -> thermostat floor 1.0 K (0 K limit test)'.format(T))
+        T_sim = 1.0
     if _NPT_MODE == 'nhc':
         # ASE >= 3.29: all-in-one isothermal-isobaric integrator
         return IsotropicMTKNPT(
             atoms, timestep_fs * units.fs,
-            temperature_K=float(T), pressure_au=0.0,
+            temperature_K=T_sim, pressure_au=0.0,
             tdamp=100.0 * units.fs, pdamp=1000.0 * units.fs)
     # older ASE: Langevin thermostat, barostat attached separately
     dyn = Langevin(atoms, timestep_fs * units.fs,
-                   temperature_K=T, friction=0.01 / units.fs)
+                   temperature_K=T_sim, friction=0.01 / units.fs)
     if _NPT_MODE == 'langevin+mtk':
-        barostat = MTKBarostat(atoms, temperature_K=T, externalstress=0.0,
+        barostat = MTKBarostat(atoms, temperature_K=T_sim, externalstress=0.0,
                                pressure_10to10Pa=0.0)
         dyn.attach(barostat, interval=10)
     else:
@@ -365,11 +372,15 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         log_fh.flush()
         log_fh.close()
 
+    if not len(a_arr):
+        print('[gui] point has ZERO thermo records (prod {} steps) - '
+              'stats are nan; raise prod or lower --interval'.format(
+                  prod_steps), flush=True)
     return {
-        'a_mean': float(a_arr.mean()),
-        'a_std': float(a_arr.std()),
-        'a_min': float(a_arr.min()),
-        'a_max': float(a_arr.max()),
+        'a_mean': float(a_arr.mean()) if len(a_arr) else float('nan'),
+        'a_std': float(a_arr.std()) if len(a_arr) else 0.0,
+        'a_min': float(a_arr.min()) if len(a_arr) else float('nan'),
+        'a_max': float(a_arr.max()) if len(a_arr) else float('nan'),
         'drift': drift,
         'n_points': len(a_vals),
         'mean_press': float(np.mean(p_vals)) if p_vals else 0.0,
@@ -617,8 +628,27 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
         if _base:
             os.environ[_ev] = os.path.join(
                 _base, 'pid{}'.format(os.getpid()))
-    calc = FastMACECalculator(model_paths=model, device=device,
-                              compile_mode=compile_mode, precision=precision)
+    if str(model).startswith(('sevennet', '7net')):
+        # (engine branch 1/3)
+        # SevenNet (pip package 'sevenn'): weights download themselves on
+        # first use into the user cache; fp16/bf16 are MACE-only -> float32
+        from sevenn.calculator import SevenNetCalculator
+        calc = SevenNetCalculator(model=str(model), device=device,
+                                  precision='float32')
+        print('[gui] SevenNet calculator: {} on {} (fp16 unsupported '
+              '-> float32)'.format(model, device), flush=True)
+    elif str(model).startswith('orb'):
+        # ORB v3 (Orbital Materials, pip 'orb-models'): conservative model
+        # provides forces+stress for NPT; weights download on first use
+        from orb_models.forcefield.inference.calculator import ORBCalculator
+        from orb_models.forcefield.pretrained import orb_v3_conservative_20_omat
+        _om, _oa = orb_v3_conservative_20_omat(device=device)
+        calc = ORBCalculator(_om, _oa, device=device)
+        print('[gui] ORB v3 conservative-20-omat on {} (fp32; fp16 '
+              'unsupported)'.format(device), flush=True)
+    else:
+        calc = FastMACECalculator(model_paths=model, device=device,
+                                  compile_mode=compile_mode, precision=precision)
     _print_weights(calc)
     # one cleanup pass before this worker's heavy loop (never per-step)
     import gc
@@ -709,6 +739,14 @@ def main():
         temps = args.temps or [300, 600, 900, 1200, 1500, 1800]
         eq_steps = args.eq or 50_000
         prod_steps = args.prod or 100_000
+        if args.interval and prod_steps and args.interval >= prod_steps:
+            # thermo record every `interval` steps: interval >= prod would
+            # leave the point with ZERO samples (nan stats, empty report)
+            new_int = max(1, prod_steps // 3)
+            print('[gui] thermo interval {} >= prod {} -> {} '
+                  '(>=3 records per point)'.format(
+                      args.interval, prod_steps, new_int), flush=True)
+            args.interval = new_int
     grid = args.grid or (2 if args.quick else 4)
     # Seed lattice constant (Angstrom): None = LC_TABLE by system
     # (pt = our MACE-MP-0 EOS fit, fe/fept = historical v1.5 seed).
