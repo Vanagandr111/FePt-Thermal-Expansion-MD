@@ -227,6 +227,20 @@ button.act.pulse { outline:2px solid var(--acc); }
 .gauge.g-off { opacity:.5; }
 @keyframes hotpulse { from { filter:brightness(1); } to { filter:brightness(1.5); } }
 #fsbtn { margin-left:6px; font-size:16px; }
+
+/* framed, numbered model catalog */
+.mtab { border-collapse: collapse; width: 100%; font-size: 11px;
+        margin-top: 6px; }
+.mtab th, .mtab td { border: 1px solid #3a3a44; padding: 5px 7px;
+        vertical-align: middle; }
+.mtab th { background: #23232b; text-align: left; font-weight: 600; }
+.mtab .mnum { width: 34px; text-align: center; color: #8a8a99; }
+.mtab .mname { white-space: nowrap; }
+.mtab .murl a { color: #7db4ff; word-break: all; font-size: 10px;
+        text-decoration: none; }
+.mtab .murl a:hover { text-decoration: underline; }
+.mtab .msec td { background: #1c1c24; color: #8a8a99; }
+.mtab tr:hover td { background: #1e1e26; }
 </style>
 </head>
 <body>
@@ -1955,43 +1969,50 @@ function renderModelCatalog(j) {
   const host = $('model-catalog');
   if (!host) return;
   const q = (($('model-filter') || {}).value || '').toLowerCase().trim();
-  let h = '';
+  const rows = [];
   (j.models || []).forEach(p => {
     if (q && (p.label + ' ' + p.family + ' ' + p.name)
               .toLowerCase().indexOf(q) === -1) return;
-    const rec = REC_MODELS.indexOf(p.name) >= 0;
-    h += '<div style="display:inline-block;margin:3px;vertical-align:top">'
-       + '<button class="ghost tiny" '
-       + 'onclick="dlModel(\'' + p.name + '\')">⬇ '
-       + p.family + ': ' + p.label + ' (' + p.mb + ' MB)'
-       + (rec ? '  ★ Рекомендованный' : '') + '</button>'
-       + (p.url ? '<a href="' + p.url + '" target="_blank" '
-              + 'rel="noopener" class="hint" '
-              + 'style="display:block;word-break:all;font-size:9px;'
-              + 'text-align:center;margin-top:1px">'
-              + p.url + '</a>' : '')
-       + '</div>';
+    rows.push({btn: 'dlModel(\'' + p.name + '\')',
+               name: p.family + ': ' + p.label + ' (' + p.mb + ' MB)',
+               rec: REC_MODELS.indexOf(p.name) >= 0, url: p.url});
   });
-  if (!h) h = '<span class="status">все модели каталога уже локально</span>';
-  h += '<div style="width:100%;margin-top:8px" class="hint">Нейросетевые ' +
-       'семейства — веса качаются их загрузчиком (прогресс в консоли ' +
-       'зависимостей):</div>';
+  if (!rows.length) {
+    host.innerHTML = '<span class="status">все модели каталога уже '
+                   + 'локально</span>';
+    return;
+  }
+  let h = '<table class="mtab"><tr><th>№</th><th>Потенциал</th>'
+        + '<th>Ссылка на источник</th></tr>';
+  rows.forEach((r, i) => {
+    h += '<tr><td class="mnum">' + (i + 1) + '</td>'
+       + '<td class="mname"><button class="ghost tiny" onclick="'
+       + r.btn + '">⬇ ' + r.name
+       + (r.rec ? ' ★ Рекомендованный' : '') + '</button></td>'
+       + '<td class="murl">' + (r.url
+          ? '<a href="' + r.url + '" target="_blank" rel="noopener">'
+            + r.url + '</a>' : '—') + '</td></tr>';
+  });
+  h += '<tr class="msec"><td colspan="3">Нейросетевые семейства — веса '
+     + 'качаются их загрузчиком (прогресс в консоли зависимостей):'
+     + '</td></tr>';
   [['7net-0', 'SevenNet-0', 'https://github.com/MDIL-SNU/SevenNet'],
    ['7net-omni-i12', 'SevenNet-Omni-i12',
     'https://github.com/MDIL-SNU/SevenNet'],
    ['orb-v3', 'ORB v3 (Orbital)',
     'https://github.com/orbital-materials/orb-models']].forEach(n => {
-    h += '<div style="display:inline-block;margin:3px;vertical-align:top">'
-       + '<button class="ghost tiny" '
-       + 'onclick="precacheModel(\'' + n[0] + '\')">⬇ ' + n[1]
-       + ' (предзагрузить веса)</button>'
-       + '<a href="' + n[2] + '" target="_blank" rel="noopener" '
-       + 'class="hint" style="display:block;word-break:all;'
-       + 'font-size:9px;text-align:center;margin-top:1px">'
-       + n[2] + '</a></div>';
+    rows.push(0);  // placeholder keeps numbering simple below
+    h += '<tr><td class="mnum">' + rows.length + '</td>'
+       + '<td class="mname"><button class="ghost tiny" onclick="'
+       + 'precacheModel(\'' + n[0] + '\')">⬇ ' + n[1]
+       + ' (предзагрузить веса)</button></td>'
+       + '<td class="murl"><a href="' + n[2] + '" target="_blank" '
+       + 'rel="noopener">' + n[2] + '</a></td></tr>';
   });
+  h += '</table>';
   host.innerHTML = h;
 }
+
 async function precacheModel(name) {
   const r = await (await fetch('/api/potentials/precache', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
