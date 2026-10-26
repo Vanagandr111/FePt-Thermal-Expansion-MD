@@ -1966,9 +1966,10 @@ function renderModelCatalog(j) {
        + p.family + ': ' + p.label + ' (' + p.mb + ' MB)'
        + (rec ? '  ★ Рекомендованный' : '') + '</button>'
        + (p.url ? '<a href="' + p.url + '" target="_blank" '
-              + 'rel="noopener" class="hint" style="display:block;'
-              + 'text-align:center" title="открыть страницу источника">'
-              + 'источник ↗</a>' : '')
+              + 'rel="noopener" class="hint" '
+              + 'style="display:block;word-break:all;font-size:9px;'
+              + 'text-align:center;margin-top:1px">'
+              + p.url + '</a>' : '')
        + '</div>';
   });
   if (!h) h = '<span class="status">все модели каталога уже локально</span>';
@@ -1985,8 +1986,9 @@ function renderModelCatalog(j) {
        + 'onclick="precacheModel(\'' + n[0] + '\')">⬇ ' + n[1]
        + ' (предзагрузить веса)</button>'
        + '<a href="' + n[2] + '" target="_blank" rel="noopener" '
-       + 'class="hint" style="display:block;text-align:center" '
-       + 'title="открыть страницу источника">источник ↗</a></div>';
+       + 'class="hint" style="display:block;word-break:all;'
+       + 'font-size:9px;text-align:center;margin-top:1px">'
+       + n[2] + '</a></div>';
   });
   host.innerHTML = h;
 }
