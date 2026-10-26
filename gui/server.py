@@ -690,6 +690,7 @@ def collect_deps(refresh=False):
                    for (n, fam, lab, mb) in MODEL_CATALOG
                    if n not in [p.get('name')
                                 for p in scan_potentials().get('gpu', [])]],
+        'catalog_names': [n for (n, _f, _l, _m) in MODEL_CATALOG],
         'folders': {'gpu': GPU_DIR, 'cpu': CPU_DIR, 'lammps': LAMMPS_DIR},
     }
     _DEPS_CACHE['t'] = now
@@ -713,6 +714,157 @@ def parse_csv(path):
                 continue
             rows.append(dict(zip(header, parts)))
     return rows
+
+
+# --------------------- multi-run averaging --------------------------------
+MULTI = {'total': 0, 'left': 0, 'dirs': [], 'params': None}
+
+
+def average_runs(dirs):
+    """Mean over several independent runs -> one NEW results dir.
+
+    Every leg keeps its own outdir (runs saved separately); this builds
+    the aggregate all_results.csv / cte_report.csv so the normal
+    /api/results path renders the averaged numbers unchanged, and
+    meta.json marks the dir type=average for the UI badge.
+    """
+    import csv as _csv
+    runs = [d for d in dirs if d and os.path.isfile(
+        os.path.join(d, 'all_results.csv'))]
+    if len(runs) < 2:
+        raise RuntimeError('need >=2 runs with all_results.csv, got {}'
+                           .format(len(runs)))
+
+    def merge_rows(files, group_keys):
+        """Mean of numeric columns per group; a_std pooled across runs."""
+        grouped, order, headers = {}, [], None
+        for path in files:
+            hdr = None
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = [p.strip() for p in line.split(';')]
+                    if hdr is None:
+                        hdr = parts
+                        if headers is None:
+                            headers = list(parts)
+                        continue
+                    row = dict(zip(hdr, parts))
+                    key = tuple(row.get(k, '') for k in group_keys)
+                    grouped.setdefault(key, []).append(row)
+                    if key not in order:
+                        order.append(key)
+        out_rows = []
+        for key in order:
+            samples = grouped[key]
+            res = dict(zip(group_keys, key))
+            for col in headers:
+                if col in group_keys:
+                    continue
+                vals = []
+                ok = True
+                for row in samples:
+                    try:
+                        vals.append(float(str(row.get(col, ''))
+                                          .replace(',', '.')))
+                    except (TypeError, ValueError):
+                        ok = False
+                        break
+                if not ok or not vals:
+                    res[col] = samples[0].get(col, '')
+                    continue
+                mean = sum(vals) / len(vals)
+                if col.startswith('a_std'):
+                    # pooled scatter: within-run (std_i^2) + between-run
+                    # variance of the per-run MEANS (a_mean_Angstrom),
+                    # not of the std column itself
+                    var = sum(s * s for s in vals) / len(vals)
+                    means = []
+                    for row in samples:
+                        try:
+                            means.append(float(str(
+                                row.get('a_mean_Angstrom', '')
+                                .replace(',', '.'))))
+                        except (TypeError, ValueError):
+                            means = []
+                            break
+                    if len(means) >= 2:
+                        gm = sum(means) / len(means)
+                        var += sum((m - gm) ** 2 for m in means) / len(means)
+                    res[col] = '{:.6f}'.format(var ** 0.5)
+                else:
+                    res[col] = '{:.6g}'.format(mean)
+            res['runs_n'] = str(len(samples))
+            out_rows.append(res)
+        return list(headers) + ['runs_n'], out_rows
+
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    avg_dir = os.path.join(PROJ, 'results_avg_{}'.format(stamp))
+    os.makedirs(avg_dir, exist_ok=True)
+
+    a_hdr, a_rows = merge_rows(
+        [os.path.join(d, 'all_results.csv') for d in runs],
+        ('x_Pt', 'T_K'))
+    with open(os.path.join(avg_dir, 'all_results.csv'), 'w',
+              newline='', encoding='utf-8') as f:
+        w = _csv.DictWriter(f, fieldnames=a_hdr, delimiter=';')
+        w.writeheader()
+        w.writerows(a_rows)
+
+    cte_files = [os.path.join(d, 'cte_report.csv') for d in runs
+                 if os.path.isfile(os.path.join(d, 'cte_report.csv'))]
+    if cte_files:
+        c_hdr, c_rows = merge_rows(cte_files, ('x_Pt',))
+        with open(os.path.join(avg_dir, 'cte_report.csv'), 'w',
+                  newline='', encoding='utf-8') as f:
+            w = _csv.DictWriter(f, fieldnames=c_hdr, delimiter=';')
+            w.writeheader()
+            w.writerows(c_rows)
+
+    import json as _json
+    with open(os.path.join(avg_dir, 'meta.json'), 'w',
+              encoding='utf-8') as f:
+        _json.dump({'type': 'average', 'runs_n': len(runs),
+                    'runs': list(runs),
+                    'created_at': time.strftime('%Y-%m-%d %H:%M:%S')},
+                   f, ensure_ascii=False, indent=1)
+    return avg_dir
+
+
+def finish_multi():
+    """Last leg done: average every run and report the means in the log."""
+    dirs = list(MULTI.get('dirs') or [])
+    MULTI.update(total=0, left=0, dirs=[], params=None)
+    if len(dirs) < 2:
+        return
+    log('[gui] === all {} runs finished — averaging in ~2 s...'
+        .format(len(dirs)))
+    time.sleep(2)
+    try:
+        avg_dir = average_runs(dirs)
+    except Exception as e:
+        log('[gui] averaging failed: ' + str(e))
+        return
+    RUN['outdir'] = avg_dir
+    RUN['multi_done'] = {'runs': dirs, 'avg': avg_dir}
+    log('[gui] === MEAN over {} runs: --> {}'
+        .format(len(dirs), avg_dir))
+    try:
+        for row in parse_csv(os.path.join(avg_dir, 'all_results.csv')):
+            log('[gui] MEAN  x_Pt={} T={}K  a={} +- {} A'
+                .format(row.get('x_Pt'), row.get('T_K'),
+                        row.get('a_mean_Angstrom'),
+                        row.get('a_std_Angstrom')))
+        for row in parse_csv(os.path.join(avg_dir, 'cte_report.csv')):
+            keys = ('CTE_fit', 'alpha_fit')
+            hit = [(k, row.get(k)) for k in keys if row.get(k)]
+            if hit:
+                log('[gui] MEAN  x_Pt={}  CTE={} /K ({})'
+                    .format(row.get('x_Pt'), hit[0][1], hit[0][0]))
+    except Exception as e:
+        log('[gui] mean summary skipped: ' + str(e))
 
 
 def collect_results(outdir):
@@ -830,6 +982,11 @@ def stop_run():
 def start_run(params):
     if RUN.get('running') and RUN['proc'] and RUN['proc'].poll() is None:
         return {'ok': False, 'error': 'run already in progress'}
+    try:
+        leg_count = max(1, min(20, int(params.get('run_count') or 1)))
+    except (TypeError, ValueError):
+        leg_count = 1
+    from_multi = str(params.get('source') or '') == 'multi'
     # form first (what the GUI shows), request wins (browser/MCP explicit)
     merged = dict(FORM)
     merged.update({k: v for k, v in params.items()
@@ -945,6 +1102,19 @@ def start_run(params):
                start=time.time(),
                run_device=merged.get('device', 'cuda'),
                run_grid=grid)
+    # --- multi-run queue (mean over N legs, average at the end) ---
+    if from_multi:
+        MULTI['dirs'].append(outdir)
+        log('[gui] leg {}/{} - out: {}'.format(
+            MULTI['total'] - MULTI['left'],
+            MULTI['total'], outdir))
+    elif leg_count > 1:
+        MULTI.update(total=leg_count, left=leg_count - 1, dirs=[outdir],
+                     params={k: merged.get(k) for k in FORM_KEYS})
+        log('[gui] MULTI-RUN: {} legs queued - mean at the end'.format(
+            leg_count))
+    else:
+        MULTI.update(total=0, left=0, dirs=[], params=None)
 
     def pump():
         import re
@@ -982,6 +1152,30 @@ def start_run(params):
         log('[gui] === run finished (exit {}), took {:.1f} s'.format(
             proc.returncode, time.time() - RUN['start']))
         log('[gui] results: ' + outdir)
+        # --- multi-run: next leg, or average everything at the end ---
+        if (proc.returncode == 0 and MULTI.get('left', 0) > 0
+                and MULTI.get('params')):
+            MULTI['left'] -= 1
+            nxt = dict(MULTI['params'])
+            nxt['run_count'] = MULTI['left'] + 1
+            nxt['source'] = 'multi'
+            log('[gui] === leg done ({}/{}), starting the next one...'
+                .format(MULTI['total'] - MULTI['left'],
+                        MULTI['total']))
+            try:
+                res = start_run(nxt)
+                if not res.get('ok'):
+                    log('[gui] next leg failed: ' + str(res.get('error')))
+                    MULTI.update(total=0, left=0, dirs=[], params=None)
+            except Exception as e:
+                log('[gui] next leg error: ' + str(e))
+                MULTI.update(total=0, left=0, dirs=[], params=None)
+            return
+        if MULTI.get('total', 0) > 1:
+            try:
+                finish_multi()
+            except Exception as e:
+                log('[gui] multi finish error: ' + str(e))
 
     threading.Thread(target=pump, daemon=True).start()
     return {'ok': True, 'outdir': outdir}
@@ -1008,8 +1202,14 @@ def progress_summary():
     ETA that the bar is aligned against (bar = done/total, ETA from the
     measured rate - both converge as points land).
     """
+    legs = int(MULTI.get('total') or 0)
+    left = int(MULTI.get('left') or 0)
     total = int(RUN.get('plan_total') or 0)
     done = int(RUN.get('done_points') or 0)
+    if legs > 1:
+        # the bar spans ALL queued legs: finished legs count in full
+        done = (legs - left - 1) * total + done
+        total = total * legs
     start = float(RUN.get('start') or 0.0)
     running = bool(RUN.get('running'))
     elapsed = (time.time() - start) if start else 0.0
@@ -1019,11 +1219,17 @@ def progress_summary():
     rate = (done / elapsed * 60.0) if (done > 0 and elapsed > 0) else 0.0
     eta = ((total - done) * elapsed / done) if (done > 0 and total > done
                                                and elapsed > 0) else None
+    # legs already finished are not in elapsed - add their known cost
+    if legs > 1 and left > 0 and done > 0 and total > done:
+        per_leg = elapsed / max(1, (legs - left - 1))
+        eta += per_leg * left
     pct = (100.0 * done / total) if total > 0 else 0.0
     return {
         'running': running,
         'total': total,
         'done': done,
+        'leg': (MULTI['total'] - MULTI['left']) if legs > 1 else 1,
+        'legs_total': legs if legs > 1 else 1,
         'pct': round(min(100.0, pct), 1),
         'elapsed_s': round(elapsed, 1),
         'rate_per_min': round(rate, 2),
@@ -1034,7 +1240,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '1.9.7'
+APP_VERSION = '2.0.0'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -1157,10 +1363,32 @@ def status_summary():
             latest, APP_VERSION))
     if not checks:
         checks.append('все зависимости на месте, ошибок нет')
+    # --- the About tab reads this too: real machine/run info ---
+    calib = estimator.load_profile()
+    n_pts = len(calib.get('points') or [])
+    samples = sum(int(p.get('samples') or len(p.get('history') or []) or 1)
+                  for p in (calib.get('points') or []))
+    if n_pts:
+        calib_txt = '{} точек, {} замеров, файл {}'.format(
+            n_pts, samples, os.path.basename(estimator.profile_path()))
+    else:
+        calib_txt = 'нет (оценка по документированным guess-значениям)'
+    try:
+        res_dirs = sum(1 for n in os.listdir(PROJ)
+                       if n.startswith('results_') and os.path.isdir(
+                           os.path.join(PROJ, n)))
+    except OSError:
+        res_dirs = 0
     return {'level': level, 'text': 'status: ' + level,
             'version': APP_VERSION, 'latest': latest,
             'update_available': bool(newer), 'checks': checks,
-            'frozen': FROZEN, 'lang': get_lang()}
+            'frozen': FROZEN, 'lang': get_lang(),
+            'python': sys.version.split()[0],
+            'host': estimator.machine_name(),
+            'proj': PROJ,
+            'calibration': calib_txt,
+            'results_dirs': res_dirs,
+            'last_outdir': RUN.get('outdir') or '—'}
 
 
 def _sh_quote(s):
@@ -1635,8 +1863,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({'ok': False, 'error': str(e)})
                 return
             n = d['natoms'] or 1
+            # x of the B element: form's elem_b when present, else the
+            # largest non-majority species - NEVER a bare ['Pt'] that
+            # would KeyError on any other chemistry
+            _counts = d.get('counts') or {}
+            _b = FORM.get('elem_b') or 'Pt'
+            if _b not in _counts:
+                _b = (sorted(_counts, key=lambda k: _counts[k])[-1]
+                      if _counts else None)
             self._json(dict(d, ok=True, file=os.path.basename(cand),
-                            x_pt=round(d['counts']['Pt'] / n, 4),
+                            x_pt=round((_counts.get(_b) or 0) / n, 4),
                             lengths=[d['cell'][0][0], d['cell'][1][1],
                                      d['cell'][2][2]]))
             return
@@ -1715,6 +1951,15 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 payload['meta'] = None
             self._json(payload)
+            return
+        if path == '/api/hints_base':
+            p = os.path.join(PROJ, 'data', 'hints_base.json')
+            try:
+                with open(p, encoding='utf-8') as _hf:
+                    self._json(json.load(_hf))
+            except Exception as _e:
+                self._json({'elements': {}, 'phases': {},
+                            'error': str(_e)})
             return
         if path == '/api/log':
             # REST tail of the console buffer (MCP reads logs from here)

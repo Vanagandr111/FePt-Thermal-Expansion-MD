@@ -228,6 +228,42 @@ button.act.pulse { outline:2px solid var(--acc); }
 @keyframes hotpulse { from { filter:brightness(1); } to { filter:brightness(1.5); } }
 #fsbtn { margin-left:6px; font-size:16px; }
 
+/* hints carousel: cards for the selected element pair */
+.hints-box { border:1px solid #3a3a44; border-radius:8px; padding:8px;
+  background:#14161d; }
+.hints-head { display:flex; gap:8px; align-items:baseline;
+  margin-bottom:6px; flex-wrap:wrap; }
+.hints-track { display:flex; gap:8px; overflow:hidden; padding-bottom:2px;
+  transition:transform .3s ease; }
+.hint-card { flex:0 0 210px; border:1px solid #3f4658; border-radius:6px;
+  background:#1a1f2b; padding:7px 8px; cursor:pointer;
+  transition:border-color .2s, transform .2s; }
+.hint-card:hover { border-color:#7db4ff; transform:translateY(-1px); }
+.hint-card .ht-t { font-weight:600; font-size:11.5px; color:#e6ebf5; }
+.hint-card .ht-s { font-size:10.5px; color:#9fb0c8; margin-top:2px; }
+.hint-card .ht-a { font-size:10.5px; color:#7db4ff; margin-top:3px; }
+.hint-card .ht-n { font-size:9.5px; color:#8a8a99; margin-top:3px;
+  font-style:italic; }
+/* structure split: 3D view + pair-distance histogram side by side */
+.st-split { display: flex; gap: 12px; flex-wrap: wrap; }
+.st-panel { flex: 1 1 380px; min-width: 340px;
+  border: 1px solid #3a3a44; border-radius: 8px; padding: 8px;
+  background: #14161d; }
+.st-panel .st-hint { margin-top: 6px; }
+.st-panel canvas { display: block; width: 100%; height: auto;
+  border-radius: 4px; background: #0e1118; }
+/* multi-run button (red, unmistakable) */
+.act.danger { background: linear-gradient(180deg, #c23448, #8f1f30);
+  border-color: #e0566b; color: #ffe9ed; }
+.act.danger:hover { background: linear-gradient(180deg, #d64559, #a12638); }
+.act.danger:disabled { opacity: .45; filter: grayscale(.4); }
+/* run progress: gradient strip like a real loader */
+#pg-bar { background: linear-gradient(90deg, #2ee6a6 0%, #38b6ff 50%,
+  #a06bff 100%); background-size: 200% 100%; animation: pgflow 2.4s
+  linear infinite; box-shadow: 0 0 8px rgba(56,182,255,.55); }
+@keyframes pgflow { to { background-position: -200% 0; } }
+#pg-pct { font-weight: 700; color: #7db4ff; font-size: 12px;
+  min-width: 46px; text-align: right; }
 /* framed, numbered model catalog */
 .mtab { border-collapse: collapse; width: 100%; font-size: 11px;
         margin-top: 6px; }
@@ -367,12 +403,16 @@ button.act.pulse { outline:2px solid var(--acc); }
         <input id="comp" type="range" min="0" max="1" step="0.05" value="0.5"
                oninput="compOut()">
         <div id="compcalc" class="comp-calc" aria-live="polite"></div>
-        <div class="presets" style="margin-top:6px">
-          <button class="ghost tiny" onclick="setComp(0)">Fe</button>
-          <button class="ghost tiny" onclick="setComp(0.25)">Fe₃Pt</button>
-          <button class="ghost tiny" onclick="setComp(0.5)">FePt</button>
-          <button class="ghost tiny" onclick="setComp(0.75)">FePt₃</button>
-          <button class="ghost tiny" onclick="setComp(1)">Pt</button>
+        <div class="hints-box" style="margin-top:8px">
+          <div class="hints-head"><b>Подсказки</b>
+            <span class="hint" id="hints-sub">для выбранной пары
+              элементов — авто</span></div>
+          <div class="hints-track" id="hints-track"
+               title="колесо мыши — листать подсказки"></div>
+          <input id="hints-slider" type="range" min="0" max="0" value="0"
+                 step="1" style="width:100%;margin-top:6px"
+                 title="ползунок: листать подсказки"
+                 oninput="hintGo(+this.value)">
         </div>
       </div>
       <div>
@@ -406,8 +446,16 @@ button.act.pulse { outline:2px solid var(--acc); }
           траекторию — удобно для сравнения правок.</div>
       </div>
     </div>
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-top:14px;align-items:center">
       <button class="act" id="btn-start" onclick="startRun()">▶ Запустить</button>
+      <span class="hint" style="margin:0">прогонов для среднего:</span>
+      <input id="runs-count" type="number" min="1" max="20" value="3"
+             style="width:56px" title="Сколько независимых прогонов
+             считать подряд — в конце посчитается среднее">
+      <button class="act danger" id="btn-start-multi"
+              onclick="startRunMulti()"
+              title="N прогонов подряд, логи каждого отдельно,
+              затем среднее по всем">🔴 Среднее по прогонам</button>
       <button class="ghost" id="btn-stop" onclick="stopRun()">⏹ Стоп</button>
       <button class="ghost" onclick="openFolder()">📂 Открыть папку результатов</button>
       <button class="ghost" onclick="quickPreset()">⚡ Быстрый тест</button>
@@ -415,7 +463,8 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div class="est-card" id="prog-card">
       <div class="est-title">Текущий прогон — факт
         <span id="prog-state" class="t-dim"
-              style="color:var(--dim);font-size:11px"></span></div>
+              style="color:var(--dim);font-size:11px"></span>
+        <span id="pg-pct" style="margin-left:auto">0%</span></div>
       <div class="est-grid">
         <div class="est-cell"><span class="gl">Точек</span>
           <span class="gv" id="pg-points">—</span></div>
@@ -501,9 +550,22 @@ button.act.pulse { outline:2px solid var(--acc); }
           <button class="ghost tiny" onclick="loadStructure()">Обновить</button>
         </div>
       </div>
-      <div class="st-wrap">
-        <canvas id="struct-canvas" width="680" height="380"></canvas>
-        <div class="st-hint">перетащить — вращение · колесо — масштаб · 2×клик — сброс</div>
+      <div class="st-split">
+        <div class="st-panel">
+          <div class="st-wrap">
+            <canvas id="struct-canvas" width="520" height="330"></canvas>
+          </div>
+          <div class="st-hint">3D: перетащить — вращение · колесо —
+            масштаб · 2×клик — сброс</div>
+        </div>
+        <div class="st-panel">
+          <div class="st-wrap">
+            <canvas id="hist-canvas" width="520" height="330"></canvas>
+          </div>
+          <div class="st-hint">гистограмма парных расстояний (PBC,
+            все пары, бин 0.05 Å) — по ней видно упорядочение и
+            качество упаковки</div>
+        </div>
       </div>
       <div class="st-legend" id="st-legend"></div>
     </div>
@@ -522,7 +584,7 @@ button.act.pulse { outline:2px solid var(--acc); }
       <b>Профиль системы</b>
       <div class="row">
         <button class="ghost" onclick="loadProfile()">Обновить</button>
-        <button class="ghost" onclick="tab('run');calibrateEst()">\U0001F52C Откалибровать</button>
+        <button class="ghost" onclick="tab('run');calibrateEst()">🔬 Откалибровать</button>
       </div>
     </div>
     <div id="prof-cards" class="row" style="flex-wrap:wrap;gap:12px"></div>
@@ -554,7 +616,13 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div id="deps-body" class="status">Загрузка…</div>
   </div>
   <div class="card">
-    <h2 class="h2">Нейропотенциалы MACE (potentials/gpu/)</h2>
+    <div class="cbar" style="margin:0 0 8px">
+      <h2 class="h2" style="margin:0">Нейропотенциалы MACE
+        (potentials/gpu/)</h2>
+      <button class="ghost tiny" onclick="openPotFolder()"
+        title="Открыть папку со всеми потенциалами">📁 Папка
+        потенциалов</button>
+    </div>
     <div id="dl-models"></div>
     <div class="status">Всё стороннее (веса, LAMMPS, torch) скачивается отдельно и
       никогда не встраивается в исполняемый файл — только папки рядом.</div>
@@ -838,7 +906,7 @@ async function loadElements() {
   } catch (e) { ELEMENTS = []; }
   if (!ELEMENTS.length) {
     ELEMENTS = [{symbol:'Fe', label:'Железо (fcc)', lc:3.5647},
-                {symbol:'Pt', label:'Платина', lc:4.0065}];
+                {symbol:'Pt', label:'Платина', lc:3.9242}];
   }
   renderSystem();
 }
@@ -864,15 +932,120 @@ function renderSystem() {
   syncSysForm();
   checkCompat();
   updateCompCalc();
+  buildHints();   // pair changed -> regenerate the hint cards
 }
 function syncSysForm() {
   fetch('/api/form', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({elem_a: sysSel.a, elem_b: sysSel.b})}).catch(() => {});
 }
+/* ---------------- hints engine (auto cards for the A/B pair) ---------- */
+let HINTS_BASE = null, HINT_IDX = 0, HINT_CARDS = [];
+const SUB_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
+function subNum(n) {
+  return String(n).split('').map(d => SUB_DIGITS[+d] || d).join('');
+}
+function gcd2(a, b) {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { const t = a % b; a = b; b = t; }
+  return a || 1;
+}
+/* compB (0..1 step .05) -> printable formula: A3Pt / APt / APt3 / A / B */
+function alloyFormula(a, b, compB) {
+  let na = Math.round((1 - compB) * 20), nb = Math.round(compB * 20);
+  if (nb === 0) return a;
+  if (na === 0) return b;
+  const g = gcd2(na, nb);
+  na /= g; nb /= g;
+  const head = na === 1 ? a : a + subNum(na);
+  const tail = nb === 1 ? b : b + subNum(nb);
+  return head + tail;
+}
+async function loadHintsBase() {
+  if (HINTS_BASE) return HINTS_BASE;
+  try {
+    HINTS_BASE = await (await fetch('/api/hints_base')).json();
+  } catch (e) { HINTS_BASE = {elements: {}, phases: {}}; }
+  return HINTS_BASE;
+}
+function hintCard(o) {
+  const act = (o.comp !== undefined)
+    ? 'onclick="setComp(' + o.comp + ')" title="поставить долю ' +
+      o.comp + ' — пересчитать сводку состава"'
+    : 'style="cursor:default"';
+  return '<div class="hint-card" ' + act + '>' +
+    '<div class="ht-t">' + o.title + '</div>' +
+    (o.struct ? '<div class="ht-s">' + o.struct + '</div>' : '') +
+    (o.a ? '<div class="ht-a">a = ' + o.a + ' Å' +
+      (o.c ? ' · c = ' + o.c + ' Å' : '') + '</div>' : '') +
+    (o.note ? '<div class="ht-n">' + o.note + '</div>' : '') +
+    '</div>';
+}
+function hintGo(i) {
+  const track = $('hints-track');
+  if (!track || !HINT_CARDS.length) return;
+  const maxIdx = Math.max(0, HINT_CARDS.length - 4);
+  i = Math.max(0, Math.min(maxIdx, Math.floor(+i || 0)));
+  HINT_IDX = i;
+  track.style.transform = 'translateX(' + (-i * 218) + 'px)';
+  const sl = $('hints-slider');
+  if (sl) { sl.max = maxIdx; if (+sl.value !== i) sl.value = i; }
+}
+async function buildHints() {
+  const track = $('hints-track');
+  if (!track) return;
+  const base = await loadHintsBase();
+  const A = sysSel.a || 'A', B = sysSel.b || 'B';
+  const cards = [];
+  const elA = (base.elements || {})[A];
+  const elB = (base.elements || {})[B];
+  cards.push({title: 'Чистый ' + A, comp: 0,
+    struct: elA ? elA.struct + ' · ' + (elA.ru || '') : 'структура неизвестна',
+    a: elA ? elA.a : null,
+    note: elA ? (elA.note || ('эксп. 300 K, справочное значение'))
+              : 'элемента нет во встроенной базе'});
+  // phase table for this pair (keys may be stored in either order)
+  const phases = (base.phases || {})[A + '-' + B]
+              || (base.phases || {})[B + '-' + A]
+              || (base.phases || {})[[A, B].sort().join('-')]
+              || [];
+  phases.forEach(p => cards.push({
+    title: p.title, struct: p.struct, a: p.a, c: p.c, note: p.note,
+    comp: (p.comp !== undefined ? p.comp : undefined)}));
+  // always-producible compositions (any pair, even unknown to the base)
+  [0.25, 0.5, 0.75].forEach(c => {
+    const known = phases.find(p =>
+      p.comp !== undefined && Math.abs(p.comp - c) < 1e-6);
+    if (known) return;
+    cards.push({title: alloyFormula(A, B, c), comp: c,
+      struct: 'расчётная доля: ' + Math.round(c * 100) + '% ' + B,
+      note: c === 0.5 ? 'равнопропорциональный сплав —'
+                      : (c === 0.25 ? 'A₃B-тип (L1₂-кандидат,'
+                                    : 'AB₃-тип (L1₂-кандидат,')
+                      + ' проверить структуру)'});
+  });
+  cards.push({title: 'Чистый ' + B, comp: 1,
+    struct: elB ? elB.struct + ' · ' + (elB.ru || '') : 'структура неизвестна',
+    a: elB ? elB.a : null,
+    note: elB ? (elB.note || 'эксп. 300 K, справочное значение')
+              : 'элемента нет во встроенной базе'});
+  HINT_CARDS = cards;
+  track.innerHTML = cards.map(hintCard).join('');
+  HINT_IDX = Math.min(HINT_IDX, Math.max(0, cards.length - 4));
+  hintGo(HINT_IDX);
+  const sub = $('hints-sub');
+  if (sub) sub.textContent = A + '–' + B + ': ' + cards.length +
+    ' подсказок · листать ползунком или колесом';
+}
+document.addEventListener('wheel', e => {
+  const t = $('hints-track');
+  if (!t || !t.contains(e.target)) return;
+  e.preventDefault();
+  hintGo(HINT_IDX + (e.deltaY > 0 ? 1 : -1));
+}, {passive: false});
 async function elemChanged(which) {
   sysSel[which === 'A' ? 'a' : 'b'] = $(which === 'A' ? 'elemA' : 'elemB').value;
-  syncSysForm(); checkCompat(); updateCompCalc();
+  syncSysForm(); checkCompat(); updateCompCalc(); buildHints();
 }
 function openElemModal(mode, which) {
   const sel = $(which === 'A' ? 'elemA' : 'elemB');
@@ -992,14 +1165,28 @@ function collectForm() {
     seed: +$('seed').value || 42,
   };
 }
-async function startRun() {
-  const p = collectForm();
+function setStartEnabled(on) {
+  ['btn-start', 'btn-start-multi'].forEach(id => {
+    const b = $(id);
+    if (b) b.disabled = !on;
+  });
+}
+async function postRun(extra) {
+  const p = Object.assign(collectForm(), extra || {});
   const r = await fetch('/api/run', {method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)});
   const j = await r.json();
   $('run-status').textContent = j.ok ? 'Расчёт запущен → ' + j.outdir
                                      : 'Ошибка: ' + j.error;
-  $('btn-start').disabled = !!j.ok;
+  setStartEnabled(!j.ok);
+  return j;
+}
+function startRun() { return postRun({run_count: 1}); }
+function startRunMulti() {
+  let n = parseInt(($('runs-count') || {}).value, 10);
+  if (!(n >= 1)) n = 1;
+  if (n > 20) n = 20;
+  return postRun({run_count: n});
 }
 async function stopRun() {
   await fetch('/api/stop', {method:'POST', body:'{}'});
@@ -1022,7 +1209,8 @@ document.addEventListener('click', e => {
   if (card) card.closest('.card').classList.toggle('collapsed');
 });
 try {
-  if (localStorage.getItem('fept_compact') === '1') setCompact(true, false);
+  // compact is the DEFAULT now; only an explicit '0' turns it off
+  if (localStorage.getItem('fept_compact') !== '0') setCompact(true, false);
 } catch (e) {}
 
 /* keep the slider fill (--p) in sync for every range, current style */
@@ -1076,6 +1264,8 @@ async function pollProgress() {
     const seen = p.done > 0 || p.running;
     card.style.opacity = seen ? '1' : '0.55';
     $('pg-points').textContent = p.total ? (p.done + ' / ' + p.total) : '—';
+    const pctEl = $('pg-pct');
+    if (pctEl) pctEl.textContent = (p.total ? Math.round(p.pct) : 0) + '%';
     $('pg-rate').textContent = p.rate_per_min > 0
       ? p.rate_per_min.toFixed(2) + ' точ/мин' : '—';
     $('pg-eta').textContent = (p.eta_s !== null && p.eta_s !== undefined)
@@ -1083,8 +1273,11 @@ async function pollProgress() {
     $('pg-elapsed').textContent = p.elapsed_s > 0
       ? fmtDurP(p.elapsed_s) : '—';
     $('pg-bar').style.width = Math.min(100, p.pct || 0) + '%';
-    if (p.running) {
-      $('prog-state').textContent = 'идёт…';
+    if (running) {
+      const legs = (p.legs_total || 1);
+      $('prog-state').textContent = legs > 1
+        ? 'идёт… прогон ' + p.leg + ' из ' + legs
+        : 'идёт…';
     } else if (p.done > 0 && p.total && p.done >= p.total) {
       $('prog-state').textContent = 'точки завершены (' +
         (p.last_exit === 0 ? 'exit 0' : 'exit ' + p.last_exit) + ')';
@@ -1171,19 +1364,29 @@ async function fillAbout() {
   const box = $('ab-info');
   try {
     const s = await (await fetch('/api/status_summary')).json();
-    const NAMES = {level: 'Сводка статуса', last_exit: 'Код последнего расчёта',
+    const NAMES = {level: 'Сводка статуса', text: 'Статус', last_exit: 'Код последнего расчёта',
                    version: 'Версия', latest: 'Последняя на GitHub',
-                   update_available: 'Обновление с GitHub',
-                   python: 'Интерпретатор движка', model: 'Потенциал',
-                   device: 'Устройство', frozen: 'Режим запуска',
-                   temp_c: 'Температура GPU', vram_gb: 'VRAM, ГБ'};
+                   update_available: 'Обновление с GitHub', lang: 'Язык интерфейса',
+                   python: 'Python', host: 'Компьютер',
+                   proj: 'Каталог проекта', calibration: 'Калибровка машины',
+                   results_dirs: 'Папок результатов', last_outdir: 'Последний результат',
+                   checks: 'Проверки', frozen: 'Режим запуска',
+                   model: 'Потенциал', device: 'Устройство'};
     const rows = [];
+    const row = (k, v) => '<div style="display:flex;justify-content:space-between;' +
+        'max-width:680px;gap:16px"><span>' + k + '</span><b style="' +
+        'text-align:right;word-break:break-all">' + v + '</b></div>';
     for (const k of Object.keys(s)) {
       const v = s[k];
-      if (v === null || ['object', 'function'].includes(typeof v)) continue;
-      rows.push('<div style="display:flex;justify-content:space-between;' +
-                'max-width:640px;gap:16px"><span>' + (NAMES[k] || k) +
-                '</span><b>' + v + '</b></div>');
+      if (v === null || v === undefined || typeof v === 'function') continue;
+      if (Array.isArray(v)) {          // checks: one line per item
+        v.forEach(item => rows.push(row(NAMES[k] || k, item)));
+        continue;
+      }
+      if (typeof v === 'object') continue;
+      const shown = (typeof v === 'boolean')
+        ? (v ? 'да' : 'нет') : String(v);
+      rows.push(row(NAMES[k] || k, shown));
     }
     box.innerHTML = rows.join('') || '<span class="t-dim">нет данных</span>';
   } catch (e) { box.textContent = 'нет данных: ' + e; }
@@ -1338,6 +1541,28 @@ let stThermal = false, stThermalT = 900, stTime = 0;
 let LAST_RES_DIR = null;
 let stDrag = null;
 const ST_COL = {Fe: '#d8564f', Pt: '#ded6bc'};
+const ELEM_PALETTE = ['#d8564f', '#ded6bc', '#5aa9e6', '#7bd389',
+  '#f2c14e', '#c77dff', '#ff8fab', '#60d394', '#e0aaff', '#80ffdb'];
+/* colour for ANY element: known ones keep their look, others get a
+   stable palette slot (no Fe/Pt hardcoding anywhere) */
+let ELEM_COL = {};
+function elemColMap(counts) {
+  ELEM_COL = {};
+  let i = 0;
+  for (const sym of Object.keys(counts || {})) {
+    ELEM_COL[sym] = ST_COL[sym]
+      || ELEM_PALETTE[i % ELEM_PALETTE.length];
+    i++;
+  }
+  return ELEM_COL;
+}
+function elemColor(sym) {
+  if (ELEM_COL[sym]) return ELEM_COL[sym];
+  if (ST_COL[sym]) return ST_COL[sym];
+  let h = 0;
+  for (let k = 0; k < sym.length; k++) h = (h * 31 + sym.charCodeAt(k)) | 0;
+  return ELEM_PALETTE[Math.abs(h) % ELEM_PALETTE.length];
+}
 
 function stShade(hex, amt) {   // amt -1..1 : darken/brighten
   const n = parseInt(hex.slice(1), 16);
@@ -1442,6 +1667,95 @@ function toggleStructAuto() {
   stAuto = !stAuto;
   $('st-auto-btn').style.opacity = stAuto ? '1' : '0.5';
 }
+/* pair-distance histogram (PBC min-image) — the second structure view:
+   peaks show packing shells, split same/cross peaks show chemical
+   ordering at a glance */
+function drawHistogram() {
+  const cv = $('hist-canvas');
+  if (!cv || !S || !cv.offsetParent) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const padL = 44, padR = 12, padT = 26, padB = 34;
+  ctx.fillStyle = '#0e1118';
+  ctx.fillRect(0, 0, W, H);
+  const pos = S.positions, sym = S.symbols, L = S.lengths || [];
+  if (!pos || !pos.length || L.length < 3) return;
+  const RMAX = 7.0, BIN = 0.05;
+  const nb = Math.round(RMAX / BIN);
+  const keys = Object.keys(S.counts || {});
+  const gkey = (a, b) => {
+    if (a === b) return a;
+    return keys.indexOf(a) <= keys.indexOf(b) ? a + '-' + b : b + '-' + a;
+  };
+  const groups = {};
+  keys.forEach(k => groups[k] = new Array(nb).fill(0));
+  if (keys.length > 1) groups[gkey(keys[0], keys[1])] = new Array(nb).fill(0);
+  const n = pos.length;
+  for (let i = 0; i < n; i++) {
+    const xi = pos[i][0], yi = pos[i][1], zi = pos[i][2];
+    for (let j = i + 1; j < n; j++) {
+      let dx = pos[j][0] - xi, dy = pos[j][1] - yi, dz = pos[j][2] - zi;
+      dx -= Math.round(dx / L[0]) * L[0];
+      dy -= Math.round(dy / L[1]) * L[1];
+      dz -= Math.round(dz / L[2]) * L[2];
+      const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (r <= 0.01 || r >= RMAX) continue;
+      const g = groups[gkey(sym[i], sym[j])]
+             || groups[keys[0]];
+      g[(r / BIN) | 0]++;
+    }
+  }
+  let gmax = 1;
+  for (const k of Object.keys(groups))
+    gmax = Math.max(gmax, ...groups[k]);
+  const X = r => padL + (r / RMAX) * (W - padL - padR);
+  const Y = c => H - padB - (c / gmax) * (H - padT - padB);
+  // axes + gridlines
+  ctx.strokeStyle = '#2a3140';
+  ctx.fillStyle = '#8a8a99';
+  ctx.lineWidth = 1;
+  ctx.font = '10px "Segoe UI", sans-serif';
+  ctx.beginPath();
+  ctx.moveTo(padL, padT); ctx.lineTo(padL, H - padB);
+  ctx.lineTo(W - padR, H - padB);
+  ctx.stroke();
+  for (let r = 1; r <= RMAX; r++) {
+    ctx.strokeStyle = '#1d2431';
+    ctx.beginPath();
+    ctx.moveTo(X(r), padT); ctx.lineTo(X(r), H - padB);
+    ctx.stroke();
+    ctx.fillText(r + '', X(r) - 3, H - padB + 14);
+  }
+  ctx.fillText('Å', W - padR - 12, H - padB + 14);
+  ctx.fillText('пар/бин', 4, padT + 8);
+  // bars: same-element groups then cross peak (semi-transparent layers)
+  const bw = Math.max(1.5, (X(BIN) - X(0)) * 0.9);
+  const order = Object.keys(groups).sort((a, b) => a.includes('-') ? 1 : -1);
+  for (const k of order) {
+    const col = k.includes('-') ? '#9aa7bd' : elemColor(k);
+    ctx.fillStyle = col;
+    ctx.globalAlpha = k.includes('-') ? 0.55 : 0.7;
+    groups[k].forEach((c, i) => {
+      if (!c) return;
+      const x0 = X(i * BIN), y0 = Y(c);
+      ctx.fillRect(x0, y0, bw, (H - padB) - y0);
+    });
+  }
+  ctx.globalAlpha = 1;
+  // inline key
+  let kx = padL + 8;
+  order.forEach(k => {
+    const col = k.includes('-') ? '#9aa7bd' : elemColor(k);
+    ctx.fillStyle = col;
+    ctx.fillRect(kx, padT + 4, 9, 9);
+    const label = k.includes('-') ? k : k + '–' + k;
+    ctx.fillStyle = '#cfd6e4';
+    ctx.fillText(label, kx + 12, padT + 12);
+    kx += 14 + ctx.measureText(label).width + 14;
+  });
+  ctx.fillStyle = '#cfd6e4';
+  ctx.fillText('гистограмма парных расстояний', padL + 8, H - padB - 8);
+}
 function toggleThermal() {
   stThermal = !stThermal;
   $('st-therm-btn').style.opacity = stThermal ? '1' : '0.5';
@@ -1457,15 +1771,18 @@ async function loadStructure() {
     S = j;
     $('st-caption').textContent = j.file + ' · ' + j.natoms + ' атомов';
     const L = j.lengths.map(v => v.toFixed(2));
-    $('st-legend').innerHTML =
-      '<span><span class="sw" style="background:' + ST_COL.Fe + '"></span>Fe <b>' +
-      j.counts.Fe + '</b></span>' +
-      '<span><span class="sw" style="background:' + ST_COL.Pt + '"></span>Pt <b>' +
-      j.counts.Pt + '</b></span>' +
-      '<span>x<sub>Pt</sub> = <b>' + (j.x_pt * 100).toFixed(1) + '%</b></span>' +
-      '<span>ячейка <b>' + L.join(' × ') + ' Å</b></span>' +
-      '<span>c = a — ортогональная</span>';
+    const cols = elemColMap(j.counts);
+    let lg = Object.keys(j.counts || {}).map(sym =>
+      '<span><span class="sw" style="background:' + cols[sym] +
+      '"></span>' + sym + ' <b>' + j.counts[sym] + '</b></span>').join('');
+    lg += '<span>доли: <b>' + Object.keys(j.counts || {})
+      .map(s => s + ' ' + (100 * j.counts[s] / j.natoms).toFixed(1) + '%')
+      .join(' · ') + '</b></span>';
+    lg += '<span>ячейка <b>' + L.join(' × ') + ' Å</b></span>' +
+          '<span>ортогональная (c = a)</span>';
+    $('st-legend').innerHTML = lg;
     drawStructure();
+    drawHistogram();
   } catch (e) { /* server not ready */ }
 }
 function stInit() {
@@ -1579,9 +1896,9 @@ function connectLog() {
     if (j.lines) appendLines(j.lines);
     $('run-live').textContent = j.running ? '⏳ идёт…' : '';
     if (j.running === false && $('btn-start').disabled &&
-        !RUNNING_TAGS.length) $('btn-start').disabled = false;
+        !RUNNING_TAGS.length) setStartEnabled(true);
     if (!j.running && j.lines && j.lines.some(l => l.includes('finished')))
-      $('btn-start').disabled = false;
+      setStartEnabled(true);
   };
 }
 
@@ -1595,6 +1912,10 @@ function svgEl(tag, attrs, parent) {
 function makeSvg(w, h) {
   const s = svgEl('svg', {viewBox:'0 0 ' + w + ' ' + h,
     width:'100%', style:'max-width:' + w + 'px;display:block'});
+  // chart plate: its own dark surface + frame so the plot grid and
+  // series never blend into the page background
+  svgEl('rect', {x: 1, y: 1, width: w - 2, height: h - 2, rx: 10,
+    fill: '#141824', stroke: '#3f4658', 'stroke-width': 1}, s);
   return s;
 }
 const COMP_COLORS = ['#38bdf8','#f472b6','#4ade80','#fbbf24','#c084fc',
@@ -1736,20 +2057,24 @@ function renderSummary(r) {
   const el = $('res-summary'); if (!el) return;
   const m = r.meta || {}, f = m.form || {};
   const cte = (r.cte && r.cte[0]) || null;
+  const isAvg = m.type === 'average';
   let h = '<div class="card" style="margin:10px 0">' +
-    '<div class="cbar" style="margin:0 0 8px"><b>Сводка расчёта</b>' +
-    '<span style="color:var(--dim);font-size:11px">' +
-    (m.started_at || '') + '</span></div>' +
-    '<div class="row" style="flex-wrap:wrap;gap:12px">';
+    '<div class="cbar" style="margin:0 0 8px"><b>Сводка расчёта' +
+    (isAvg ? ' — СРЕДНЕЕ по ' + (m.runs_n || '?') + ' прогонам' : '') +
+    '</b><span style="color:var(--dim);font-size:11px">' +
+    (m.started_at || m.created_at || '') + '</span></div>' +
+    '<div class="row" style="flex-wrap:wrap;gap:12px">'
   const cell = (k, v) => '<div style="min-width:105px">' +
     '<div style="font-size:11px;color:var(--dim)">' + k + '</div>' +
     '<div><b>' + v + '</b></div></div>';
-  h += cell('Система', (f.elem_a || 'Fe') + '\u2013' + (f.elem_b || 'Pt') +
+  h += cell('Система', (f.elem_a || sysSel.a || 'Fe') + '\u2013' +
+            (f.elem_b || sysSel.b || 'Pt') +
             ', x=' + (f.comp !== undefined ? f.comp : 0.5));
   h += cell('Модель', ((f.model || '').split('\\').pop()) || '\u2014');
   h += cell('Точность', String(f.precision || 'fp16').toUpperCase());
   h += cell('Seed', f.seed !== undefined ? f.seed : '\u2014');
   h += cell('Режим', (f.mode || 'mace') + (f.device ? ' \u00b7 ' + f.device : ''));
+  h += cell('Прогоны', isAvg ? (m.runs_n + ' \u2192 среднее') : '1');
   if (cte) {
     h += cell('\u03b1 (\u0444\u0438\u0442)', (cte.alpha_fit * 1e6).toFixed(2) +
               ' \u00b7 10\u207b\u2076 K\u207b\u00b9');
@@ -1854,11 +2179,29 @@ async function loadDeps(refresh) {
          : '') + '</div>';
   $('deps-body').innerHTML = h;
 
-  let m = '<div class="status">Модели в potentials/gpu/:</div>';
-  (j.potentials.gpu || []).forEach(p =>
-    m += '<span class="pill ok">' + p.name + ' · ' + p.mb + ' MB</span>');
-  if (!(j.potentials.gpu || []).length)
-    m += '<span class="pill bad">пусто</span>';
+  // local files (catalog downloads + your own uploads) as a table:
+  // No / name / path to file / green badge
+  const catSet = new Set(j.catalog_names || []);
+  const localFiles = (j.potentials.gpu || [])
+    .concat(j.potentials.cpu || []);
+  let m = '<div class="status">Локальные потенциалы — свои добавленные '
+        + 'файлы и скачанные из каталога в одной таблице:</div>';
+  if (localFiles.length) {
+    m += '<table class="mtab"><tr><th>№</th><th>Название</th>'
+       + '<th>Путь до файла</th><th>Статус</th></tr>';
+    localFiles.forEach((p, i) => {
+      m += '<tr><td class="mnum">' + (i + 1) + '</td>'
+         + '<td class="mname">' + p.name + ' (' + p.mb + ' MB)</td>'
+         + '<td class="murl" style="font-size:10px">' + p.path + '</td>'
+         + '<td><span class="pill ok">✓ локально'
+         + (catSet.has(p.name) ? ' · из каталога' : ' · свой файл')
+         + '</span></td></tr>';
+    });
+    m += '</table>';
+  } else {
+    m += '<span class="pill bad">пусто — добавьте файл или скачайте '
+       + 'из каталога ниже</span>';
+  }
   m += '<div style="margin-top:10px"><input id="model-filter" '
      + 'placeholder="фильтр каталога моделей…" '
      + 'oninput="renderModelCatalog(j)" '
@@ -2168,7 +2511,7 @@ async function potUploadOne(f) {
   try {
     const r = await (await fetch('/api/form')).json();
     applyState({form: r.form, source: null});
-    if (r.running) $('btn-start').disabled = true;
+    if (r.running) setStartEnabled(false);
   } catch (e) { /* server not ready yet */ }
 })();
 refreshModels();

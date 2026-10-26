@@ -8,9 +8,41 @@ estimator falls back to documented pre-calibration guesses and says so
 """
 import json
 import os
+import platform
+import socket
+import time
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROFILE_PATH = os.path.join(PROJ, 'data', 'estim_profile.json')
+
+
+def machine_name():
+    """Stable per-machine id used to SIGN calibration files.
+
+    A calibration belongs to one box (GPU/CPU/driver specific). If the
+    program folder with its data/ is carried to another machine, the
+    foreign profile must not silently feed the estimates - the file name
+    carries this host, and load_profile refuses profiles recorded on a
+    different host.
+    """
+    try:
+        name = socket.gethostname() or platform.node()
+    except Exception:
+        name = 'unknown-host'
+    return '.'.join(ch if (ch.isalnum() or ch in '-_') else '-'
+                     for ch in str(name)) or 'unknown-host'
+
+
+HISTORY_LEN = 8          # last N measurements kept per profile point
+
+
+def profile_path():
+    """The calibration file for THIS machine: data/estim_profile_<host>.json"""
+    return os.path.join(PROJ, 'data',
+                        'estim_profile_{}.json'.format(machine_name()))
+
+
+# kept for backward compat (old files/imports)
+PROFILE_PATH = profile_path()
 
 # Pre-calibration honest guesses (marked as such in the UI):
 #   mace/cuda: real control run: 54.4 ms/step @256 atoms (RTX 3070 Ti),
@@ -209,12 +241,39 @@ def max_atoms_for_vram(profile, total_mb, mode='mace', device='cuda',
     return int(budget // slope)
 
 
+def _foreign(profile):
+    """True if this calibration was recorded on ANOTHER machine.
+
+    Host id travels inside the file too: a profile copied over by hand
+    (or the legacy unsigned file) is refused instead of being averaged
+    into this box's numbers.
+    """
+    host = ((profile or {}).get('machine') or {}).get('hostname')
+    return bool(host) and host != machine_name()
+
+
 def load_profile(path=None):
-    try:
-        with open(path or PROFILE_PATH, encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Load THIS machine's calibration (never a foreign one).
+
+    Order: the signed per-host file, then the legacy common file - but
+    only if it belongs to this host.  A profile from another machine
+    returns {} so the estimator honestly reports 'guess' instead of
+    borrowing someone else's noise.
+    """
+    host_file = path or profile_path()
+    legacy = os.path.join(PROJ, 'data', 'estim_profile.json')
+    for cand in (host_file, legacy):
+        if path and cand != path:
+            continue
+        try:
+            with open(cand, encoding='utf-8') as f:
+                prof = json.load(f)
+        except Exception:
+            continue
+        if _foreign(prof):
+            continue
+        return prof
+    return {}
 
 
 def update_point(profile, mode, device, grid, ms_per_step,
@@ -223,24 +282,44 @@ def update_point(profile, mode, device, grid, ms_per_step,
 
     Returns True if the profile dict changed.
     """
+    """Append a measurement to the point's history and refresh its mean.
+
+    Every finished production window IS a new calibration sample: the
+    point stores the last HISTORY_LEN samples and its ms_per_step is the
+    mean of that window, so a single noisy run cannot drag the estimate.
+    Returns True if anything changed.
+    """
     n = natoms_of(grid)
+    val = round(float(ms_per_step), 2)
     pts = profile.setdefault('points', [])
     for p in pts:
         if (p.get('mode') == mode and p.get('device') == device
                 and p.get('natoms') == n):
-            if abs(float(p.get('ms_per_step', 0)) - float(ms_per_step)) < 1e-9:
+            hist = p.setdefault('history', [])
+            # dedup exact repeats (same value, no info added)
+            if hist and abs(float(hist[-1]['ms']) - val) < 1e-9:
                 return False
-            p['ms_per_step'] = round(float(ms_per_step), 2)
+            hist.append({'ms': val, 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+                         'source': source})
+            del hist[:-HISTORY_LEN]
+            p['ms_per_step'] = round(
+                sum(float(h['ms']) for h in hist) / len(hist), 2)
+            p['samples'] = len(hist)
             p['source'] = source
             return True
     pts.append({'mode': mode, 'device': device, 'grid': int(grid),
-                'natoms': n, 'ms_per_step': round(float(ms_per_step), 2),
-                'vram_mb': None, 'rss_mb': None, 'source': source})
+                'natoms': n, 'ms_per_step': val, 'vram_mb': None,
+                'rss_mb': None, 'source': source, 'samples': 1,
+                'history': [{'ms': val, 'ts': time.strftime(
+                    '%Y-%m-%d %H:%M:%S'), 'source': source}]})
     return True
 
 
 def save_profile(profile, path=None):
-    path = path or PROFILE_PATH
+    """Save into THIS machine's signed file, stamping the host inside."""
+    path = path or profile_path()
+    profile.setdefault('machine', {})['hostname'] = machine_name()
+    profile['saved_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
