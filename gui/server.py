@@ -1953,13 +1953,20 @@ class Handler(BaseHTTPRequestHandler):
             self._json(payload)
             return
         if path == '/api/hints_base':
-            p = os.path.join(PROJ, 'data', 'hints_base.json')
-            try:
-                with open(p, encoding='utf-8') as _hf:
-                    self._json(json.load(_hf))
-            except Exception as _e:
-                self._json({'elements': {}, 'phases': {},
-                            'error': str(_e)})
+            # frozen: the base rides INSIDE the bundle (RESOURCE/_MEIPASS);
+            # dev: repo data/ - a beside-exe data/ is a third candidate
+            _cand = [os.path.join(RESOURCE, 'data', 'hints_base.json'),
+                     os.path.join(PROJ, 'data', 'hints_base.json')]
+            _data, _err = None, 'not found'
+            for _p in _cand:
+                try:
+                    with open(_p, encoding='utf-8') as _hf:
+                        _data = json.load(_hf)
+                    break
+                except Exception as _e:
+                    _err = '{}: {}'.format(_p, _e)
+            self._json(_data if _data else
+                       {'elements': {}, 'phases': {}, 'error': _err})
             return
         if path == '/api/log':
             # REST tail of the console buffer (MCP reads logs from here)
