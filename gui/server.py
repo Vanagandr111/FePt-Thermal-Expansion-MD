@@ -207,6 +207,9 @@ FORM = {
     'eq': 500, 'prod': 1000, 'seed': 42,
     'elem_a': 'Fe', 'elem_b': 'Pt',
 }
+_PY_MISS_LOGGED = False
+
+
 def resolve_python():
     """Interpreter that runs the engine scripts.
 
@@ -241,8 +244,12 @@ def resolve_python():
             p = os.path.join(root, *rel)
             if os.path.isfile(p):
                 return p
-    log('[gui] engine python NOT FOUND; searched: ' +
-        '; '.join(roots) + ' (patterns: libs/, .venv-mace/, venv/)')
+    # one console line per launch, not one per deps poll (~15 s)
+    global _PY_MISS_LOGGED
+    if not _PY_MISS_LOGGED:
+        _PY_MISS_LOGGED = True
+        log('[gui] engine python NOT FOUND; searched: ' +
+            '; '.join(roots) + ' (patterns: libs/, .venv-mace/, venv/)')
     # NEVER fall back to sys.executable when frozen: that IS this exe,
     # and spawning it with -c would start a second server (hangs deps).
     return None
@@ -390,6 +397,29 @@ def _safe_extract_tar(tf, stage):
                 '..' in m.name.split('/'):
             raise RuntimeError('unsafe path in archive: ' + m.name)
     tf.extractall(stage)
+
+
+def first_boot_engine():
+    """Frozen exe with NO side venv (a freshly downloaded exe in any
+    folder) -> create .venv-mace from the system Python and install the
+    engine stack once, narrating everything into the app console. A
+    normal launch (venv present) never enters here."""
+    if resolve_python():
+        return
+    log('[gui] no engine venv next to the exe - first boot? bootstrapping')
+    py, need_url = ensure_engine_python()
+    if not py:
+        if need_url:
+            log('[gui] no system Python 3.10-3.14 either -> paste a Python '
+                'link in the Deps tab (Python-установка) or set FEPT_PYTHON')
+        return
+    log('[gui] engine venv is ready: ' + py)
+    log('[gui] installing the engine stack (numpy, ase, triton, torch cu128,'
+        ' mace) - takes a while and a few GB on the FIRST launch only')
+    for name in ('numpy', 'ase', 'triton', 'torch', 'mace'):
+        install_lib(name)
+    if resolve_python():
+        log('[gui] first boot finished - engine ready, press Запустить')
 
 
 def install_python_job(url):
@@ -2373,6 +2403,9 @@ def main():
         PORT = int(sys.argv[sys.argv.index('--port') + 1])
     for d in (LAMMPS_DIR, GPU_DIR, CPU_DIR):
         os.makedirs(d, exist_ok=True)
+    if FROZEN and not resolve_python():
+        # fresh download in any folder -> build the engine in the background
+        threading.Thread(target=first_boot_engine, daemon=True).start()
     srv = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     srv.daemon_threads = True
     url = 'http://127.0.0.1:{}/'.format(PORT)
