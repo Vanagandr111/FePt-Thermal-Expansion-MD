@@ -92,3 +92,8 @@ _dlltest/
 # machine-specific estimator calibration (per-GPU, regenerate locally)
 data/estim_profile.json
 memwatch*.csv
+
+# app-root runtime state: install manifest + proxy config (per machine)
+install_manifest.json
+proxy.json
+app_root.txt

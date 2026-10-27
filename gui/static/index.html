@@ -170,6 +170,11 @@ button.act.pulse { outline:2px solid var(--acc); }
 .dep-row .st { flex:1; font-size:12px; color:var(--dim);
   word-break:break-all; min-width:120px; }
 .dep-row .btns { display:flex; gap:5px; }
+.nav-item.warn { color:#ff8080; animation:navpulse 1.1s ease-in-out infinite; }
+@keyframes navpulse {
+  0%,100% { box-shadow:none; }
+  50% { box-shadow:0 0 0 3px rgba(255,90,90,.35); }
+}
 .dl-bar { margin:8px 0 4px; }
 .dl-lbl { font-size:12px; color:var(--dim); margin-bottom:4px; }
 .dl-track { height:8px; border-radius:99px; background:#0b1220;
@@ -228,6 +233,29 @@ button.act.pulse { outline:2px solid var(--acc); }
 @keyframes hotpulse { from { filter:brightness(1); } to { filter:brightness(1.5); } }
 #fsbtn { margin-left:6px; font-size:16px; }
 
+/* first-boot splash */
+.boot-splash { position:fixed; inset:0; z-index:200;
+  background:radial-gradient(1200px 700px at 50% 25%, #1a2030 0%, #0b0d13 70%);
+  display:flex; align-items:center; justify-content:center; }
+.boot-card { width:min(560px, 92vw); background:#14161d;
+  border:1px solid #3a3a44; border-radius:14px; padding:26px 24px;
+  box-shadow:0 18px 60px rgba(0,0,0,.55); }
+.boot-title { font-size:24px; font-weight:700; letter-spacing:.5px; }
+.boot-title span { color:#7db4ff; }
+.boot-sub { color:#8a8a99; font-size:12px; margin:4px 0 16px; }
+.boot-h { font-weight:600; margin:10px 0 6px; }
+.boot-note { color:#9fb0c8; font-size:12.5px; line-height:1.5; }
+.boot-row { display:flex; gap:8px; margin-top:10px; }
+.boot-bar { height:12px; border-radius:7px; background:#0e1118;
+  border:1px solid #3a3a44; overflow:hidden; margin-top:10px; }
+.boot-bar b { display:block; height:100%; width:0%;
+  background:linear-gradient(90deg,#2ee6a6,#38b6ff,#a06bff);
+  transition:width .4s ease; }
+.boot-pct { font-size:11px; color:#9fb0c8; text-align:right; margin-top:3px; }
+.boot-log { max-height:150px; overflow:auto; font-size:10.5px;
+  color:#7f8ea3; background:#0e1118; border:1px solid #2a2e3a;
+  border-radius:8px; padding:8px; margin-top:10px; white-space:pre-wrap; }
+.boot-err { color:#f87171; font-size:12px; margin-top:8px; }
 /* hints carousel: cards for the selected element pair */
 .hints-box { border:1px solid #3a3a44; border-radius:8px; padding:8px;
   background:#14161d; }
@@ -280,6 +308,39 @@ button.act.pulse { outline:2px solid var(--acc); }
 </style>
 </head>
 <body>
+<!-- first-boot splash: folder pick + engine install, hides when ready -->
+<div id="boot-splash" class="boot-splash">
+  <div class="boot-card">
+    <div class="boot-title">FePt Thermal Expansion <span>MD</span></div>
+    <div class="boot-sub">многочастичная молекулярная динамика Fe-Pt</div>
+    <div id="setup-modal" style="display:none">
+      <div class="boot-h">Где хранить данные и среду?</div>
+      <div class="boot-note">Сюда программа поставит среду (~3 ГБ), потенциалы,
+        результаты и папку lammps. Своя папка рядом с exe на рабочем столе
+        остаётся чистой — туда кладётся только сам exe.</div>
+      <div class="boot-row">
+        <input id="root-path" placeholder="путь к папке"
+               style="flex:1;background:#0e1118;color:#e6ebf5;
+                      border:1px solid #3a3a44;border-radius:8px;
+                      padding:8px 10px;font-size:13px">
+        <button class="act" onclick="pickFolder()">Обзор…</button>
+      </div>
+      <div class="boot-row">
+        <button class="act go" onclick="setRoot()">Продолжить</button>
+      </div>
+      <div class="boot-err" id="setup-err"></div>
+    </div>
+    <div id="boot-prog" style="display:none">
+      <div class="boot-h" id="boot-step">устанавливаю…</div>
+      <div class="boot-bar"><b id="boot-fill"></b></div>
+      <div class="boot-pct" id="boot-pct">0%</div>
+      <pre class="boot-log" id="boot-log"></pre>
+      <div class="boot-err" id="boot-err"></div>
+      <button class="act" id="boot-retry" style="display:none"
+              onclick="bootRetry()">Повторить</button>
+    </div>
+  </div>
+</div>
 <header>
   <h1>FePt Thermal Expansion</h1>
   <span class="ver" id="hdr-ver">MD GUI</span>
@@ -609,6 +670,16 @@ button.act.pulse { outline:2px solid var(--acc); }
                 onclick="refreshDepsBtn()">Обновить / проверить</button>
       </div>
     </div>
+    <div class="status" style="margin:0 0 8px"
+         title="Папка, где живут среда, потенциалы, результаты и lammps">
+      Главная папка: <b id="app-root-path">…</b>
+      <button class="ghost tiny" onclick="changeAppRoot()"
+              style="margin-left:8px">Изменить</button>
+    </div>
+    <div id="deps-warn" class="status hidden"
+         style="color:#ff8080;font-weight:600;margin:6px 0">
+      ⚠ Не все компоненты установлены — расчёт не стартует.
+      Ставятся кнопками ниже (тяжёлые — по отдельности).</div>
     <div id="dl-bar" class="dl-bar hidden">
       <div class="dl-lbl" id="dl-lbl"></div>
       <div class="dl-track"><b id="dl-fill"></b></div>
@@ -626,6 +697,36 @@ button.act.pulse { outline:2px solid var(--acc); }
     <div id="dl-models"></div>
     <div class="status">Всё стороннее (веса, LAMMPS, torch) скачивается отдельно и
       никогда не встраивается в исполняемый файл — только папки рядом.</div>
+  </div>
+  <div class="card">
+    <div class="cbar" style="margin:0 0 8px">
+      <b>Прокси (загрузки, установки, обновления)</b>
+      <div class="row">
+        <button class="ghost tiny" onclick="proxyTest()">🔌 Проверить
+          прокси (3 цели)</button>
+      </div>
+    </div>
+    <div class="status" style="display:flex;gap:6px;flex-wrap:wrap;
+         align-items:center">
+      <select id="prx-type">
+        <option value="">нет (напрямую)</option>
+        <option value="http">HTTP(S)</option>
+        <option value="socks5">SOCKS5</option>
+      </select>
+      <input id="prx-host" placeholder="адрес (напр. 127.0.0.1)"
+             style="flex:1 1 30%">
+      <input id="prx-port" placeholder="порт" style="width:90px">
+      <input id="prx-user" placeholder="логин (если нужен)"
+             style="flex:0 1 150px">
+      <input id="prx-pass" placeholder="пароль" type="password"
+             style="flex:0 1 150px">
+      <button class="act tiny" onclick="proxySave()">Сохранить</button>
+    </div>
+    <div class="hint">Поддерживаются HTTP(S) и SOCKS5 — с паролем или без
+      (локальный прокси, напр. 127.0.0.1:8080 — логин не нужен).
+      Применяется ко всем загрузкам приложения (модели, LAMMPS, Python,
+      обновления с GitHub) и к установкам через pip.</div>
+    <div class="status" id="proxy-result" style="margin-top:6px"></div>
   </div>
   <div class="cbar" style="margin:14px 0 6px">
     <b>Консоль загрузок и установок</b>
@@ -651,6 +752,10 @@ button.act.pulse { outline:2px solid var(--acc); }
       </div>
     </div>
     <div id="up-status" class="status"></div>
+    <div class="hint">Репозиторий проекта: <a
+      href="https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD"
+      target="_blank">github.com/Vanagandr111/FePt-Thermal-Expansion-MD</a>
+      — обновления приходят оттуда (кнопка «Обновить всё»).</div>
     <h3 style="margin:14px 0 6px">Установка</h3>
     <div class="status" id="ab-info">загрузка…</div>
     <h3 style="margin:14px 0 6px">Статус приложения (хедер)</h3>
@@ -2174,10 +2279,61 @@ async function loadDeps(refresh) {
     h += '<div class="status">Ошибка пробы движка: ' + L.probe_error + '</div>';
   h += '<div style="margin-top:8px" class="status">Интерпретатор движка: ' +
        (j.engine_python || j.executable) +
+       (j.engine_python_version
+           ? ' <span class="pill ok">' + j.engine_python_version + '</span>'
+           : '') +
        '<br>Папки: ' + (j.folders
          ? j.folders.gpu + ' · ' + j.folders.cpu + ' · ' + j.folders.lammps
-         : '') + '</div>';
+         : '') +
+       ' <button class="ghost tiny" ' +
+       'onclick="openPyFolder()">🐍 Папка Python</button></div>';
+  // python download mirrors - all clickable
+  h += '<div class="hint" style="margin-top:6px">Запасные ссылки на ' +
+       'Python (если системного нет): ' +
+       (j.python_links || []).map(l =>
+           '<a href="' + l.url + '" target="_blank">' + l.label + '</a>'
+       ).join(' · ') + '</div>';
+  // LAMMPS mirrors + folder button - all clickable
+  h += '<div class="hint" style="margin-top:6px">LAMMPS ставится ' +
+       'отдельно (своя лицензия, свой релиз): ' +
+       (j.lammps_links || []).map(l =>
+           '<a href="' + l.url + '" target="_blank">' + l.label + '</a>'
+       ).join(' · ') +
+       (j.lammps.found
+           ? ' <button class="ghost tiny" onclick="dlLammpsFolder()">📁 ' +
+             'Папка lammps</button>'
+           : '') + '</div>';
+  // red blinking banner while anything required is missing
+  let missingHeavy = [];
+  try {
+    const comp = j.components || {};
+    missingHeavy = (j.heavy || []).filter(n => !comp[n] || !comp[n].present);
+    if (!j.lammps.found) missingHeavy.push('lammps');
+  } catch (e) {}
+  const warn = $('deps-warn');
+  if (warn) warn.classList.toggle('hidden', missingHeavy.length === 0);
+  // nav badge on the Deps tab while anything heavy is missing
+  document.querySelectorAll('.nav-item[data-sec="deps"]').forEach(el => {
+    el.classList.toggle('warn', missingHeavy.length > 0);
+  });
   $('deps-body').innerHTML = h;
+  // proxy form: fill from the server config (password is never sent)
+  try {
+    const px = j.proxy || {};
+    if ($('prx-type')) $('prx-type').value = px.enabled ? px.type : '';
+    if ($('prx-host')) $('prx-host').value = px.enabled
+        ? (px.addr || '').split(':')[0] : '';
+    if ($('prx-port')) $('prx-port').value = px.enabled
+        ? ((px.addr || '').split(':')[1] || '') : '';
+    if ($('prx-user')) $('prx-user').value = '';
+    if ($('prx-pass')) $('prx-pass').value = '';
+    const pr = $('proxy-result');
+    if (pr) pr.innerHTML = px.enabled
+        ? 'Сейчас: <span class="pill ok">' + px.type + ' ' + px.addr +
+          '</span>' + (px.auth ? ' (с логином — пароль введи заново при ' +
+          'следующем изменении)' : ' (без пароля)')
+        : 'Прокси не настроен — загрузки идут напрямую.';
+  } catch (e) {}
 
   // local files (catalog downloads + your own uploads) as a table:
   // No / name / path to file / green badge
@@ -2260,6 +2416,65 @@ async function pyInstall() {
     pollDl();
     setTimeout(() => loadDeps(true), 6000);
   } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
+}
+async function proxySave() {
+  const st = $('proxy-result');
+  const body = {
+    type: ($('prx-type') || {}).value || '',
+    host: (($('prx-host') || {}).value || '').trim(),
+    port: (($('prx-port') || {}).value || '').trim(),
+    user: (($('prx-user') || {}).value || '').trim(),
+    pass: ($('prx-pass') || {}).value || '',
+  };
+  if (st) st.textContent = 'Сохраняю…';
+  try {
+    const r = await (await fetch('/api/proxy/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)})).json();
+    if (!r.ok) { if (st) st.textContent = 'Ошибка: ' + (r.error || '?'); return; }
+    if (st) st.textContent = 'Прокси сохранён — нажми «Проверить прокси», ' +
+      'чтобы убедиться, что он работает (3 цели).';
+  } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
+}
+async function proxyTest() {
+  const st = $('proxy-result');
+  if (st) st.textContent = 'Проверяю 3 цели (GitHub API, PyPI, PyTorch index)…';
+  try {
+    const r = await (await fetch('/api/proxy/test', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: '{}'})).json();
+    let h = '';
+    (r.results || []).forEach(x => {
+      h += '<div>' + (x.ok
+        ? '✅ ' + x.target + ': HTTP ' + x.code + ' · ' + x.ms + ' мс · ' +
+          x.kbps.toFixed(0) + ' КБ/с (' + (x.bytes / 1024).toFixed(0) +
+          ' КБ получено)'
+        : '❌ ' + x.target + ': ' + (x.error || 'ошибка')) + '</div>';
+    });
+    if (st) st.innerHTML = h || 'нет данных';
+    if (!r.ok && r.proxy && !r.proxy.enabled && st) {
+      st.innerHTML += '<div class="hint">Прокси не настроен — проверка ' +
+        'шла напрямую.</div>';
+    }
+  } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
+}
+async function openPyFolder() {
+  const j = window._DEPS_J || {};
+  const p = j.engine_python;
+  if (!p) { alert('Python ещё не установлен — сначала поставь среду'); return; }
+  try {
+    await fetch('/api/open_path', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: p})});
+  } catch (e) { alert('Ошибка: ' + e); }
+}
+async function dlLammpsFolder() {
+  try {
+    const r = await (await fetch('/api/open_lammps', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: '{}'})).json();
+    if (!r.ok) alert(r.error || 'папка lammps не найдена');
+  } catch (e) { alert('Ошибка: ' + e); }
 }
 async function installLib(name) {
   try {
@@ -2506,38 +2721,131 @@ async function potUploadOne(f) {
   dz.addEventListener('click', openPotFolder);
 }
 
-/* ---------------- boot ---------------- */
-(async () => {
+/* ---------------- first-boot splash / app-folder setup --------------- */
+async function pickFolder() {
+  const st = $('setup-err');
+  if (st) st.textContent = 'Открываю выбор папки на рабочем столе\u2026';
   try {
-    const r = await (await fetch('/api/form')).json();
-    applyState({form: r.form, source: null});
-    if (r.running) setStartEnabled(false);
-  } catch (e) { /* server not ready yet */ }
-})();
-refreshModels();
-atomCount();
-connectLog();
-loadElements();
-pollMetrics();
-potDropInit();
-pollDl();
-/* estimate: recalc on any form field change */
-document.querySelectorAll('#sec-run input, #sec-run select')
-  .forEach(el => {
-    el.addEventListener('input', updateEstimate);
-    el.addEventListener('change', updateEstimate);
+    const j = await (await fetch('/api/boot/pick_folder', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: '{}'})).json();
+    if (j.path) { $('root-path').value = j.path; st.textContent = ''; }
+    else if (st) st.textContent = 'папка не выбрана';
+  } catch (e) { if (st) st.textContent = 'Ошибка: ' + e; }
+}
+async function bootRetry() {
+  const root = ($('root-path').value || '').trim();
+  if (root) { $('setup-err').textContent = ''; setRoot(); }
+  else location.reload();
+}
+async function setRoot() {
+  const root = ($('root-path').value || '').trim();
+  if (!root) { $('setup-err').textContent = 'Сначала выбери папку'; return; }
+  $('setup-err').textContent = '';
+  $('setup-modal').style.display = 'none';
+  $('boot-prog').style.display = '';
+  try {
+    const j = await (await fetch('/api/boot/set_root', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: root})})).json();
+    if (!j.ok) {
+      $('boot-prog').style.display = 'none';
+      $('setup-modal').style.display = '';
+      $('setup-err').textContent = j.error || 'ошибка';
+      return;
+    }
+  } catch (e) { $('setup-err').textContent = 'Нет связи с сервером: ' + e; return; }
+  bootPoll();
+}
+let BOOT_UI = false;
+async function refreshAppRoot() {
+  try {
+    const b = await (await fetch('/api/boot')).json();
+    const el = $('app-root-path');
+    if (el) el.textContent = b.root || '\u2014';
+  } catch (e) {}
+}
+function changeAppRoot() {
+  $('boot-splash').style.display = '';
+  $('setup-modal').style.display = '';
+  $('boot-prog').style.display = 'none';
+  $('setup-err').textContent = '';
+  refreshAppRoot().then(() => {
+    const el = $('app-root-path');
+    $('root-path').value = (el && el.textContent !== '\u2014')
+      ? el.textContent : '';
   });
-updateEstimate();
-/* structure viewer: interactions + gentle auto-rotation while visible */
-stInit();
-loadStructure();
-(function stAnimate() {
-  if ((stAuto || stThermal) && S) {
-    stTime += 0.06;
-    drawStructure();
+}
+async function bootPoll() {
+  while (true) {
+    let b = null;
+    try { b = await (await fetch('/api/boot')).json(); } catch (e) {}
+    if (b) {
+      if (b.need_folder || b.phase === 'need-folder') {
+        $('setup-modal').style.display = '';
+        $('boot-prog').style.display = 'none';
+        if (!$('root-path').value) $('root-path').value = b.default || '';
+      } else if (b.phase === 'setup') {
+        $('setup-modal').style.display = 'none';
+        $('boot-prog').style.display = '';
+        const pct = Math.max(0, Math.min(100, b.pct | 0));
+        $('boot-fill').style.width = pct + '%';
+        $('boot-pct').textContent = pct + '%';
+        $('boot-step').textContent = b.line || 'устанавливаю\u2026';
+        const lg = $('boot-log');
+        lg.textContent = (b.logs || []).join('\n');
+        lg.scrollTop = lg.scrollHeight;
+        $('boot-err').textContent = '';
+        $('boot-retry').style.display = 'none';
+      } else if (b.phase === 'error') {
+        $('boot-prog').style.display = '';
+        $('boot-err').textContent = 'Ошибка: ' + (b.error || '?');
+        $('boot-retry').style.display = '';
+      } else if (b.phase === 'ready') {
+        $('boot-splash').style.display = 'none';
+        if (!BOOT_UI) { BOOT_UI = true; startUi(); }
+        return;
+      }
+    }
+    await new Promise(r => setTimeout(r, 1000));
   }
-  requestAnimationFrame(stAnimate);
-})();
+}
+/* ---------------- boot ---------------- */
+function startUi() {
+  (async () => {
+    try {
+      const r = await (await fetch('/api/form')).json();
+      applyState({form: r.form, source: null});
+      if (r.running) setStartEnabled(false);
+    } catch (e) { /* server not ready yet */ }
+  })();
+  refreshAppRoot();
+  refreshModels();
+  atomCount();
+  connectLog();
+  loadElements();
+  pollMetrics();
+  potDropInit();
+  pollDl();
+  /* estimate: recalc on any form field change */
+  document.querySelectorAll('#sec-run input, #sec-run select')
+    .forEach(el => {
+      el.addEventListener('input', updateEstimate);
+      el.addEventListener('change', updateEstimate);
+    });
+  updateEstimate();
+  /* structure viewer: interactions + gentle auto-rotation while visible */
+  stInit();
+  loadStructure();
+  (function stAnimate() {
+    if ((stAuto || stThermal) && S) {
+      stTime += 0.06;
+      drawStructure();
+    }
+    requestAnimationFrame(stAnimate);
+  })();
+}
+bootPoll();
 </script>
 </body>
 </html>

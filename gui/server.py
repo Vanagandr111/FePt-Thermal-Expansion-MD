@@ -44,9 +44,11 @@ if getattr(sys, 'stdout', None) is None:
     sys.stdout = _io.StringIO()
     sys.stderr = _io.StringIO()
 
-# Paths: source layout when running from the repo, exe layout when frozen
-# (PyInstaller): everything external lives NEXT TO the exe (potentials/,
-# lammps/, libs/) and only our own code is inside the bundle.
+# Paths: source layout when running from the repo. A frozen exe keeps
+# only its own code in the bundle and stores ALL data (venv, potentials,
+# results, lammps) in a USER-CHOSEN app-root folder picked in the
+# first-boot modal - never next to the exe, so a copy on the Desktop
+# or in Downloads stays clean.
 FROZEN = bool(getattr(sys, 'frozen', False))
 if FROZEN:
     GUI_DIR = os.path.dirname(os.path.abspath(sys.executable))
@@ -76,6 +78,68 @@ LAMMPS_DIR = os.path.join(PROJ, 'lammps')
 GPU_DIR = os.path.join(PROJ, 'potentials', 'gpu')
 CPU_DIR = os.path.join(PROJ, 'potentials', 'cpu')
 ELEMENTS_PATH = os.path.join(PROJ, 'data', 'elements.json')
+
+
+# ---------------- app root (frozen first boot) ------------------------
+APP_NAME = 'FePtMD'
+BOOT = {'need_folder': False, 'phase': 'ready', 'pct': 0, 'line': '',
+        'logs': [], 'error': '', 'root': '', 'default': ''}
+
+
+def _approot_file():
+    # One tiny text file next to the exe remembers the chosen root; if
+    # that dir is not writable (Program Files) fall back to %APPDATA%.
+    p = os.path.join(GUI_DIR, 'app_root.txt')
+    if os.access(GUI_DIR, os.W_OK):
+        return p
+    d = os.path.join(os.environ.get('APPDATA', GUI_DIR), APP_NAME)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, 'app_root.txt')
+
+
+def load_app_root():
+    try:
+        with open(_approot_file(), encoding='utf-8') as f:
+            p = f.read().strip()
+        return p or None
+    except OSError:
+        return None
+
+
+def save_app_root(path):
+    try:
+        with open(_approot_file(), 'w', encoding='utf-8') as f:
+            f.write(path)
+    except OSError as e:
+        log('[gui] cannot remember the app root: ' + str(e))
+
+
+def default_app_root():
+    d = (os.environ.get('LOCALAPPDATA') or
+         os.path.expanduser('~') or '.')
+    return os.path.join(d, APP_NAME)
+
+
+def apply_app_root(root):
+    # Point every data path at the chosen folder.
+    global PROJ, LAMMPS_DIR, GPU_DIR, CPU_DIR, ELEMENTS_PATH
+    PROJ = root
+    LAMMPS_DIR = os.path.join(root, 'lammps')
+    GPU_DIR = os.path.join(root, 'potentials', 'gpu')
+    CPU_DIR = os.path.join(root, 'potentials', 'cpu')
+    ELEMENTS_PATH = os.path.join(root, 'data', 'elements.json')
+    os.environ['FEPT_PROJECT_DIR'] = root
+    BOOT['root'] = root
+
+
+if FROZEN:
+    _saved_root = load_app_root()
+    if _saved_root and os.path.isdir(_saved_root):
+        apply_app_root(_saved_root)
+    else:
+        BOOT['need_folder'] = True
+        BOOT['phase'] = 'need-folder'
+        BOOT['default'] = default_app_root()
 GH_API_LATEST = 'https://api.github.com/repos/lammps/lammps/releases/latest'
 # ACEsuit foundation-model catalog (mace-mp / mace-foundations releases).
 # Weights are fetched ON DEMAND into potentials/gpu/ - keeping ~1 GB of
@@ -400,13 +464,13 @@ def _safe_extract_tar(tf, stage):
 
 
 def first_boot_engine():
-    """Frozen exe with NO side venv (a freshly downloaded exe in any
-    folder) -> create .venv-mace from the system Python and install the
-    engine stack once, narrating everything into the app console. A
-    normal launch (venv present) never enters here."""
+    # Frozen exe with NO venv in the chosen app folder: build the venv
+    # and install the LIGHT stack only (fast first boot even on slow
+    # lines). torch/triton/mace/LAMMPS are installed on demand from the
+    # Deps tab - the tab blinks red until they are all present.
     if resolve_python():
         return
-    log('[gui] no engine venv next to the exe - first boot? bootstrapping')
+    log('[gui] no engine venv in the app folder - bootstrapping')
     py, need_url = ensure_engine_python()
     if not py:
         if need_url:
@@ -414,12 +478,66 @@ def first_boot_engine():
                 'link in the Deps tab (Python-установка) or set FEPT_PYTHON')
         return
     log('[gui] engine venv is ready: ' + py)
-    log('[gui] installing the engine stack (numpy, ase, triton, torch cu128,'
-        ' mace) - takes a while and a few GB on the FIRST launch only')
-    for name in ('numpy', 'ase', 'triton', 'torch', 'mace'):
-        install_lib(name)
-    if resolve_python():
-        log('[gui] first boot finished - engine ready, press Запустить')
+    _boot_setup()
+
+
+def _boot_setup():
+    # First boot installs only the LIGHT stack into the chosen folder
+    # (fast even on slow lines); torch/triton/mace/LAMMPS are on-demand
+    # from the Deps tab - the tab blinks red until they are all present.
+    steps = list(LIGHT_LIBS)
+
+    def note(i, msg, total=len(steps) + 1):
+        BOOT.update(pct=int(100.0 * i / total), phase='setup', line=msg)
+        BOOT['logs'] = (BOOT.get('logs') or []) + [msg]
+        del BOOT['logs'][:-40]
+        log('[boot] ' + msg)
+
+    try:
+        note(0, 'создаю среду (.venv-mace) в ' + PROJ)
+        py, need_url = ensure_engine_python()
+        if not py:
+            if need_url:
+                note(1, 'нужен системный Python 3.10-3.14 - установи его и '
+                        'нажми Повторить')
+                BOOT.update(phase='error', error='no-python')
+            else:
+                BOOT.update(phase='error', error='venv-failed')
+            return
+        for i, name in enumerate(steps, start=1):
+            note(i, 'устанавливаю ' + name + '...')
+            install_lib(name)
+        if resolve_python():
+            BOOT.update(phase='ready', pct=100, line='готово')
+            log('[boot] engine ready in ' + PROJ)
+        else:
+            BOOT.update(phase='error', error='engine-missing')
+    except Exception as e:
+        BOOT.update(phase='error', error=str(e))
+
+
+def native_folder_dialog():
+    # Visible Windows folder picker on the user's own desktop: the exe
+    # has no tkinter, so use PowerShell + WinForms (always present).
+    if not IS_WIN:
+        return None
+    ps = ('Add-Type -AssemblyName System.Windows.Forms; '
+          '$d = New-Object System.Windows.Forms.FolderBrowserDialog; '
+          '$d.Description = "Где хранить данные FePt MD '
+          '(среда, потенциалы, результаты)"; '
+          '$d.ShowNewFolderButton = $true; '
+          'if ($d.ShowDialog() -eq '
+          '[System.Windows.Forms.DialogResult]::OK) { $d.SelectedPath }')
+    try:
+        r = subprocess.run(
+            ['powershell', '-NoProfile', '-STA', '-Command', ps],
+            capture_output=True, text=True, timeout=600,
+            creationflags=NOWIN)
+        p = (r.stdout or '').strip()
+        return p if p and os.path.isdir(p) else None
+    except Exception as e:
+        log('[gui] folder dialog failed: ' + str(e))
+        return None
 
 
 def install_python_job(url):
@@ -656,6 +774,15 @@ def find_lmp():
         return None
 
 
+def engine_py_ver(py):
+    # one cheap 'python -V' subprocess - collect_deps caches this
+    try:
+        return subprocess.run([py, '-V'], capture_output=True,
+                              text=True, timeout=15).stdout.strip()
+    except Exception:
+        return ''
+
+
 def collect_deps(refresh=False):
     now = time.time()
     if not refresh and _DEPS_CACHE['data'] and now - _DEPS_CACHE['t'] < 120:
@@ -722,6 +849,16 @@ def collect_deps(refresh=False):
                                 for p in scan_potentials().get('gpu', [])]],
         'catalog_names': [n for (n, _f, _l, _m) in MODEL_CATALOG],
         'folders': {'gpu': GPU_DIR, 'cpu': CPU_DIR, 'lammps': LAMMPS_DIR},
+        # ---- fast component state + mirrors + proxy (deps tab) ----
+        'components': engine_component_state(),
+        'heavy': list(HEAVY_LIBS),
+        'light': list(LIGHT_LIBS),
+        'python_links': list(PYTHON_LINKS),
+        'lammps_links': list(LAMMPS_LINKS),
+        'proxy': proxy_summary(),
+        'manifest_at': manifest_load().get('updated_at', ''),
+        'engine_python_version': (engine_py_ver(engine_py)
+                                  if engine_py else ''),
     }
     _DEPS_CACHE['t'] = now
     _DEPS_CACHE['data'] = data
@@ -1270,7 +1407,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.0.0'
+APP_VERSION = '2.1.0'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -1560,7 +1697,220 @@ DL = {'active': False, 'label': '', 'have': 0, 'total': 0, 'mode': 'bytes',
 # tab -> no triton at all -> 'triton dead', so the installer owns it.
 TRITON_SPEC = ['triton-windows'] if os.name == 'nt' else ['triton']
 
+# ---------------- proxy (HTTP(S) / SOCKS5, optional auth) --------------
+# Config lives in the app root (proxy.json); it applies to EVERY download
+# the app does (python, lammps, models, updates) and to pip via --proxy.
+PROXY_CFG = {'type': '', 'host': '', 'port': '', 'user': '', 'pass': ''}
+PROXY_PATH = os.path.join(PROJ, 'proxy.json')
+
+
+def load_proxy():
+    global PROXY_PATH
+    PROXY_PATH = os.path.join(PROJ, 'proxy.json')
+    try:
+        with open(PROXY_PATH, encoding='utf-8') as f:
+            cfg = json.load(f)
+        if isinstance(cfg, dict):
+            PROXY_CFG.update({k: str(cfg.get(k) or '')
+                              for k in ('type', 'host', 'port', 'user',
+                                        'pass')})
+    except (OSError, ValueError):
+        pass
+
+
+def save_proxy(cfg):
+    global PROXY_PATH
+    PROXY_PATH = os.path.join(PROJ, 'proxy.json')
+    for k in ('type', 'host', 'port', 'user', 'pass'):
+        PROXY_CFG[k] = str(cfg.get(k) or '')
+    with open(PROXY_PATH, 'w', encoding='utf-8') as f:
+        json.dump({k: PROXY_CFG[k] for k in
+                   ('type', 'host', 'port', 'user', 'pass')},
+                  f, ensure_ascii=False, indent=1)
+
+
+def _socks_enable():
+    # Make socks5:// proxy URLs usable: PySocks lives in the engine venv
+    # (a light dep), pull it into sys.path when needed.
+    if PROXY_CFG['type'] != 'socks5':
+        return True
+    try:
+        import socks                     # noqa: F401
+        return True
+    except ImportError:
+        pass
+    import glob as _g
+    cands = _g.glob(os.path.join(PROJ, '.venv-mace', 'Lib',
+                                 'site-packages'))
+    cands += _g.glob(os.path.join(PROJ, '.venv-mace', 'lib',
+                                  'python*', 'site-packages'))
+    for cand in cands:
+        if cand not in sys.path:
+            sys.path.insert(0, cand)
+        try:
+            import socks                 # noqa: F401
+            return True
+        except ImportError:
+            continue
+    return False
+
+
+def proxy_opener():
+    # urllib opener honouring the saved proxy (None = direct connection)
+    t = (PROXY_CFG.get('type') or '').lower()
+    if t in ('', 'none', 'off') or not PROXY_CFG.get('host'):
+        return None
+    host, port = PROXY_CFG['host'], PROXY_CFG.get('port') or ''
+    auth = ''
+    if PROXY_CFG.get('user'):
+        from urllib.parse import quote
+        auth = quote(PROXY_CFG['user'], safe='') + ':' + \
+            quote(PROXY_CFG.get('pass') or '', safe='') + '@'
+    if t == 'socks5':
+        if not _socks_enable():
+            raise RuntimeError('SOCKS5: PySocks не найден - поставь '
+                               'компонент pysocks в Зависимостях')
+        url = 'socks5h://{}{}:{}'.format(auth, host, port or 1080)
+    else:                       # http / https proxy
+        url = 'http://{}{}:{}'.format(auth, host, port or 8080)
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({'http': url, 'https': url}))
+
+
+def proxy_summary():
+    # Safe-to-show proxy info for the deps tab (password never leaks)
+    t = (PROXY_CFG.get('type') or '').lower()
+    if t in ('', 'none') or not PROXY_CFG.get('host'):
+        return {'enabled': False}
+    return {'enabled': True, 'type': t,
+            'addr': '{}:{}'.format(PROXY_CFG['host'],
+                                   PROXY_CFG.get('port') or ''),
+            'auth': bool(PROXY_CFG.get('user'))}
+
+
+def url_open(req, timeout=60):
+    # urlopen through the configured proxy when one is set
+    op = proxy_opener()
+    if op is None:
+        return urllib.request.urlopen(req, timeout=timeout)
+    return op.open(req, timeout=timeout)
+
+
+def pip_proxy_args():
+    # --proxy ... for pip (http(s) directly; socks5 once PySocks is in venv)
+    t = (PROXY_CFG.get('type') or '').lower()
+    if t in ('', 'none') or not PROXY_CFG.get('host'):
+        return []
+    host, port = PROXY_CFG['host'], PROXY_CFG.get('port') or ''
+    if t == 'socks5':
+        user = PROXY_CFG.get('user') or ''
+        auth = (user + ':' + PROXY_CFG.get('pass', '') + '@') if user else ''
+        return ['--proxy',
+                'socks5://{}{}:{}'.format(auth, host, port or 1080)]
+    return ['--proxy', 'http://{}:{}'.format(host, port or 8080)]
+
+
+# ---------------- install manifest (fast starts) ------------------------
+# Every install is recorded in <app root>/install_manifest.json, so the
+# splash loader only does a sub-second presence check on later launches
+# instead of re-verifying the whole environment every time.
+INSTALL_LIBS = ['numpy', 'ase', 'pysocks', 'triton', 'torch', 'mace']
+LIGHT_LIBS = ['numpy', 'ase', 'pysocks']
+# Heavy parts are NEVER installed on first boot: torch alone is ~2.5 GB
+# (slow lines) and LAMMPS ships under its own license - the user clicks
+# Install in the Deps tab and the tab blinks red until everything is in.
+HEAVY_LIBS = ['triton', 'torch', 'mace']
+
+TORCH_MIRRORS = [
+    ['torch', '--index-url', 'https://download.pytorch.org/whl/cu128'],
+    ['torch', '--index-url', 'https://pypi.org/simple'],
+    ['torch', '--index-url', 'https://download.pytorch.org/whl/cu126'],
+]
+
+PYTHON_LINKS = [
+    {'label': 'python.org - официальный установщик',
+     'url': 'https://www.python.org/downloads/'},
+    {'label': 'python-build-standalone - portable zip (astral-sh)',
+     'url': 'https://github.com/astral-sh/python-build-standalone/releases'},
+    {'label': 'зеркало: релизы этого проекта',
+     'url': 'https://github.com/Vanagandr111/FePt-Thermal-Expansion-MD/releases'},
+]
+
+LAMMPS_LINKS = [
+    {'label': 'LAMMPS releases (GitHub, Windows installer)',
+     'url': 'https://github.com/lammps/lammps/releases'},
+    {'label': 'официальная страница загрузки (инструкции)',
+     'url': 'https://www.lammps.org/download.html'},
+]
+
+
+def manifest_path():
+    return os.path.join(PROJ, 'install_manifest.json')
+
+
+def manifest_load():
+    try:
+        with open(manifest_path(), encoding='utf-8') as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def manifest_note(name, info):
+    m = manifest_load()
+    libs = m.get('libs') or {}
+    libs[name] = info
+    m['libs'] = libs
+    m['updated_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        with open(manifest_path(), 'w', encoding='utf-8') as f:
+            json.dump(m, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
+def _site_packages():
+    import glob as _g
+    for pat in (os.path.join(PROJ, '.venv-mace', 'Lib', 'site-packages'),
+                os.path.join(PROJ, '.venv-mace', 'lib', 'python*',
+                             'site-packages')):
+        hit = sorted(_g.glob(pat))
+        if hit:
+            return hit[0]
+    return None
+
+
+def engine_component_state():
+    # Fast presence check for the splash loader: NO interpreter spawn -
+    # just the venv site-packages dir plus the recorded manifest.
+    sp = _site_packages()
+    m = manifest_load()
+    out = {}
+    for name in INSTALL_LIBS:
+        # a package may be a dir, a single .py module (PySocks ->
+        # socks.py), or land with different casing (PySocks/)
+        present = False
+        if sp:
+            low = name.lower()
+            try:
+                for entry in os.listdir(sp):
+                    el = entry.lower()
+                    if el == low or el.startswith(low + '.') or \
+                            el.startswith(low + '-'):
+                        present = True
+                        break
+            except OSError:
+                pass
+        ver = ((m.get('libs') or {}).get(name) or {}).get('version', '')
+        out[name] = {'present': present, 'version': ver}
+    lmp = find_lmp() if 'find_lmp' in globals() else None
+    out['lammps'] = {'present': bool(lmp), 'version': '', 'path': lmp or ''}
+    return out
+
+
 INSTALL_SPECS = {
+    'pysocks': ['pysocks'],
     'numpy': ['numpy'],
     'scipy': ['scipy'],
     'pandas': ['pandas'],
@@ -1605,38 +1955,54 @@ def install_lib(name):
                 'Run bootstrap.bat (creates .venv-mace) or set FEPT_PYTHON.')
             dl_end('интерпретатор не найден - запусти bootstrap.bat')
         return
-    log('[gui] pip install {} into {}'.format(spec[0], py))
-    dl_begin('pip install ' + spec[0], mode='indeterminate')
+    # torch: walk the mirror chain (pytorch index -> pypi -> cu126)
+    variants = ([list(s) for s in TORCH_MIRRORS]
+                if name == 'torch' else [list(spec)])
+    r, vspec = None, list(spec)
     try:
-        r = subprocess.run([py, '-m', 'pip', 'install'] + spec,
-                           capture_output=True, text=True, timeout=1800,
-                           creationflags=NOWIN)
-        for line in (r.stdout or '').strip().splitlines()[-4:]:
-            log('[gui]   ' + line)
-        if r.returncode != 0:
-            log('[gui] pip FAILED (code {}): {}'.format(
-                r.returncode, (r.stderr or '')[-400:]))
-        else:
-            log('[gui] pip OK: ' + spec[0])
-            if name == 'torch' and not _triton_present(py):
-                log('[gui] torch OK -> installing ' + TRITON_SPEC[0] +
-                    ' (needed by torch.compile)')
-                rt = subprocess.run([py, '-m', 'pip', 'install'] +
-                                    list(TRITON_SPEC),
-                                    capture_output=True, text=True,
-                                    timeout=1800, creationflags=NOWIN)
-                for line in (rt.stdout or '').strip().splitlines()[-3:]:
-                    log('[gui]   ' + line)
-                if rt.returncode != 0:
-                    log('[gui] pip FAILED (code {}): {}'.format(
-                        rt.returncode, (rt.stderr or '')[-300:]))
-                else:
-                    log('[gui] pip OK: ' + TRITON_SPEC[0])
-        _DEPS_CACHE['t'] = 0.0
+        for vi, vspec in enumerate(variants):
+            log('[gui] pip install {} into {} (mirror {}/{})'.format(
+                vspec[0], py, vi + 1, len(variants)))
+            dl_begin('pip install ' + vspec[0], mode='indeterminate')
+            r = subprocess.run([py, '-m', 'pip', 'install'] +
+                               pip_proxy_args() + vspec,
+                               capture_output=True, text=True,
+                               timeout=1800, creationflags=NOWIN)
+            if r.returncode == 0:
+                break
     except Exception as e:
         log('[gui] pip error: ' + str(e))
+        r = None
     finally:
         dl_end('pip install завершён: ' + spec[0])
+    if r is None:
+        return
+    for line in (r.stdout or '').strip().splitlines()[-4:]:
+        log('[gui]   ' + line)
+    if r.returncode != 0:
+        log('[gui] pip FAILED (code {}): {}'.format(
+            r.returncode, (r.stderr or '')[-400:]))
+        return
+    log('[gui] pip OK: ' + vspec[0])
+    if name == 'torch' and not _triton_present(py):
+        log('[gui] torch OK -> installing ' + TRITON_SPEC[0] +
+            ' (needed by torch.compile)')
+        rt = subprocess.run([py, '-m', 'pip', 'install'] +
+                            pip_proxy_args() + list(TRITON_SPEC),
+                            capture_output=True, text=True,
+                            timeout=1800, creationflags=NOWIN)
+        for tline in (rt.stdout or '').strip().splitlines()[-3:]:
+            log('[gui]   ' + tline)
+        if rt.returncode != 0:
+            log('[gui] pip FAILED (code {}): {}'.format(
+                rt.returncode, (rt.stderr or '')[-300:]))
+        else:
+            log('[gui] pip OK: ' + TRITON_SPEC[0])
+    # record into the install manifest -> fast splash starts later
+    idx = (vspec[vspec.index('--index-url') + 1]
+           if '--index-url' in vspec else 'pypi')
+    manifest_note(name, {'spec': vspec[0], 'index': idx})
+    _DEPS_CACHE['t'] = 0.0
 
 
 def _torch_present(py):
@@ -1666,55 +2032,67 @@ def _triton_present(py):
 def download_url(url, dest, label, attempts=4):
     """Stream-download with progress into the console log.
 
+    url may be ONE url or a LIST of mirrors - every failure moves to the
+    next mirror before the retry budget is spent, so a dead CDN or a
+    blocked github mirror never blocks the user.
+
     Failure-safety: DL['active'] is ALWAYS released (a WinError 10054
     reset used to leave it True forever, so every later download click
     answered 'another transfer is already active' until a restart), and
     transient connection resets are retried before giving up.
     """
-    log('[gui] download {} <- {}'.format(label, url))
+    urls = list(url) if isinstance(url, (list, tuple)) else [url]
     tmp = dest + '.part'
     last_err = None
-    for attempt in range(1, attempts + 1):
-        try:
-            req = urllib.request.Request(
-                url, headers={'User-Agent': 'fept-gui/1.8'})
-            done = 0
-            dl_begin(label)
+    for u_i, url in enumerate(urls):
+        if len(urls) > 1:
+            log('[gui] download {} <- mirror {}/{}: {}'.format(
+                label, u_i + 1, len(urls), url))
+        else:
+            log('[gui] download {} <- {}'.format(label, url))
+        for attempt in range(1, attempts + 1):
             try:
-                with urllib.request.urlopen(req, timeout=60) as r, \
-                        open(tmp, 'wb') as w:
-                    total = int(r.headers.get('Content-Length') or 0)
-                    DL['total'] = total
-                    while True:
-                        chunk = r.read(1 << 20)
-                        if not chunk:
-                            break
-                        w.write(chunk)
-                        done += len(chunk)
-                        DL['have'] = done
-                        if total and done % (50 << 20) < (1 << 20):
-                            log('[gui]   {:.0f} / {:.0f} MB'.format(
-                                done / 1e6, total / 1e6))
-            finally:
+                req = urllib.request.Request(
+                    url, headers={'User-Agent': 'fept-gui/1.8'})
+                done = 0
+                dl_begin(label)
+                try:
+                    with url_open(req, timeout=60) as r, \
+                            open(tmp, 'wb') as w:
+                        total = int(r.headers.get('Content-Length') or 0)
+                        DL['total'] = total
+                        while True:
+                            chunk = r.read(1 << 20)
+                            if not chunk:
+                                break
+                            w.write(chunk)
+                            done += len(chunk)
+                            DL['have'] = done
+                            if total and done % (50 << 20) < (1 << 20):
+                                log('[gui]   {:.0f} / {:.0f} MB'.format(
+                                    done / 1e6, total / 1e6))
+                finally:
+                    DL['active'] = False
+                os.replace(tmp, dest)
+                size = os.path.getsize(dest)
+                log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
+                dl_end('сохранён: ' + os.path.basename(dest))
+                return dest
+            except Exception as e:
+                last_err = e
                 DL['active'] = False
-            os.replace(tmp, dest)
-            size = os.path.getsize(dest)
-            log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
-            dl_end('сохранён: ' + os.path.basename(dest))
-            return dest
-        except Exception as e:
-            last_err = e
-            DL['active'] = False
-            if attempt < attempts:
-                log('[gui] download attempt {}/{} failed ({}), '
-                    'retrying...'.format(attempt, attempts, e))
-                time.sleep(3)
+                log('[gui] mirror {}/{} attempt {}/{} failed ({})'.format(
+                    u_i + 1, len(urls), attempt, attempts, e))
+                if attempt < attempts:
+                    time.sleep(3)
+                else:
+                    log('[gui] mirror exhausted, moving to the next one')
     try:
         os.unlink(tmp)
     except OSError:
         pass
-    dl_end('ошибка загрузки: ' + str(last_err))
-    raise last_err
+    dl_end('ошибка загрузки (все зеркала): ' + str(last_err))
+    raise RuntimeError('загрузка не удалась (все зеркала): ' + str(last_err))
 
 
 def download_lammps():
@@ -1723,9 +2101,10 @@ def download_lammps():
         log('[gui] LAMMPS already present: ' + find_lmp())
         return
     try:
-        with urllib.request.urlopen(GH_API_LATEST, timeout=30) as r:
+        with url_open(GH_API_LATEST, timeout=30) as r:
             rel = json.load(r)
-        assets = [(a['name'], a['browser_download_url']) for a in rel['assets']]
+        assets = [(a['name'], a['browser_download_url'])
+                  for a in rel['assets']]
     except Exception as e:
         log('[gui] ERROR: cannot query LAMMPS releases: ' + str(e))
         log('[gui] manual page: https://www.lammps.org/download.html')
@@ -1754,6 +2133,9 @@ def download_lammps():
         for probe in ('lmp.exe', os.path.join('bin', 'lmp.exe')):
             if os.path.isfile(os.path.join(LAMMPS_DIR, probe)):
                 log('[gui] OK: ' + os.path.join(LAMMPS_DIR, probe))
+                manifest_note('lammps',
+                              {'version': rel.get('tag_name', ''),
+                               'path': os.path.join(LAMMPS_DIR, probe)})
                 _DEPS_CACHE['t'] = 0.0
                 return
         log('[gui] lmp.exe not found after install; check lammps/ manually')
@@ -1982,6 +2364,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload['meta'] = None
             self._json(payload)
             return
+        if path == '/api/boot':
+            self._json(dict(BOOT, frozen=FROZEN, root=PROJ,
+                            default=default_app_root()))
+            return
         if path == '/api/hints_base':
             # frozen: the base rides INSIDE the bundle (RESOURCE/_MEIPASS);
             # dev: repo data/ - a beside-exe data/ is a third candidate
@@ -2067,9 +2453,12 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
         if path == '/api/potentials/upload':
             # raw streamed body (models are up to ~100 MB) -> potentials/
-            import urllib.parse
-            q = urllib.parse.parse_qs(
-                urllib.parse.urlsplit(self.path).query)
+            # (aliased: a local 'import urllib.parse' would shadow the
+            # global urllib module for the whole method and break the
+            # proxy test below)
+            import urllib.parse as _uparse
+            q = _uparse.parse_qs(
+                _uparse.urlsplit(self.path).query)
             name = (q.get('name') or [''])[0]
             length = int(self.headers.get('Content-Length') or 0)
 
@@ -2089,6 +2478,92 @@ class Handler(BaseHTTPRequestHandler):
             self._json({'ok': ok, 'info': info})
             return
         body = self._read_body()
+
+        def _jbody():
+            if isinstance(body, dict):
+                return body          # _read_body already json-decoded
+            try:
+                return json.loads(body or '{}')
+            except (ValueError, TypeError):
+                return {}
+
+        # ------- proxy config (applies to every download) -------
+        if path == '/api/proxy/save':
+            save_proxy(_jbody())
+            log('[gui] proxy config saved: {}'.format(proxy_summary()))
+            self._json({'ok': True, 'proxy': proxy_summary()})
+            return
+
+        if path == '/api/proxy/test':
+            # three independent targets: a real proxy check, not a ping
+            targets = [
+                ('GitHub API', 'https://api.github.com/'),
+                ('PyPI', 'https://pypi.org/simple/'),
+                ('PyTorch index', 'https://download.pytorch.org/whl/cu128/'),
+            ]
+            results = []
+            for label, url in targets:
+                t0 = time.time()
+                try:
+                    req = urllib.request.Request(
+                        url, headers={'User-Agent': 'fept-gui/1.8'})
+                    with url_open(req, timeout=25) as resp:
+                        data = resp.read(256 * 1024)
+                        code = resp.status
+                    ms = (time.time() - t0) * 1000.0
+                    kbps = (len(data) / 1024.0) / max(ms / 1000.0, 1e-3)
+                    results.append({'target': label, 'url': url,
+                                    'ok': True, 'code': int(code),
+                                    'ms': round(ms), 'kbps': round(kbps),
+                                    'bytes': len(data)})
+                except Exception as e:
+                    results.append({'target': label, 'url': url,
+                                    'ok': False, 'error': str(e)[:160]})
+            self._json({'results': results, 'proxy': proxy_summary(),
+                        'ok': all(r0.get('ok') for r0 in results)})
+            return
+
+        # ------- open any app folder (python venv, lammps, ...) -------
+        if path == '/api/open_path':
+            p = os.path.abspath(str(_jbody().get('path') or ''))
+            allowed = [PROJ, GUI_DIR, os.path.dirname(GUI_DIR)]
+            if not any(p == a or p.startswith(a + os.sep)
+                       for a in allowed) or not os.path.isdir(p):
+                self._json({'ok': False, 'error': 'нет папки'}, code=400)
+                return
+            log('[gui] open folder ' + p)
+            threading.Timer(0.25, lambda: os.startfile(p)).start()
+            self._json({'ok': True})
+            return
+
+        if path == '/api/boot/pick_folder':
+            self._json({'ok': True, 'path': native_folder_dialog() or ''})
+            return
+        if path == '/api/boot/set_root':
+            root = os.path.abspath(str(body.get('path') or '').strip())
+            if not root or root in (GUI_DIR, os.path.dirname(GUI_DIR)) \
+                    or os.path.basename(root).lower() in (
+                        'windows', 'program files', 'program files (x86)') \
+                    or os.path.dirname(root) == root:
+                self._json({'ok': False,
+                            'error': 'папка не подходит - выбери свою, '
+                                     'не рядом с exe и не системную'})
+                return
+            try:
+                os.makedirs(root, exist_ok=True)
+            except OSError as e:
+                self._json({'ok': False, 'error': str(e)})
+                return
+            apply_app_root(root)
+            save_app_root(root)
+            BOOT.update(need_folder=False, phase='setup', pct=0,
+                        error='', logs=[], line='настраиваю папки...')
+            for d in (LAMMPS_DIR, GPU_DIR, CPU_DIR,
+                      os.path.join(PROJ, 'data')):
+                os.makedirs(d, exist_ok=True)
+            threading.Thread(target=_boot_setup, daemon=True).start()
+            self._json({'ok': True, 'root': root})
+            return
         if path == '/api/run':
             self._json(start_run(body))
             return
@@ -2401,11 +2876,27 @@ def main():
     global PORT
     if '--port' in sys.argv:
         PORT = int(sys.argv[sys.argv.index('--port') + 1])
-    for d in (LAMMPS_DIR, GPU_DIR, CPU_DIR):
-        os.makedirs(d, exist_ok=True)
-    if FROZEN and not resolve_python():
-        # fresh download in any folder -> build the engine in the background
-        threading.Thread(target=first_boot_engine, daemon=True).start()
+    load_proxy()
+    if FROZEN and BOOT['need_folder']:
+        # first boot: NO folders next to the exe - the UI opens the
+        # folder-picker modal and setup starts from /api/boot/set_root
+        log('[gui] first boot: choose the app folder in the UI modal')
+    else:
+        for d in (LAMMPS_DIR, GPU_DIR, CPU_DIR):
+            os.makedirs(d, exist_ok=True)
+        if FROZEN:
+            # smart fast start: sub-second presence check (venv
+            # site-packages dirs + install manifest) - the splash never
+            # re-installs what is already there
+            st = engine_component_state()
+            light_ok = all(st.get(n, {}).get('present')
+                           for n in LIGHT_LIBS)
+            if not resolve_python() or not light_ok:
+                BOOT['phase'] = 'setup'
+                threading.Thread(target=first_boot_engine,
+                                 daemon=True).start()
+            else:
+                BOOT['phase'] = 'ready'
     srv = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
     srv.daemon_threads = True
     url = 'http://127.0.0.1:{}/'.format(PORT)
