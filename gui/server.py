@@ -1213,19 +1213,63 @@ def _current_outdir():
 
 
 def _write_export_xlsx(payload):
-    """Excel package: sheet 1 = the data table (per-point series and
-    the CTE report), sheet 2 = every chart/histogram the GUI renders,
-    embedded as PNG images with captions."""
-    import base64
-    from io import BytesIO
+    '''Excel package: sheet 1 = the data table (per-point series and
+    the CTE report), sheet 2 = NATIVE Excel charts (editable chart
+    objects, not pictures): a(T) per composition with per-point sigma
+    whiskers, alpha bars with custom error bars, one annotated panel
+    chart per composition, pair-distance histogram; sheet 3 = the
+    chart source data (edit the numbers -> the charts follow).'''
     from openpyxl import Workbook, load_workbook  # noqa: F401
-    from openpyxl.drawing.image import Image as XlImage
+    from openpyxl.chart import BarChart, LineChart, Reference
+    from openpyxl.chart import ScatterChart, Series
+    from openpyxl.chart.data_source import NumDataSource, NumRef
+    from openpyxl.chart.error_bar import ErrorBars
+    from openpyxl.chart.marker import Marker
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.drawing.line import LineProperties
     from openpyxl.styles import Font, Alignment
     from openpyxl.utils import get_column_letter
 
     series = payload.get('series') or {}
     cte = payload.get('cte') or []
     meta = payload.get('meta') or {}
+    hist = payload.get('hist') or None
+    # print-friendly palette: the on-screen COMP_COLORS are tuned for a
+    # dark plate, these read well on the white paper of Excel/an
+    # article (same order as COMP_COLORS in index.html)
+    PAL = ['1F77B4', 'D62728', '2CA02C', 'FF7F0E',
+           '9467BD', '8C564B', 'E377C2', '7F7F7F']
+    comps = sorted(series, key=lambda s: float(s))
+
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _panel_stats(pts):
+        '''dA = span of a(T); drift = worst residual of the linear fit
+        (the same math the on-screen panels annotate).'''
+        a_vals = [_f(d.get('a')) for d in pts]
+        a_vals = [v for v in a_vals if v is not None]
+        d_a = (max(a_vals) - min(a_vals)) if a_vals else 0.0
+        drift = 0.0
+        xs = [_f(d.get('T')) for d in pts]
+        ys = [_f(d.get('a')) for d in pts]
+        if len(pts) >= 2 and all(v is not None for v in xs + ys):
+            n = len(xs)
+            sx, sy = sum(xs), sum(ys)
+            sxx = sum(x * x for x in xs)
+            sxy = sum(x * y for x, y in zip(xs, ys))
+            den = n * sxx - sx * sx
+            k1 = (n * sxy - sx * sy) / den if den else 0.0
+            b1 = (sy - k1 * sx) / n
+            drift = max(abs(y - (k1 * x + b1)) for x, y in zip(xs, ys))
+            for d in pts:
+                dv = _f(d.get('drift'))
+                if dv is not None:
+                    drift = max(drift, abs(dv))
+        return d_a, drift
 
     wb = Workbook()
     ws = wb.active
@@ -1243,7 +1287,7 @@ def _write_export_xlsx(payload):
         c.font = Font(bold=True)
         c.alignment = Alignment(horizontal='center')
     row = hrow + 1
-    for key in sorted(series, key=lambda s: float(s)):
+    for key in comps:
         for d in series[key]:
             ws.cell(row=row, column=1, value=float(key))
             ws.cell(row=row, column=2, value=d.get('T'))
@@ -1275,29 +1319,244 @@ def _write_export_xlsx(payload):
     for ci, w in enumerate((11, 11, 17, 17, 14, 12, 10, 13, 13, 13), 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
-    # ---- sheet 2: every chart from the GUI -------------------------
+    # ---- sheet 2: NATIVE Excel charts (created by Excel, editable) --
     ws2 = wb.create_sheet('Графики')
-    r0 = 1
-    placed = 0
-    for img in (payload.get('images') or []):
-        name = str(img.get('name') or 'график')[:80]
-        try:
-            raw = base64.b64decode(img.get('png') or '')
-            if len(raw) < 100:
+    wsd = wb.create_sheet('Данные графиков')
+    title = ('Нативные диаграммы Excel — правьте данные на листе '
+             '«Данные графиков», диаграммы обновятся')
+    if isinstance(meta.get('form'), dict) \
+            and meta.get('form', {}).get('seed') is not None:
+        title += '  ·  seed = %s' % meta.get('form', {}).get('seed')
+    ws2['A1'] = title
+    ws2['A1'].font = Font(bold=True, size=12)
+
+    # ---- sheet 3: chart source data ---------------------------------
+    # a(T): three columns per composition (T / a / sigma)
+    at_col = {}
+    for ci, k in enumerate(comps):
+        c0 = 1 + ci * 3
+        for j, h in enumerate(('T, K', 'a, Å', 'sigma, Å')):
+            cell = wsd.cell(row=1, column=c0 + j,
+                            value='%s (x=%s)' % (h, k))
+            cell.font = Font(bold=True)
+        for i, d in enumerate(series[k]):
+            wsd.cell(row=2 + i, column=c0, value=_f(d.get('T')))
+            wsd.cell(row=2 + i, column=c0 + 1, value=_f(d.get('a')))
+            wsd.cell(row=2 + i, column=c0 + 2,
+                     value=_f(d.get('std')) or 0.0)
+        at_col[k] = c0
+    for ci in range(3 * len(comps)):
+        wsd.column_dimensions[get_column_letter(1 + ci)].width = 13
+
+    # CTE: alpha_fit in 1e-6/K (the GUI axis unit) + whisker deltas
+    cte_pts = [c for c in cte if _f(c.get('alpha_fit')) is not None]
+    have_whisk = any(_f(c.get('alpha_max')) is not None
+                     and _f(c.get('alpha_min')) is not None
+                     for c in cte_pts)
+    r_cte_h = 2 + max([len(series[k]) for k in comps] or [0]) + 2
+    for ci, h in enumerate(('x_Pt', 'alpha_fit, 1e-6/K',
+                            'whisk+, 1e-6/K', 'whisk-, 1e-6/K',
+                            'label'), 1):
+        wsd.cell(row=r_cte_h, column=ci, value=h).font = Font(bold=True)
+    r = r_cte_h
+    for c in cte_pts:
+        r += 1
+        fit = _f(c.get('alpha_fit'))
+        mx, mn = _f(c.get('alpha_max')), _f(c.get('alpha_min'))
+        plus = max(0.0, (mx - fit) * 1e6) if mx is not None else 0.0
+        minus = max(0.0, (fit - mn) * 1e6) if mn is not None else 0.0
+        wsd.cell(row=r, column=1, value=_f(c.get('x_Pt')))
+        wsd.cell(row=r, column=2, value=fit * 1e6)
+        wsd.cell(row=r, column=3, value=plus)
+        wsd.cell(row=r, column=4, value=minus)
+        wsd.cell(row=r, column=5, value='x=%s' % (c.get('x_Pt')))
+    r_cte_last = r
+
+    # histogram: bin centres + one column per pair group
+    r_h = r_cte_last + 3
+    hist_n, gnames, binw = 0, [], 0.05
+    if hist and hist.get('groups'):
+        gnames = list(hist.get('keys') or hist['groups'].keys())
+        counts = hist['groups']
+        hist_n = max([len(counts.get(g) or []) for g in gnames] or [0])
+        binw = _f(hist.get('bin')) or 0.05
+        if gnames and hist_n:
+            wsd.cell(row=r_h, column=1, value='r, Å').font = Font(bold=True)
+            for ci, g in enumerate(gnames, 2):
+                wsd.cell(row=r_h, column=ci, value=g).font = Font(bold=True)
+            for i in range(hist_n):
+                wsd.cell(row=r_h + 1 + i, column=1,
+                         value=(i + 0.5) * binw)
+                for ci, g in enumerate(gnames, 2):
+                    arr = counts.get(g) or []
+                    wsd.cell(row=r_h + 1 + i, column=ci,
+                             value=arr[i] if i < len(arr) else 0)
+
+    # ---- the charts --------------------------------------------------
+    def _style_ser(ser, color):
+        ser.marker = Marker(symbol='circle', size=6)
+        ser.marker.graphicalProperties = GraphicalProperties(solidFill=color)
+        ser.graphicalProperties = GraphicalProperties()
+        ser.graphicalProperties.line = LineProperties(solidFill=color,
+                                                      w=22000)
+        ser.smooth = False
+
+    def _add_sigma(ser, wsd_, col, n):
+        sv = Reference(wsd_, min_col=col, min_row=2, max_row=1 + n)
+        ser.errBars = ErrorBars(errDir='y', errBarType='both',
+                                errValType='cust',
+                                plus=NumDataSource(numRef=NumRef(f=str(sv))),
+                                minus=NumDataSource(numRef=NumRef(f=str(sv))))
+
+    n_charts = 0
+    pts_all = [d for k in comps for d in series[k]]
+    has_sig = any((_f(d.get('std')) or 0.0) > 0 for d in pts_all)
+
+    # 1) a(T): one series per composition, per-point sigma whiskers
+    if comps and pts_all:
+        ch = ScatterChart()
+        ch.title = 'Параметр решётки a(T)'
+        ch.scatterStyle = 'lineMarker'
+        ch.x_axis.title = 'T, K'
+        ch.y_axis.title = 'a, Å'
+        ch.x_axis.delete = False
+        ch.y_axis.delete = False
+        for ci, k in enumerate(comps):
+            pts = series[k]
+            if not pts:
                 continue
-            xl = XlImage(BytesIO(raw))
-        except Exception:
+            c0 = at_col[k]
+            n = len(pts)
+            xv = Reference(wsd, min_col=c0, min_row=2, max_row=1 + n)
+            yv = Reference(wsd, min_col=c0 + 1, min_row=2, max_row=1 + n)
+            ser = Series(yv, xv, title='x=' + k)
+            _style_ser(ser, PAL[ci % len(PAL)])
+            if has_sig:
+                _add_sigma(ser, wsd, c0 + 2, n)
+            ch.series.append(ser)
+        if ch.legend:
+            ch.legend.position = 'b'
+        ch.width, ch.height = 24, 12
+        ws2.add_chart(ch, 'A3')
+        n_charts += 1
+    row_cte = 27
+
+    # 2) alpha bars with custom whiskers (min..max as +- deltas)
+    if cte_pts:
+        bc = BarChart()
+        bc.type = 'col'
+        bc.gapWidth = 60
+        bc.title = 'Тепловое расширение α = Δa/(a·ΔT)'
+        bc.y_axis.title = 'α, 10⁻⁶ K⁻¹'
+        bc.x_axis.title = 'x(Pt)'
+        bc.x_axis.delete = False
+        bc.y_axis.delete = False
+        data = Reference(wsd, min_col=2, min_row=r_cte_h,
+                         max_row=r_cte_last)
+        bc.add_data(data, titles_from_data=True)
+        bc.set_categories(Reference(wsd, min_col=5, min_row=r_cte_h + 1,
+                                    max_row=r_cte_last))
+        bc.series[0].graphicalProperties = GraphicalProperties(
+            solidFill='1F77B4')
+        if have_whisk:
+            try:
+                plus = Reference(wsd, min_col=3, min_row=r_cte_h + 1,
+                                 max_row=r_cte_last)
+                minus = Reference(wsd, min_col=4, min_row=r_cte_h + 1,
+                                  max_row=r_cte_last)
+                bc.series[0].errBars = ErrorBars(
+                    errDir='y', errBarType='both', errValType='cust',
+                    plus=NumDataSource(numRef=NumRef(f=str(plus))),
+                    minus=NumDataSource(numRef=NumRef(f=str(minus))))
+            except Exception:
+                pass
+        bc.width, bc.height = 24, 11
+        ws2.add_chart(bc, 'A%d' % row_cte)
+        n_charts += 1
+    row_panel = row_cte + 23
+
+    # 3) one annotated mini panel per composition (3 per row)
+    panels = 0
+    for ci, k in enumerate(comps):
+        pts = series[k]
+        if not pts:
             continue
-        ws2.cell(row=r0, column=1, value=name).font = Font(bold=True)
-        r0 += 1
-        try:
-            ws2.add_image(xl, 'A{}'.format(r0))
-        except Exception:
-            continue
-        placed += 1
-        r0 += max(20, int(getattr(xl, 'height', 400) / 20) + 2)
-    if not placed:
-        ws2['A1'] = 'графики не приложены'
+        rr = row_panel + (panels // 3) * 18
+        ccl = 1 + (panels % 3) * 7
+        cl = get_column_letter(ccl)
+        cell = ws2.cell(row=rr, column=ccl, value='x_Pt = ' + k)
+        cell.font = Font(bold=True, color=PAL[ci % len(PAL)])
+        kf = _f(k)
+        c_row = None
+        for c in cte_pts:
+            xf = _f(c.get('x_Pt'))
+            if kf is not None and xf is not None and abs(xf - kf) < 1e-9:
+                c_row = c
+                break
+        bits = []
+        if c_row:
+            def e(v):
+                fv = _f(v)
+                return '%.2e' % fv if fv is not None else '—'
+            bits.append('a₂ₜ=%s' % e(c_row.get('alpha_2pt')))
+            bits.append('a_fit=%s' % e(c_row.get('alpha_fit')))
+            bits.append('range=%s' % e(c_row.get('alpha_range')))
+        d_a, drift = _panel_stats(pts)
+        bits.append('Δa=%.4f Å' % d_a)
+        bits.append('max|drift|=%.1e' % drift)
+        ws2.cell(row=rr + 1, column=ccl,
+                 value=' · '.join(bits)).font = Font(size=9,
+                                                     color='666666')
+        pch = ScatterChart()
+        pch.title = 'a(T)'
+        pch.scatterStyle = 'lineMarker'
+        pch.x_axis.title = 'T, K'
+        pch.y_axis.title = 'a, Å'
+        pch.x_axis.delete = False
+        pch.y_axis.delete = False
+        c0 = at_col[k]
+        n = len(pts)
+        xv = Reference(wsd, min_col=c0, min_row=2, max_row=1 + n)
+        yv = Reference(wsd, min_col=c0 + 1, min_row=2, max_row=1 + n)
+        ser = Series(yv, xv, title='x=' + k)
+        _style_ser(ser, PAL[ci % len(PAL)])
+        if has_sig:
+            _add_sigma(ser, wsd, c0 + 2, n)
+        pch.series.append(ser)
+        pch.legend = None
+        pch.width, pch.height = 10.5, 7.5
+        ws2.add_chart(pch, '%s%d' % (cl, rr + 2))
+        n_charts += 1
+        panels += 1
+    row_hist = row_panel + ((panels + 2) // 3) * 18 + 1
+
+    # 4) pair-distance histogram (frequency polygons per group)
+    if hist_n and gnames:
+        lc = LineChart()
+        lc.title = 'Гистограмма парных расстояний (PBC, бин %.2f Å)' % binw
+        lc.y_axis.title = 'пар/бин'
+        lc.x_axis.title = 'r, Å'
+        lc.x_axis.delete = False
+        lc.y_axis.delete = False
+        lc.add_data(Reference(wsd, min_col=2, min_row=r_h,
+                              max_col=1 + len(gnames),
+                              max_row=r_h + hist_n),
+                    titles_from_data=True)
+        lc.set_categories(Reference(wsd, min_col=1, min_row=r_h + 1,
+                                    max_row=r_h + hist_n))
+        for si, s in enumerate(lc.series):
+            s.smooth = False
+            s.marker = Marker(symbol='none')
+            col = PAL[si % len(PAL)]
+            s.graphicalProperties = GraphicalProperties()
+            s.graphicalProperties.line = LineProperties(solidFill=col,
+                                                        w=24000)
+        lc.width, lc.height = 24, 11
+        ws2.add_chart(lc, 'A%d' % row_hist)
+        n_charts += 1
+
+    if not n_charts:
+        ws2['A3'] = 'нет данных для диаграмм'
 
     outdir = _current_outdir()
     try:
@@ -1313,7 +1572,7 @@ def _write_export_xlsx(payload):
         stamp = time.strftime('%Y%m%d_%H%M%S')
         dest = os.path.join(outdir, 'fept_export_%s.xlsx' % stamp)
         wb.save(dest)
-    return dest
+    return dest, n_charts
 
 
 def _compute_cte(series):
@@ -1396,6 +1655,14 @@ def _parse_results_upload(name, raw):
                 if head:
                     for r in ws.iter_rows(min_row=hdr_i + 1,
                                           values_only=True):
+                        if all(v is None
+                               or (isinstance(v, str) and not v.strip())
+                               for v in r):
+                            # blank row = end of the data table (our
+                            # own CTE report block lives below it —
+                            # reading it produced phantom points with
+                            # T~1e-5 from the alpha columns)
+                            break
                         rows.append(dict(zip(head, r)))
                     break
         finally:
@@ -1751,7 +2018,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.1.0'
+APP_VERSION = '2.2.2'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -3286,13 +3553,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/export_xlsx':
             body = _jbody()
             try:
-                dest = _write_export_xlsx(body)
+                dest, n_charts = _write_export_xlsx(body)
             except Exception as e:
                 self._json({'ok': False, 'error': str(e)}, code=500)
                 return
-            log('[gui] xlsx export: ' + dest)
+            log('[gui] xlsx export: %s (%d charts)' % (dest, n_charts))
             self._json({'ok': True, 'file': dest,
-                        'name': os.path.basename(dest)})
+                        'name': os.path.basename(dest),
+                        'charts': n_charts})
             return
 
         # ---- import: our .xlsx export or a results file (.csv/.txt) -

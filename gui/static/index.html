@@ -648,7 +648,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
         <button class="ghost" onclick="loadResults()">Обновить</button>
         <button class="ghost" onclick="openResFolder()">📂 Папка</button>
         <button class="ghost" onclick="exportXlsx()"
-          title="Таблица + все графики и гистограммы — в один Excel-файл">📦 Excel (таблица+графики)</button>
+          title="Таблица + нативные диаграммы Excel (редактируемые) — в один файл">📦 Excel (таблица+графики)</button>
         <button class="ghost" onclick="openResFile('all_results.csv')">⬇ CSV</button>
         <button class="ghost" onclick="$(&quot;import-file&quot;).click()"
           title="Открыть .xlsx или файл результатов и визуализировать его здесь">Загрузить данные / визуализировать 📝</button>
@@ -674,6 +674,12 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
           <b style="font-size:13px">Тепловое расширение α = Δa/(a·ΔT)</b>
           <div id="chart-cte"></div>
         </div>
+      </div>
+            <div class="row" style="margin:10px 0 4px">
+        <button class="ghost" onclick="downloadPaperPngs()"
+          title="Все графики отдельными PNG: белый фон, чётные оси и подписи — для вставки в статью и отчёт"
+          >⬇ PNG для статьи (белый фон)</button>
+        <span class="status">сетка a(T), a(T), α и гистограмма — по одному файлу</span>
       </div>
       <b style="font-size:13px">Данные расчёта (all_results.csv)</b>
       <div style="overflow-x:auto"><div id="tbl"></div></div>
@@ -1949,27 +1955,18 @@ function toggleStructAuto() {
 /* pair-distance histogram (PBC min-image) — the second structure view:
    peaks show packing shells, split same/cross peaks show chemical
    ordering at a glance */
-function drawHistogram() {
-  const cv = $('hist-canvas');
-  if (!cv || !S || !cv.offsetParent) return;
-  // the canvas is CSS-stretched (width:100%), so a fixed 520x330 bitmap
-  // came out blurry — redraw at box * devicePixelRatio instead
-  const dpr = window.devicePixelRatio || 1;
-  const cw = Math.max(320, cv.clientWidth || 520);
-  const ch = Math.max(220, Math.round(cw * 330 / 520));
-  cv.width = Math.round(cw * dpr);
-  cv.height = Math.round(ch * dpr);
-  const ctx = cv.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const W = cw, H = ch;
-  const padL = 44, padR = 12, padT = 26, padB = 34;
-  ctx.fillStyle = '#0e1118';
-  ctx.fillRect(0, 0, W, H);
-  const pos = S.positions, sym = S.symbols, L = S.lengths || [];
-  if (!pos || !pos.length || L.length < 3) return;
+function histData() {
+  /* bin the PBC min-image pair distances once per structure (cached on
+     S) — shared by the on-screen canvas, the white-paper PNG and the
+     Excel export payload */
+  if (!S || !S.positions || !S.positions.length ||
+      !(S.lengths || []).length) return null;
+  if (S.__hist) return S.__hist;
+  const pos = S.positions, sym = S.symbols, L = S.lengths;
   const RMAX = 7.0, BIN = 0.05;
   const nb = Math.round(RMAX / BIN);
   const keys = Object.keys(S.counts || {});
+  if (!keys.length) return null;
   const gkey = (a, b) => {
     if (a === b) return a;
     return keys.indexOf(a) <= keys.indexOf(b) ? a + '-' + b : b + '-' + a;
@@ -1987,19 +1984,37 @@ function drawHistogram() {
       dz -= Math.round(dz / L[2]) * L[2];
       const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
       if (r <= 0.01 || r >= RMAX) continue;
-      const g = groups[gkey(sym[i], sym[j])]
-             || groups[keys[0]];
+      const g = groups[gkey(sym[i], sym[j])] || groups[keys[0]];
       g[(r / BIN) | 0]++;
     }
   }
   let gmax = 1;
   for (const k of Object.keys(groups))
     gmax = Math.max(gmax, ...groups[k]);
+  S.__hist = {bin: BIN, rmax: RMAX,
+              keys: Object.keys(groups).sort(
+                (a, b) => a.includes('-') ? 1 : -1),
+              groups: groups, gmax: gmax};
+  return S.__hist;
+}
+
+function renderHist(ctx, W, H, d, paper) {
+  /* paper=true -> white print version (article/report PNG); the dark
+     screen plate stays the default for the GUI */
+  const padL = 44, padR = 12, padT = 26, padB = 34;
+  ctx.fillStyle = paper ? '#ffffff' : '#0e1118';
+  ctx.fillRect(0, 0, W, H);
+  if (!d) return;
+  const RMAX = d.rmax, BIN = d.bin, groups = d.groups, gmax = d.gmax;
   const X = r => padL + (r / RMAX) * (W - padL - padR);
   const Y = c => H - padB - (c / gmax) * (H - padT - padB);
-  // axes + gridlines
-  ctx.strokeStyle = '#2a3140';
-  ctx.fillStyle = '#8a8a99';
+  const cAxis = paper ? '#333333' : '#2a3140';
+  const cTick = paper ? '#666666' : '#8a8a99';
+  const cGrid = paper ? '#ececec' : '#1d2431';
+  const cLbl = paper ? '#222222' : '#cfd6e4';
+  const tint = hex => paper ? stShade(hex, -0.35) : hex;
+  ctx.strokeStyle = cAxis;
+  ctx.fillStyle = cTick;
   ctx.lineWidth = 1;
   ctx.font = '10px "Segoe UI", sans-serif';
   ctx.beginPath();
@@ -2007,7 +2022,7 @@ function drawHistogram() {
   ctx.lineTo(W - padR, H - padB);
   ctx.stroke();
   for (let r = 1; r <= RMAX; r++) {
-    ctx.strokeStyle = '#1d2431';
+    ctx.strokeStyle = cGrid;
     ctx.beginPath();
     ctx.moveTo(X(r), padT); ctx.lineTo(X(r), H - padB);
     ctx.stroke();
@@ -2015,13 +2030,12 @@ function drawHistogram() {
   }
   ctx.fillText('Å', W - padR - 12, H - padB + 14);
   ctx.fillText('пар/бин', 4, padT + 8);
-  // bars: same-element groups then cross peak (semi-transparent layers)
   const bw = Math.max(1.5, (X(BIN) - X(0)) * 0.9);
-  const order = Object.keys(groups).sort((a, b) => a.includes('-') ? 1 : -1);
+  const order = d.keys;
   for (const k of order) {
-    const col = k.includes('-') ? '#9aa7bd' : elemColor(k);
-    ctx.fillStyle = col;
-    ctx.globalAlpha = k.includes('-') ? 0.55 : 0.7;
+    const cross = k.includes('-');
+    ctx.fillStyle = tint(cross ? '#9aa7bd' : elemColor(k));
+    ctx.globalAlpha = paper ? 0.85 : (cross ? 0.55 : 0.7);
     groups[k].forEach((c, i) => {
       if (!c) return;
       const x0 = X(i * BIN), y0 = Y(c);
@@ -2029,20 +2043,35 @@ function drawHistogram() {
     });
   }
   ctx.globalAlpha = 1;
-  // inline key
   let kx = padL + 8;
   order.forEach(k => {
-    const col = k.includes('-') ? '#9aa7bd' : elemColor(k);
-    ctx.fillStyle = col;
+    const cross = k.includes('-');
+    ctx.fillStyle = tint(cross ? '#9aa7bd' : elemColor(k));
     ctx.fillRect(kx, padT + 4, 9, 9);
-    const label = k.includes('-') ? k : k + '–' + k;
-    ctx.fillStyle = '#cfd6e4';
+    const label = cross ? k : k + '–' + k;
+    ctx.fillStyle = cLbl;
     ctx.fillText(label, kx + 12, padT + 12);
     kx += 14 + ctx.measureText(label).width + 14;
   });
-  ctx.fillStyle = '#cfd6e4';
+  ctx.fillStyle = cLbl;
   ctx.fillText('гистограмма парных расстояний', padL + 8, H - padB - 8);
 }
+
+function drawHistogram() {
+  const cv = $('hist-canvas');
+  if (!cv || !S || !cv.offsetParent) return;
+  // the canvas is CSS-stretched (width:100%), so a fixed 520x330 bitmap
+  // came out blurry — redraw at box * devicePixelRatio instead
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.max(320, cv.clientWidth || 520);
+  const ch = Math.max(220, Math.round(cw * 330 / 520));
+  cv.width = Math.round(cw * dpr);
+  cv.height = Math.round(ch * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  renderHist(ctx, cw, ch, histData(), false);
+}
+
 function toggleThermal() {
   stThermal = !stThermal;
   $('st-therm-btn').style.opacity = stThermal ? '1' : '0.5';
@@ -2488,7 +2517,7 @@ async function loadResults() {
 }
 
 /* ---------------- Excel package + file import -------------------- */
-function svgToPngDataUrl(svg, scale) {
+function svgToPngDataUrl(svg, scale, bg) {
   return new Promise((res, rej) => {
     try {
       const xml = new XMLSerializer().serializeToString(svg);
@@ -2501,7 +2530,7 @@ function svgToPngDataUrl(svg, scale) {
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
         const g = c.getContext('2d');
-        g.fillStyle = '#0e1118';        // dark plate, matches the GUI
+        g.fillStyle = bg || '#0e1118';   // dark plate, or white paper
         g.fillRect(0, 0, w, h);
         g.drawImage(img, 0, 0, w, h);
         res(c.toDataURL('image/png'));
@@ -2511,30 +2540,107 @@ function svgToPngDataUrl(svg, scale) {
     } catch (e) { rej(e); }
   });
 }
-async function collectChartImages() {
-  const out = [];
-  const push = (name, dataUrl) => {
-    if (dataUrl && dataUrl.length > 200)
-      out.push({name: name, png: dataUrl.split(',').pop()});
-  };
-  const grab = async (sel, name) => {
-    const el = document.querySelector(sel);
-    if (!el) return;
-    try { push(name, await svgToPngDataUrl(el, 2)); } catch (e) { /* skip */ }
-  };
-  await grab('#chart-panels svg',
-             'Сетка по составам a(T) с аннотациями');
-  await grab('#chart-a svg', 'Параметр решётки a(T)');
-  await grab('#chart-cte svg', 'Тепловое расширение α, 10⁻⁶ K⁻¹');
-  const hc = $('hist-canvas');
-  if (hc && hc.width > 1 && hc.height > 1) {
-    try { push('Гистограмма парных расстояний', hc.toDataURL('image/png'));
-    } catch (e) { /* tainted canvas — skip */ }
+
+/* ---- white-paper PNG versions for the article/report --------------- */
+const PAPER_MAP = {
+  '#141824': '#ffffff', '#3f4658': '#d0d5dd',
+  '#0e1118': '#f1f5f9', '#2a3140': '#8a8a8a',
+  '#1f2b40': '#e4e4e4', '#161d2c': '#ededed', '#1d2431': '#ededed',
+  '#e6ebf5': '#111111', '#e2e8f0': '#111111',
+  '#cfd6e4': '#333333', '#9fb0c8': '#444444',
+  '#8a8a99': '#666666', '#64748b': '#777777',
+  '#94a3b8': '#444444', '#9aa7bd': '#64748b',
+  '#38bdf8': '#0284c7', '#f472b6': '#db2777',
+  '#4ade80': '#16a34a', '#fbbf24': '#d97706',
+  '#c084fc': '#9333ea', '#fb7185': '#e11d48',
+  '#2dd4bf': '#0d9488', '#a3e635': '#65a303'
+};
+
+function paperizeSvg(svg) {
+  /* Clone an on-screen chart and recolour every element for white
+     paper: white plate, black ink, print palette for the series. The
+     page stylesheet does NOT travel into the serialised SVG, so the
+     fonts/ink are pinned as attributes (root font+fill inherit to the
+     texts that relied on CSS). */
+  const c = svg.cloneNode(true);
+  const vb = (svg.getAttribute('viewBox') || '0 0 760 340').split(/\s+/);
+  const W = parseFloat(vb[2]) || 760, H = parseFloat(vb[3]) || 340;
+  c.setAttribute('width', W);
+  c.setAttribute('height', H);
+  c.setAttribute('style', 'display:block');
+  c.setAttribute('font-family', 'Segoe UI, Arial, sans-serif');
+  c.setAttribute('font-size', '11');
+  c.setAttribute('fill', '#111111');
+  const map = v => PAPER_MAP[String(v || '').toLowerCase()] || v;
+  for (const el of c.querySelectorAll('*')) {
+    const f0 = el.getAttribute('fill');
+    if (f0 && f0 !== 'none') el.setAttribute('fill', map(f0));
+    const s0 = el.getAttribute('stroke');
+    if (s0 && s0 !== 'none') el.setAttribute('stroke', map(s0));
+    const op = el.getAttribute('opacity');
+    if (op === '0.85' || op === '0.72') el.setAttribute('opacity', '1');
+    if (f0 === '#0e1118') el.setAttribute('opacity', '1');
   }
-  return out;
+  return c;
 }
+
+function histPaperPng(d) {
+  /* white histogram PNG at 3x — same numbers as the screen canvas */
+  const W = 520, H = 330, s = 3;
+  const cv = document.createElement('canvas');
+  cv.width = W * s; cv.height = H * s;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  renderHist(ctx, W, H, d, true);
+  return cv.toDataURL('image/png');
+}
+
+function triggerDownload(dataUrl, filename) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function downloadPaperPngs() {
+  /* every chart as its own white-paper PNG (article/report ready) */
+  if (!S) { try { await loadStructure(); } catch (e) { /* no S */ } }
+  const jobs = [];
+  const grab = (sel, name) => {
+    const el = document.querySelector(sel);
+    if (el) jobs.push({name: name,
+                       run: () => svgToPngDataUrl(paperizeSvg(el), 3,
+                                                  '#ffffff')});
+  };
+  grab('#chart-panels svg', 'FePt_сетка_aT.png');
+  grab('#chart-a svg', 'FePt_aT.png');
+  grab('#chart-cte svg', 'FePt_тепловое_расширение.png');
+  const hd = histData();
+  if (hd) jobs.push({name: 'FePt_гистограмма.png',
+                     run: () => histPaperPng(hd)});
+  if (!jobs.length) {
+    consoleLine('PNG: графиков нет — сначала загрузите результаты');
+    return;
+  }
+  consoleLine('PNG для статьи: готовлю ' + jobs.length +
+              ' файлов с белым фоном — если браузер спросит, ' +
+              'разрешите несколько файлов');
+  let n = 0;
+  for (const j of jobs) {
+    try {
+      const url = await j.run();
+      triggerDownload(url, j.name);
+      n++;
+      await new Promise(r => setTimeout(r, 400));
+    } catch (e) { consoleLine('PNG ' + j.name + ': ' + e); }
+  }
+  consoleLine('PNG скачано: ' + n + ' (белый фон, чётные оси и подписи)');
+}
+
 async function exportXlsx() {
-  consoleLine('Собираю Excel: таблица + все графики…');
+  consoleLine('Собираю Excel: таблица + нативные диаграммы Excel…');
   try {
     const r = await (await fetch('/api/results')).json();
     if (!r.series || !Object.keys(r.series).length) {
@@ -2543,21 +2649,23 @@ async function exportXlsx() {
       return;
     }
     LAST_RES_DIR = r.outdir || LAST_RES_DIR;
-    const images = await collectChartImages();
+    if (!S) { try { await loadStructure(); } catch (e) { /* no S */ } }
+    const hist = histData();
     const resp = await (await fetch('/api/export_xlsx', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({series: r.series, cte: r.cte || [],
-                            meta: r.meta || {}, images: images})
+                            meta: r.meta || {}, hist: hist})
     })).json();
     if (!resp.ok) {
       consoleLine('Экспорт Excel: ' + (resp.error || 'ошибка'));
       return;
     }
-    consoleLine('Excel готов (' + (images.length || 0) + ' графиков): '
+    consoleLine('Excel готов (' + (resp.charts || 0) + ' диаграмм): '
                 + resp.file + ' — открываю');
     openResFile(resp.name);
   } catch (e) { consoleLine('Экспорт Excel: ' + e); }
 }
+
 async function importResultsFile(inp) {
   const f = inp.files && inp.files[0];
   inp.value = '';
