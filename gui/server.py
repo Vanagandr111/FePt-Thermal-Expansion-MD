@@ -291,6 +291,47 @@ FORM = {
     'elem_a': 'Fe', 'elem_b': 'Pt',
 }
 _PY_MISS_LOGGED = False
+_PY_PICK_LOGGED = False
+
+
+_KNOWN_PKGS = ('torch', 'mace', 'psutil', 'pandas', 'numpy',
+              'ase', 'scipy', 'triton')
+
+
+def _py_has_libs(py):
+    # True when this interpreter site-packages already holds a known
+    # project package: upgrades must pick the populated env, not an
+    # empty one (otherwise 2-4 GB get re-downloaded).
+    d = os.path.dirname(py)
+    cands = [os.path.join(d, 'Lib', 'site-packages'),
+             os.path.normpath(os.path.join(d, '..', 'lib',
+                                           'site-packages'))]
+    try:
+        import glob as _g
+        cands += _g.glob(os.path.join(d, 'lib', 'python*', 'site-packages'))
+    except Exception:
+        pass
+    for sp in cands:
+        if any(os.path.isdir(os.path.join(sp, k)) for k in _KNOWN_PKGS):
+            return True
+    return False
+
+
+def _missing_modules(py, names):
+    # Which of `names` the engine interpreter cannot import; empty on
+    # any probe failure (never block on a flaky check).
+    try:
+        cp = subprocess.run(
+            [py, '-c', 'import importlib.util as u, sys; '
+                       'print(",".join(m for m in sys.argv[1:] '
+                       'if not u.find_spec(m)))'] + list(names),
+            capture_output=True, text=True, timeout=30,
+            creationflags=NOWIN)
+        if cp.returncode != 0:
+            return []
+        return [m for m in (cp.stdout or '').strip().split(',') if m]
+    except Exception:
+        return []
 
 
 def resolve_python():
@@ -322,11 +363,29 @@ def resolve_python():
             ('.venv-mace', 'bin', 'python'),
             ('venv', 'Scripts', 'python.exe'),
             ('venv', 'bin', 'python'))
+    # Several envs can coexist after an upgrade (the old loader's libs/
+    # plus a fresh .venv-mace): pick the one that actually HOLDS the
+    # packages, otherwise an empty env wins and "old install invisible"
+    # makes everyone re-download 2-4 GB.
+    found = []
     for root in roots:
         for rel in rels:
             p = os.path.join(root, *rel)
-            if os.path.isfile(p):
-                return p
+            if os.path.isfile(p) and p not in found:
+                found.append(p)
+    global _PY_PICK_LOGGED
+    for p in found:
+        if _py_has_libs(p):
+            if len(found) > 1 and not _PY_PICK_LOGGED:
+                _PY_PICK_LOGGED = True
+                log('[gui] engine python (of {} candidates): {}'.format(
+                    len(found), p))
+            return p
+    if found:
+        if not _PY_PICK_LOGGED:
+            _PY_PICK_LOGGED = True
+            log('[gui] engine python has NO packages yet: ' + found[0])
+        return found[0]
     # one console line per launch, not one per deps poll (~15 s)
     global _PY_MISS_LOGGED
     if not _PY_MISS_LOGGED:
@@ -483,20 +542,20 @@ def _safe_extract_tar(tf, stage):
 
 
 def first_boot_engine():
-    # Frozen exe with NO venv in the chosen app folder: build the venv
-    # and install the LIGHT stack only (fast first boot even on slow
-    # lines). torch/triton/mace/LAMMPS are installed on demand from the
-    # Deps tab - the tab blinks red until they are all present.
-    if resolve_python():
-        return
-    log('[gui] no engine venv in the app folder - bootstrapping')
-    py, need_url = ensure_engine_python()
-    if not py:
-        if need_url:
-            log('[gui] no system Python 3.10-3.14 either -> paste a Python '
-                'link in the Deps tab (Python-установка) or set FEPT_PYTHON')
-        return
-    log('[gui] engine venv is ready: ' + py)
+    # Frozen exe start: make sure the engine env exists AND the LIGHT
+    # stack is inside it, then set phase='ready'. (It used to return
+    # early when a venv merely existed -> phase stayed 'setup' forever
+    # and the UI never started: clicks did nothing.)
+    if not resolve_python():
+        log('[gui] no engine venv in the app folder - bootstrapping')
+        py, need_url = ensure_engine_python()
+        if not py:
+            if need_url:
+                log('[gui] no system Python 3.10-3.14 either -> paste a '
+                    'Python link in the Deps tab (Python-установка) or '
+                    'set FEPT_PYTHON')
+            return
+        log('[gui] engine venv is ready: ' + py)
     _boot_setup()
 
 
@@ -638,9 +697,10 @@ _PROBE_CODE = (
     "     'ase': u.find_spec('ase') is not None,\n"
     "     'numpy': u.find_spec('numpy') is not None,\n"
     "     'scipy': u.find_spec('scipy') is not None,\n"
+    "     'psutil': u.find_spec('psutil') is not None,\n"
     "     'pandas': u.find_spec('pandas') is not None}\n"
     "from importlib.metadata import version\n"
-    "for k in ('numpy', 'scipy', 'pandas', 'ase', 'mace-torch'):\n"
+    "for k in ('numpy', 'scipy', 'pandas', 'psutil', 'ase', 'mace-torch'):\n"
     "    key = 'mace' if k == 'mace-torch' else k\n"
     "    if d.get(key):\n"
     "        try:\n"
@@ -852,6 +912,8 @@ def collect_deps(refresh=False):
             'scipy_v': probe.get('scipy_v'),
             'pandas': probe.get('pandas', False),
             'pandas_v': probe.get('pandas_v'),
+            'psutil': probe.get('psutil', False),
+            'psutil_v': probe.get('psutil_v'),
             'triton': probe.get('triton', False),
             'triton_v': probe.get('triton_v'),
             'ptxas': probe.get('ptxas'),
@@ -1449,6 +1511,14 @@ def start_run(params):
         return {'ok': False,
                 'error': 'no engine python found: set FEPT_PYTHON or '
                          'place an interpreter in libs/ (see Dependencies)'}
+    # preflight: an unprepared engine would die with "exit 1" in 0.2 s
+    # (ModuleNotFoundError) - say exactly WHAT is missing instead
+    missing = _missing_modules(py, ('numpy', 'ase', 'torch', 'mace'))
+    if missing:
+        return {'ok': False,
+                'error': 'в движке нет ' + ', '.join(missing) +
+                         ' — вкладка Зависимости → Установить, '
+                         'затем запусти снова'}
     if mode == 'mace':
         cmd = [py, '-u',
                os.path.join(SCRIPTS_DIR, 'run_main_mace.py')]
@@ -2088,8 +2158,9 @@ def pip_proxy_args():
 # Every install is recorded in <app root>/install_manifest.json, so the
 # splash loader only does a sub-second presence check on later launches
 # instead of re-verifying the whole environment every time.
-INSTALL_LIBS = ['numpy', 'ase', 'pysocks', 'triton', 'torch', 'mace']
-LIGHT_LIBS = ['numpy', 'ase', 'pysocks']
+INSTALL_LIBS = ['numpy', 'ase', 'pysocks', 'psutil', 'triton', 'torch',
+                'mace']
+LIGHT_LIBS = ['numpy', 'ase', 'pysocks', 'psutil']
 # Heavy parts are NEVER installed on first boot: torch alone is ~2.5 GB
 # (slow lines) and LAMMPS ships under its own license - the user clicks
 # Install in the Deps tab and the tab blinks red until everything is in.
@@ -2145,13 +2216,24 @@ def manifest_note(name, info):
 
 
 def _site_packages():
+    # site-packages of the env the app actually runs with (the splash
+    # presence check must describe THAT env, not a hardcoded one)
     import glob as _g
-    for pat in (os.path.join(PROJ, '.venv-mace', 'Lib', 'site-packages'),
-                os.path.join(PROJ, '.venv-mace', 'lib', 'python*',
-                             'site-packages')):
-        hit = sorted(_g.glob(pat))
-        if hit:
-            return hit[0]
+    cands = []
+    py = resolve_python()
+    if py:
+        d = os.path.dirname(py)
+        cands += [os.path.join(d, 'Lib', 'site-packages'),
+                  os.path.normpath(os.path.join(d, '..', 'lib',
+                                                'site-packages'))]
+        cands += _g.glob(os.path.join(d, 'lib', 'python*',
+                                      'site-packages'))
+    cands += [os.path.join(PROJ, '.venv-mace', 'Lib', 'site-packages'),
+              os.path.join(PROJ, '.venv-mace', 'lib', 'python*',
+                           'site-packages')]
+    for c in cands:
+        if os.path.isdir(c):
+            return os.path.normpath(c)
     return None
 
 
@@ -2186,6 +2268,7 @@ def engine_component_state():
 INSTALL_SPECS = {
     'pysocks': ['pysocks'],
     'numpy': ['numpy'],
+    'psutil': ['psutil'],
     'scipy': ['scipy'],
     'pandas': ['pandas'],
     'ase': ['ase'],
@@ -2256,6 +2339,9 @@ def install_lib(name):
     if not spec:
         log('[gui] install: unknown package ' + repr(name))
         return
+    # show the bar IMMEDIATELY (the user must see something start);
+    # every early-return path below already calls dl_end()
+    dl_begin('установка: ' + spec[0], mode='indeterminate')
     py, need_url = ensure_engine_python()
     if py and name == 'mace' and not _torch_present(py):
         # mace-torch would otherwise pull the NEWEST torch from pypi
@@ -2895,7 +2981,19 @@ class Handler(BaseHTTPRequestHandler):
             if not name:
                 self._json({'ok': False, 'error': 'empty name'}, code=400)
                 return
-            self._json({'ok': True, 'position': queue_add(name, kind)})
+            pos = queue_add(name, kind)
+            if pos == 0:
+                # queue_add returns 0 when idle - then nothing is
+                # running, so THIS endpoint must start the worker (the
+                # legacy /api/install_lib did; the queue endpoint
+                # forgot it -> clicking Install did nothing at all)
+                if kind == 'lammps':
+                    threading.Thread(target=download_lammps,
+                                     daemon=True).start()
+                else:
+                    threading.Thread(target=install_lib, args=(name,),
+                                     daemon=True).start()
+            self._json({'ok': True, 'position': pos})
             return
         if path == '/api/queue/remove':
             self._json({'ok': queue_remove(
@@ -3111,6 +3209,12 @@ class Handler(BaseHTTPRequestHandler):
             py = resolve_python()
             if not py:
                 self._json({'ok': False, 'error': 'no engine python'})
+                return
+            missing = _missing_modules(py, ('psutil', 'numpy', 'ase'))
+            if missing:
+                self._json({'ok': False,
+                            'error': 'в движке нет ' + ', '.join(missing) +
+                                     ' — вкладка Зависимости → Установить'})
                 return
             cmd = [py, '-u',
                    os.path.join(SCRIPTS_DIR, 'calibrate_profile.py'),

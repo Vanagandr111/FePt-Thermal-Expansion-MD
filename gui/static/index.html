@@ -2685,6 +2685,9 @@ async function loadDeps(refresh) {
   h += depRow('pandas', 'pandas', L.pandas,
        L.pandas ? ('v' + (L.pandas_v || '?')) : 'не найдено в движке',
        "installLib('pandas')");
+  h += depRow('psutil', 'psutil (нужен для калибровки)', L.psutil,
+       L.psutil ? ('v' + (L.psutil_v || '?')) : 'не найдено в движке',
+       "installLib('psutil')");
   h += depRow('mace', 'mace', L.mace,
        L.mace ? ('v' + (L.mace_v || '?') + ' (пакет mace-torch)')
               : 'не найдено в движке', "installLib('mace')");
@@ -3002,7 +3005,7 @@ async function installLib(name) {
     const j = await r.json();
     if (!j.ok) { alert('Ошибка очереди: ' + (j.error || '?')); return; }
     if (j.position === 0) {
-      consoleLine('Ставится: ' + name + ' — прогресс в панели загрузки');
+      consoleLine('установка: ' + name + ' — прогресс в панели загрузки');
     } else {
       consoleLine(name + ' — в очереди, позиция ' + j.position);
     }
@@ -3018,32 +3021,40 @@ async function queueRemove(name) {
 }
 let dlWasActive = false;
 async function pollQueue() {
+  /* The queue plaque lives in #queue-bar; #dl-bar belongs to pollDl's
+     progress. (This poller used to reference an undefined `s`, die on
+     the first tick and never re-arm -> the queue plaque never showed.) */
   try {
     const q = await (await fetch('/api/queue')).json();
-    const bar = $('dl-bar');
-    if (!bar) return;
-    const cx = $('dl-cancel');
-    if (cx) cx.style.display =
-      (s.active && s.mode === 'bytes') ? '' : 'none';
+    const bar = $('queue-bar');
     const items = q.items || [];
-    if (!items.length) { bar.classList.add('hidden'); return; }
-    bar.classList.remove('hidden');
-    bar.innerHTML = '<span class="dl-lbl" style="margin:0">⏳ В очереди: ' +
-      items.map((it, i) =>
-        (i + 1) + ') ' + it.name +
-        ' <b class="queue-x" data-qdel="' + it.name +
-        '" title="убрать из очереди">✕</b>').join(' · ') +
-      '</span>';
-    bar.querySelectorAll('[data-qdel]').forEach(b =>
-      b.addEventListener('click', () =>
-        queueRemove(b.getAttribute('data-qdel'))));
+    if (bar) {
+      if (!items.length) {
+        bar.classList.add('hidden');
+      } else {
+        bar.classList.remove('hidden');
+        bar.innerHTML = '<span class="dl-lbl" style="margin:0">⏳ В очереди: ' +
+          items.map((it, i) =>
+            (i + 1) + ') ' + it.name +
+            ' <b class="queue-x" data-qdel="' + it.name +
+            '" title="убрать из очереди">✕</b>').join(' · ') +
+          '</span>';
+        bar.querySelectorAll('[data-qdel]').forEach(b =>
+          b.addEventListener('click', () =>
+            queueRemove(b.getAttribute('data-qdel'))));
+      }
+    }
   } catch (e) { /* server not ready */ }
   setTimeout(pollQueue, 1500);
 }
+let lastDoneMsg = '';
 async function pollDl() {
   try {
     const s = await (await fetch('/api/download_status')).json();
     const bar = $('dl-bar');
+    const cx = $('dl-cancel');
+    if (cx) cx.style.display =
+      (s.active && s.mode === 'bytes') ? '' : 'none';
     if (s.active) {
       bar.classList.remove('hidden');
       bar.classList.toggle('indet', s.mode !== 'bytes');
@@ -3063,9 +3074,13 @@ async function pollDl() {
     } else {
       bar.classList.add('hidden');
       $('dl-fill').style.width = '0';
-      if (dlWasActive) {          // a transfer just finished -> refresh
+      // surface the server's verdict even when a transfer failed
+      // instantly (dlWasActive never saw it go active)
+      const freshDone = s.done_msg && s.done_msg !== lastDoneMsg;
+      if (freshDone) lastDoneMsg = s.done_msg;
+      if (freshDone || dlWasActive) {
+        dlLine('[dl] ' + (s.done_msg || 'загрузка завершена ✓'));
         dlWasActive = false;
-        dlLine('[dl] загрузка завершена ✓');
         loadDeps(true);
       }
     }
