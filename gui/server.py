@@ -2018,7 +2018,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.2'
+APP_VERSION = '2.2.3'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2587,6 +2587,15 @@ class DlCancelled(Exception):
     """User pressed the cancel button for the running download."""
 
 
+DL = {'active': False, 'label': '', 'have': 0, 'total': 0, 'mode': 'bytes',
+      'done_msg': ''}
+
+# pip wall-clock limit: a 2.8 GB torch wheel needs >=1.5 MB/s to finish
+# inside the old 1800 s; on a slow line the install was killed silently
+# and the bar still said "завершён" (customer saw "не смог доделать").
+PIP_TIMEOUT = 3600
+
+
 def dl_begin(label, mode='bytes', total=0):
     DL.update(active=True, label=label, have=0, total=total, mode=mode,
               done_msg='', cancel=False)
@@ -2598,6 +2607,109 @@ def dl_end(msg=''):
         queue_pump()
     except Exception:
         pass
+
+
+def _pip_stream(py, spec_args, tag='pip'):
+    """Run pip with LIVE console output and a real network meter.
+
+    The old code captured all output and showed only the last 4 stdout
+    lines / last 400 chars of stderr on failure - during a 2.8 GB torch
+    download the console was empty and the user could not tell a
+    working download from a hang (customer: "сеть 100% несколько минут,
+    ничего не доделал").
+
+    Now: every pip line goes to the console as it arrives ([pip] ...),
+    the wheel size from "Downloading ... (2.77 GB)" becomes the bar
+    total, psutil meters received bytes + speed, and the return code is
+    the REAL verdict (timeout -> 'timeout' after PIP_TIMEOUT seconds).
+    Returns rc (int, 'timeout') or None on spawn failure.
+    """
+    import subprocess as _sp
+    t0 = time.time()
+    io0 = None
+    try:
+        import psutil
+        io0 = psutil.net_io_counters().bytes_recv
+    except Exception:
+        psutil = None
+    cmd = [py, '-m', 'pip', 'install'] + pip_proxy_args() + list(spec_args)
+    log('[gui] cmd: ' + ' '.join(cmd))
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                encoding='utf-8', errors='replace',
+                                bufsize=1, creationflags=NOWIN)
+    except Exception as e:
+        log('[gui] pip spawn failed: ' + str(e))
+        return None
+    DL['proc'] = proc
+    lines = []
+    got_total = [False]
+
+    def _reader():
+        try:
+            for ln in proc.stdout:
+                ln = ln.rstrip('\r\n')
+                if not ln:
+                    continue
+                lines.append(ln)
+                log('[pip] ' + ln[:500])
+                m = re.search(r'Downloading .*\((\d+(?:\.\d+)?)\s*(GB|MB|KB)\)',
+                              ln)
+                if m and not got_total[0]:
+                    mult = {'GB': 1e9, 'MB': 1e6, 'KB': 1e3}[m.group(2)]
+                    DL['total'] = int(float(m.group(1)) * mult)
+                    DL['mode'] = 'bytes'
+                    got_total[0] = True
+        except Exception:
+            pass
+
+    def _meter():
+        # live speed for the bar label (indeterminate until the total
+        # is known); DL['have'] = bytes received by the WHOLE machine
+        # since pip start - honest and close enough for one PC
+        last, last_t = io0, time.time()
+        while proc.poll() is None:
+            time.sleep(2.0)
+            if io0 is None or not DL.get('active'):
+                continue
+            try:
+                cur = psutil.net_io_counters().bytes_recv
+            except Exception:
+                continue
+            now = time.time()
+            dt = now - last_t
+            if dt <= 0:
+                continue
+            DL['have'] = cur - io0
+            if DL['have'] > 0:
+                DL['label'] = '{} · {:.0f} МБ · {:.1f} МБ/с'.format(
+                    tag, DL['have'] / 1e6, (cur - last) / dt / 1e6)
+            last, last_t = cur, now
+
+    rt = threading.Thread(target=_reader, daemon=True)
+    rt.start()
+    threading.Thread(target=_meter, daemon=True).start()
+    try:
+        rc = proc.wait(timeout=PIP_TIMEOUT)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        log('[gui] pip killed: exceeded {} s'.format(PIP_TIMEOUT))
+        rc = 'timeout'
+    rt.join(10)
+    try:
+        proc.stdout.close()
+    except Exception:
+        pass
+    DL['proc'] = None
+    dt = time.time() - t0
+    got = (DL['have'] / 1e6) if io0 is not None else 0.0
+    log('[gui] pip finished: rc={} in {:.1f} s, received {:.0f} MB'.format(
+        rc, dt, got))
+    return rc
 
 
 def install_lib(name):
@@ -2630,50 +2742,55 @@ def install_lib(name):
     # torch: walk the mirror chain (pytorch index -> pypi -> cu126)
     variants = ([list(s) for s in TORCH_MIRRORS]
                 if name == 'torch' else [list(spec)])
-    r, vspec = None, list(spec)
+    r, vspec, err = None, list(spec), ''
     try:
         for vi, vspec in enumerate(variants):
             log('[gui] pip install {} into {} (mirror {}/{})'.format(
                 vspec[0], py, vi + 1, len(variants)))
             dl_begin('pip install ' + vspec[0], mode='indeterminate')
-            r = subprocess.run([py, '-m', 'pip', 'install'] +
-                               pip_proxy_args() + vspec,
-                               capture_output=True, text=True,
-                               timeout=1800, creationflags=NOWIN)
-            if r.returncode == 0:
+            r = _pip_stream(py, vspec, tag=spec[0])
+            if r == 0:
                 break
+            if r == 'timeout':
+                err = ('превышен лимит {} мин - проверь сеть и повтори'
+                       .format(PIP_TIMEOUT // 60))
+                break
+            if r is None:
+                err = 'pip не запустился (см. консоль)'
+                break
+            log('[gui] mirror {} failed (rc={}) -> next mirror'.format(
+                vi + 1, r))
     except Exception as e:
         log('[gui] pip error: ' + str(e))
+        err = str(e)
         r = None
-    finally:
-        dl_end('pip install завершён: ' + spec[0])
-    if r is None:
-        return
-    for line in (r.stdout or '').strip().splitlines()[-4:]:
-        log('[gui]   ' + line)
-    if r.returncode != 0:
-        log('[gui] pip FAILED (code {}): {}'.format(
-            r.returncode, (r.stderr or '')[-400:]))
-        return
-    log('[gui] pip OK: ' + vspec[0])
-    if name == 'torch' and not _triton_present(py):
-        log('[gui] torch OK -> installing ' + TRITON_SPEC[0] +
-            ' (needed by torch.compile)')
-        rt = subprocess.run([py, '-m', 'pip', 'install'] +
-                            pip_proxy_args() + list(TRITON_SPEC),
-                            capture_output=True, text=True,
-                            timeout=1800, creationflags=NOWIN)
-        for tline in (rt.stdout or '').strip().splitlines()[-3:]:
-            log('[gui]   ' + tline)
-        if rt.returncode != 0:
-            log('[gui] pip FAILED (code {}): {}'.format(
-                rt.returncode, (rt.stderr or '')[-300:]))
-        else:
-            log('[gui] pip OK: ' + TRITON_SPEC[0])
-    # record into the install manifest -> fast splash starts later
-    idx = (vspec[vspec.index('--index-url') + 1]
-           if '--index-url' in vspec else 'pypi')
-    manifest_note(name, {'spec': vspec[0], 'index': idx})
+    # verdict INTO THE BAR - the old finally wrote "завершён" even when
+    # pip died/timed out, so a failed install looked successful
+    if r == 0:
+        log('[gui] pip OK: ' + vspec[0])
+        if name == 'torch' and not _triton_present(py):
+            log('[gui] torch OK -> installing ' + TRITON_SPEC[0] +
+                ' (needed by torch.compile)')
+            rt = _pip_stream(py, list(TRITON_SPEC), tag=TRITON_SPEC[0])
+            if rt != 0:
+                log('[gui] triton install failed (rc={}) - torch itself '
+                    'is OK, compile just stays off'.format(rt))
+            else:
+                log('[gui] pip OK: ' + TRITON_SPEC[0])
+        # record into the install manifest -> fast splash starts later
+        idx = (vspec[vspec.index('--index-url') + 1]
+               if '--index-url' in vspec else 'pypi')
+        manifest_note(name, {'spec': vspec[0], 'index': idx})
+        dl_end('установка завершена: ' + spec[0] + ' \u2713')
+    elif r == 'timeout':
+        log('[gui] pip FAILED: timeout after {} s'.format(PIP_TIMEOUT))
+        dl_end('УСТАНОВКА ПРЕРВАНА: ' + spec[0] + ' - ' + err)
+    else:
+        code = ('' if r is None else ' (код ' + str(r) + ')')
+        log('[gui] pip FAILED{}: {} - full output above'.format(
+            code, spec[0]))
+        dl_end('УСТАНОВКА НЕ УДАЛАСЬ: ' + spec[0] + code +
+               ' - подробности в консоли выше')
     _DEPS_CACHE['t'] = 0.0
 
 
@@ -3538,14 +3655,26 @@ class Handler(BaseHTTPRequestHandler):
             if not DL['active']:
                 self._json({'ok': False, 'error': 'ничего не качается'})
                 return
-            if DL.get('mode') != 'bytes':
+            if DL.get('mode') != 'bytes' and not DL.get('proc'):
                 self._json({'ok': False,
                             'error': 'отмена доступна только для скачивания '
                                      'файла (установки останавливаются '
                                      'крестиком в очереди до старта)'})
                 return
-            DL['cancel'] = True
-            log('[gui] cancel requested for: ' + (DL.get('label') or ''))
+            if DL.get('proc') is not None:
+                # a running pip install: kill the process; install_lib
+                # sees rc != 0 and reports the failure honestly
+                try:
+                    DL['proc'].kill()
+                    log('[gui] cancel requested for: ' +
+                        (DL.get('label') or ''))
+                except Exception as e:
+                    log('[gui] cancel failed: ' + str(e))
+                    self._json({'ok': False, 'error': str(e)})
+                    return
+            else:
+                DL['cancel'] = True
+                log('[gui] cancel requested for: ' + (DL.get('label') or ''))
             self._json({'ok': True})
             return
 

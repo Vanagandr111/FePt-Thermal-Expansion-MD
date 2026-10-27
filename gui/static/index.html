@@ -637,6 +637,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
     <button class="ghost tiny" onclick="clearZone('run')">очистить</button>
   </div>
   <div id="console" class="cview" data-zone="run"></div>
+  <div style="margin:4px 0 10px;text-align:right"><button class="ghost tiny" onclick="copyConsole('run')">⧉ скопировать лог</button></div>
 </section>
 
 <!-- ======================= RESULTS ======================= -->
@@ -725,6 +726,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
       <button class="ghost tiny" onclick="clearZone('run')">очистить</button>
     </div>
     <div class="cview" data-zone="run"></div>
+    <div style="margin:4px 0 10px;text-align:right"><button class="ghost tiny" onclick="copyConsole('run')">⧉ скопировать лог</button></div>
   </div>
 </section>
 
@@ -748,6 +750,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
     <button class="ghost tiny" onclick="clearZone('warn')">очистить</button>
   </div>
   <div class="cview" data-zone="warn"></div>
+  <div style="margin:4px 0 10px;text-align:right"><button class="ghost tiny" onclick="copyConsole('warn')">⧉ скопировать лог</button></div>
 </section>
 
 <!-- ======================= DEPS ======================= -->
@@ -819,6 +822,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
     <button class="ghost tiny" onclick="clearZone('deps')">очистить</button>
   </div>
   <div class="cview" data-zone="deps"></div>
+  <div style="margin:4px 0 10px;text-align:right"><button class="ghost tiny" onclick="copyConsole('deps')">⧉ скопировать лог</button></div>
 </section>
 
 </main>
@@ -2194,6 +2198,33 @@ function clearZone(zone) {
   }
   LOGBUF.length = 0; for (const e of keep) LOGBUF.push(e);
   renderConsoles();
+}
+function copyConsole(zone) {
+  /* copy the whole visible log of one zone (customer sends it on
+     install failures); clipboard API first, execCommand fallback */
+  const out = [];
+  for (const e of LOGBUF) {
+    const isW = e.c === 't-err' || e.z === 'warn';
+    if (zone === 'warn') { if (!isW) continue; }
+    else if (e.z !== zone) continue;
+    out.push(e.raw);
+  }
+  const txt = out.join('\n');
+  const ok = () => consoleLine('лог скопирован: ' + out.length + ' строк');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt, ok));
+  } else fallbackCopy(txt, ok);
+}
+function fallbackCopy(txt, ok) {
+  const ta = document.createElement('textarea');
+  ta.value = txt;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); ok(); }
+  catch (e) { consoleLine('копирование не удалось: ' + e); }
+  ta.remove();
 }
 function dlLine(txt) {
   // one live progress line per download in the deps console

@@ -15,7 +15,7 @@ a = Analysis(
                    'openpyxl.chart.error_bar',
                    'openpyxl.chart.marker',
                    'openpyxl.chart.shapes',
-                   'openpyxl.drawing.line'],
+                   'openpyxl.drawing.line', 'psutil'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
