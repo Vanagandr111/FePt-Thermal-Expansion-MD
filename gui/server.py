@@ -87,23 +87,42 @@ BOOT = {'need_folder': False, 'phase': 'ready', 'pct': 0, 'line': '',
 
 
 def _approot_file():
-    # One tiny text file next to the exe remembers the chosen root; if
-    # that dir is not writable (Program Files) fall back to %APPDATA%.
-    p = os.path.join(GUI_DIR, 'app_root.txt')
-    if os.access(GUI_DIR, os.W_OK):
-        return p
-    d = os.path.join(os.environ.get('APPDATA', GUI_DIR), APP_NAME)
+    # The marker lives in %LOCALAPPDATA%, never next to the exe: a text
+    # file beside it would litter whatever folder the user unpacked it
+    # into (and would be unwritable under Program Files anyway).
+    d = os.path.join(os.environ.get('LOCALAPPDATA') or
+                     os.environ.get('APPDATA') or GUI_DIR, APP_NAME)
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, 'app_root.txt')
 
 
 def load_app_root():
+    path = _approot_file()
     try:
-        with open(_approot_file(), encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             p = f.read().strip()
-        return p or None
+        if p:
+            return p
+    except OSError:
+        pass
+    # migrate the legacy copy that older builds wrote next to the exe
+    legacy = os.path.join(GUI_DIR, 'app_root.txt')
+    try:
+        with open(legacy, encoding='utf-8') as f:
+            p = f.read().strip()
     except OSError:
         return None
+    if p:
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(p)
+        except OSError:
+            pass
+        try:
+            os.unlink(legacy)   # remove the stray file from the exe folder
+        except OSError:
+            pass
+    return p or None
 
 
 def save_app_root(path):
@@ -839,6 +858,9 @@ def collect_deps(refresh=False):
             'probe_error': probe.get('error'),
         },
         'lammps': {'found': bool(lammps), 'path': lammps},
+        # folder that opens the bundled python (venv root) in explorer
+        'python_dir': (os.path.dirname(os.path.dirname(_py))
+                       if (_py := resolve_python()) else None),
         'potentials': scan_potentials(),
         # on-demand model catalog: name/label/size for the download
         # buttons (weights themselves are NOT kept locally)
@@ -1058,6 +1080,7 @@ def collect_results(outdir):
         series.setdefault(str(comp), []).append({
             'T': temp, 'a': a, 'std': std or 0.0,
             'runtime': f(row, 'runtime_s'),
+            'drift': f(row, 'drift'),
         })
     for key in series:
         series[key].sort(key=lambda d: d['T'])
@@ -1103,6 +1126,257 @@ def collect_results(outdir):
         'mtime': os.path.getmtime(all_path) if os.path.isfile(all_path)
                  else None,
     }
+
+
+# ------------------------------------------------- xlsx export/import --
+def _current_outdir():
+    """The run folder the Results tab shows: RUN's own one, else the
+    newest folder holding all_results.csv, else a default path."""
+    outdir = RUN.get('outdir')
+    if outdir:
+        return outdir
+    best, best_t = None, 0.0
+    try:
+        names = os.listdir(PROJ)
+    except OSError:
+        names = []
+    for name in names:
+        cand = os.path.join(PROJ, name)
+        csvf = os.path.join(cand, 'all_results.csv')
+        if os.path.isfile(csvf):
+            t = os.path.getmtime(csvf)
+            if t > best_t:
+                best, best_t = cand, t
+    return best or os.path.join(PROJ, 'results_mace')
+
+
+def _write_export_xlsx(payload):
+    """Excel package: sheet 1 = the data table (per-point series and
+    the CTE report), sheet 2 = every chart/histogram the GUI renders,
+    embedded as PNG images with captions."""
+    import base64
+    from io import BytesIO
+    from openpyxl import Workbook, load_workbook  # noqa: F401
+    from openpyxl.drawing.image import Image as XlImage
+    from openpyxl.styles import Font, Alignment
+    from openpyxl.utils import get_column_letter
+
+    series = payload.get('series') or {}
+    cte = payload.get('cte') or []
+    meta = payload.get('meta') or {}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Данные'
+    ws['A1'] = 'Fe-Pt results' + (
+        '  (seed={})'.format(meta.get('form', {}).get('seed'))
+        if isinstance(meta.get('form'), dict)
+        and meta.get('form', {}).get('seed') is not None else '')
+    ws['A1'].font = Font(bold=True, size=12)
+    head = ['x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
+            'drift', 'runtime_s']
+    hrow = 3
+    for ci, h in enumerate(head, 1):
+        c = ws.cell(row=hrow, column=ci, value=h)
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal='center')
+    row = hrow + 1
+    for key in sorted(series, key=lambda s: float(s)):
+        for d in series[key]:
+            ws.cell(row=row, column=1, value=float(key))
+            ws.cell(row=row, column=2, value=d.get('T'))
+            ws.cell(row=row, column=3, value=d.get('a'))
+            ws.cell(row=row, column=4, value=d.get('std'))
+            ws.cell(row=row, column=5, value=d.get('drift'))
+            ws.cell(row=row, column=6, value=d.get('runtime'))
+            row += 1
+    if cte:
+        row += 2
+        ws.cell(row=row, column=1,
+                value='CTE report').font = Font(bold=True)
+        row += 1
+        chead = ['x_Pt', 'alpha_2pt', 'alpha_fit', 'alpha_min', 'alpha_max',
+                 'alpha_range', 'R2', 'seg_300_600', 'seg_600_900',
+                 'seg_900_1200']
+        for ci, h in enumerate(chead, 1):
+            ws.cell(row=row, column=ci, value=h).font = Font(bold=True)
+        row += 1
+        for c in cte:
+            r2 = c.get('R2') if c.get('R2') is not None else c.get('R_squared')
+            vals = [c.get('x_Pt'), c.get('alpha_2pt'), c.get('alpha_fit'),
+                    c.get('alpha_min'), c.get('alpha_max'),
+                    c.get('alpha_range'), r2, c.get('seg_300_600'),
+                    c.get('seg_600_900'), c.get('seg_900_1200')]
+            for ci, v in enumerate(vals, 1):
+                ws.cell(row=row, column=ci, value=v)
+            row += 1
+    for ci, w in enumerate((11, 11, 17, 17, 14, 12, 10, 13, 13, 13), 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    # ---- sheet 2: every chart from the GUI -------------------------
+    ws2 = wb.create_sheet('Графики')
+    r0 = 1
+    placed = 0
+    for img in (payload.get('images') or []):
+        name = str(img.get('name') or 'график')[:80]
+        try:
+            raw = base64.b64decode(img.get('png') or '')
+            if len(raw) < 100:
+                continue
+            xl = XlImage(BytesIO(raw))
+        except Exception:
+            continue
+        ws2.cell(row=r0, column=1, value=name).font = Font(bold=True)
+        r0 += 1
+        try:
+            ws2.add_image(xl, 'A{}'.format(r0))
+        except Exception:
+            continue
+        placed += 1
+        r0 += max(20, int(getattr(xl, 'height', 400) / 20) + 2)
+    if not placed:
+        ws2['A1'] = 'графики не приложены'
+
+    outdir = _current_outdir()
+    try:
+        os.makedirs(outdir, exist_ok=True)
+    except OSError:
+        pass
+    dest = os.path.join(outdir, 'fept_export.xlsx')
+    try:
+        wb.save(dest)
+    except PermissionError:
+        # the previous export is open in Excel — write next to it instead
+        # of failing, so a second export always produces a file
+        stamp = time.strftime('%Y%m%d_%H%M%S')
+        dest = os.path.join(outdir, 'fept_export_%s.xlsx' % stamp)
+        wb.save(dest)
+    return dest
+
+
+def _compute_cte(series):
+    """CTE rows built from bare series data (imported files carry no
+    cte_report.csv): linear fit a(T) per composition plus the chordal,
+    segmental and range values the charts/summary expect."""
+    out = []
+    for key in sorted(series, key=lambda s: float(s)):
+        pts = sorted(series[key], key=lambda d: d.get('T') or 0)
+        if len(pts) < 2:
+            continue
+        xs = [float(d['T']) for d in pts]
+        ys = [float(d['a']) for d in pts]
+        n = len(xs)
+        mx, my = sum(xs) / n, sum(ys) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        slope = sxy / sxx if sxx else 0.0
+        inter = my - slope * mx
+        ss_res = sum((y - (slope * x + inter)) ** 2 for x, y in zip(xs, ys))
+        ss_tot = sum((y - my) ** 2 for y in ys) or 1e-30
+        r2 = 1.0 - ss_res / ss_tot
+        alpha_fit = slope / my if my else 0.0
+        a2pt = ((ys[-1] - ys[0]) / (ys[0] * (xs[-1] - xs[0]))
+                if xs[-1] != xs[0] and ys[0] else 0.0)
+        inst = []
+        for i in range(1, n):
+            dt = xs[i] - xs[i - 1]
+            if dt and ys[i - 1]:
+                inst.append((ys[i] - ys[i - 1]) / (ys[i - 1] * dt))
+        amin = min(inst) if inst else 0.0
+        amax = max(inst) if inst else 0.0
+
+        def seg(t0, t1):
+            idx = [i for i in range(n) if t0 <= xs[i] <= t1]
+            if len(idx) < 2:
+                return None
+            i0, i1 = idx[0], idx[-1]
+            dt = xs[i1] - xs[i0]
+            if not dt or not ys[i0]:
+                return None
+            return (ys[i1] - ys[i0]) / (ys[i0] * dt)
+
+        out.append({
+            'x_Pt': float(key),
+            'alpha_2pt': a2pt,
+            'alpha_fit': alpha_fit,
+            'alpha_min': amin,
+            'alpha_max': amax,
+            'alpha_range': amax - amin,
+            'R2': r2,
+            'seg_300_600': seg(300, 600),
+            'seg_600_900': seg(600, 900),
+            'seg_900_1200': seg(900, 1200),
+        })
+    return out
+
+
+def _parse_results_upload(name, raw):
+    """Uploaded .xlsx / .csv / .txt -> series dict. Accepts our own
+    export sheet (x_Pt,T_K,a_mean...) and the all_results.csv layout;
+    any delimited text with those columns works too."""
+    import csv as _csv
+    from io import StringIO
+    low = (name or '').lower()
+    rows = []
+    if low.endswith(('.xlsx', '.xlsm')):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+        try:
+            for ws in wb.worksheets:
+                hdr_i, head = None, None
+                for i, r in enumerate(ws.iter_rows(values_only=True), 1):
+                    vals = [str(v).strip().lower()
+                            if v is not None else '' for v in r]
+                    if 'x_pt' in vals and 't_k' in vals:
+                        hdr_i, head = i, vals
+                        break
+                if head:
+                    for r in ws.iter_rows(min_row=hdr_i + 1,
+                                          values_only=True):
+                        rows.append(dict(zip(head, r)))
+                    break
+        finally:
+            wb.close()
+        if not rows:
+            raise ValueError(
+                'в книге не найдена таблица с колонками x_Pt / T_K '
+                '(или после заголовка нет ни одной строки данных)')
+    else:
+        text = raw.decode('utf-8-sig', errors='replace')
+        first = text.splitlines()[0] if text else ''
+        delim = ';' if first.count(';') >= first.count(',') else ','
+        rdr = _csv.DictReader(StringIO(text), delimiter=delim)
+        rows = [{(k or '').strip().lower(): v for k, v in r.items()}
+                for r in rdr]
+
+    def pick(r, *names):
+        for n in names:
+            if n in r and r[n] not in (None, ''):
+                try:
+                    return float(r[n])
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    series = {}
+    for r in rows:
+        comp = pick(r, 'x_pt', 'x(pt)', 'x', 'comp')
+        temp = pick(r, 't_k', 't(k)', 't', 'temp')
+        a = pick(r, 'a_mean_angstrom', 'a_mean', 'a_mean_a', 'a')
+        if comp is None or temp is None or a is None:
+            continue
+        series.setdefault(str(comp), []).append({
+            'T': temp, 'a': a,
+            'std': pick(r, 'a_std_angstrom', 'a_std', 'std', 'sigma') or 0.0,
+            'runtime': pick(r, 'runtime_s', 'runtime'),
+            'drift': pick(r, 'drift'),
+        })
+    if not series:
+        raise ValueError('не найдены колонки x_Pt / T_K / a_mean')
+    for k in series:
+        series[k].sort(key=lambda d: d['T'])
+    return series
 
 
 # --------------------------------------------------------------- runners --
@@ -1922,13 +2196,58 @@ INSTALL_SPECS = {
 }
 
 
+# install/download queue: when a transfer is already running, further
+# requests wait in line (with their position shown in the UI) instead
+# of failing with 'another transfer is already active'.
+QUEUE = []
+
+
+def queue_add(name, kind='lib'):
+    """Return the position (0 = started right now)."""
+    if not DL['active']:
+        return 0
+    QUEUE.append({'name': name, 'kind': kind})
+    log('[gui] queued: {} (position {})'.format(name, len(QUEUE)))
+    return len(QUEUE)
+
+
+def queue_remove(name):
+    for i, item in enumerate(list(QUEUE)):
+        if item['name'] == name:
+            QUEUE.pop(i)
+            log('[gui] removed from queue: ' + name)
+            return True
+    return False
+
+
+def queue_pump():
+    """Called when a transfer finishes: start the next queued item."""
+    if DL['active'] or not QUEUE:
+        return
+    item = QUEUE.pop(0)
+    log('[gui] queue: starting ' + item['name'])
+    if item.get('kind') == 'lammps':
+        threading.Thread(target=download_lammps, daemon=True).start()
+    else:
+        threading.Thread(target=install_lib, args=(item['name'],),
+                         daemon=True).start()
+
+
+class DlCancelled(Exception):
+    """User pressed the cancel button for the running download."""
+
+
 def dl_begin(label, mode='bytes', total=0):
     DL.update(active=True, label=label, have=0, total=total, mode=mode,
-              done_msg='')
+              done_msg='', cancel=False)
 
 
 def dl_end(msg=''):
     DL.update(active=False, done_msg=msg)
+    try:
+        queue_pump()
+    except Exception:
+        pass
 
 
 def install_lib(name):
@@ -2062,6 +2381,8 @@ def download_url(url, dest, label, attempts=4):
                         total = int(r.headers.get('Content-Length') or 0)
                         DL['total'] = total
                         while True:
+                            if DL.get('cancel'):
+                                raise DlCancelled()
                             chunk = r.read(1 << 20)
                             if not chunk:
                                 break
@@ -2078,6 +2399,15 @@ def download_url(url, dest, label, attempts=4):
                 log('[gui] saved {} ({:.1f} MB)'.format(dest, size / 1e6))
                 dl_end('сохранён: ' + os.path.basename(dest))
                 return dest
+            except DlCancelled:
+                DL['active'] = False
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                log('[gui] download cancelled by user: ' + label)
+                dl_end('отменено пользователем')
+                return None
             except Exception as e:
                 last_err = e
                 DL['active'] = False
@@ -2121,6 +2451,9 @@ def download_lammps():
         installer = download_url(cand[0], os.path.join(LAMMPS_DIR,
                                                        'lammps_setup.exe'),
                                  'LAMMPS Windows installer')
+        if not installer:
+            log('[gui] download cancelled — install step skipped')
+            return
         log('[gui] silent install into ' + LAMMPS_DIR + ' ...')
         dl_begin('LAMMPS: тихая установка', mode='indeterminate')
         try:
@@ -2173,6 +2506,32 @@ def download_lammps():
 
 
 # --------------------------------------------------------------- server --
+def app_restart():
+    """Cold restart: spawn a fresh copy of the program, then exit.
+    Used by the header menu and by the tray icon."""
+    time.sleep(2)
+    args = sys.argv[1:] or (
+        [sys.argv[0]] if sys.argv[0].endswith('.py') else [])
+    subprocess.Popen([sys.executable] + args,
+                     cwd=os.getcwd(), env=os.environ.copy())
+    os._exit(0)
+
+
+def app_shutdown():
+    """Quit fully: stop any run, drop the tray icon, leave no processes."""
+    try:
+        stop_run()
+    except Exception:
+        pass
+    try:
+        import tray
+        tray.stop()
+    except Exception:
+        pass
+    time.sleep(0.4)
+    os._exit(0)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'FePtGUI/1.0'
 
@@ -2223,6 +2582,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/download_status':
             # progress bar state for the deps tab (DL is module-level)
             self._json(dict(DL))
+            return
+        if path == '/api/queue':
+            self._json({'items': [dict(q) for q in QUEUE],
+                        'active': bool(DL['active']),
+                        'label': DL['label']})
             return
         if path == '/api/symbol_info':
             import urllib.parse
@@ -2524,9 +2888,62 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # ------- open any app folder (python venv, lammps, ...) -------
+        # ---- install queue (position + cancel in the UI) ----
+        if path == '/api/queue/add':
+            name = str(body.get('name') or '').strip()
+            kind = str(body.get('kind') or 'lib').strip()
+            if not name:
+                self._json({'ok': False, 'error': 'empty name'}, code=400)
+                return
+            self._json({'ok': True, 'position': queue_add(name, kind)})
+            return
+        if path == '/api/queue/remove':
+            self._json({'ok': queue_remove(
+                str(body.get('name') or '').strip())})
+            return
+
+        # ---- program control from the header menu ----
+        if path == '/api/app/restart':
+            threading.Thread(target=app_restart, daemon=True).start()
+            self._json({'ok': True, 'text': 'перезапускаюсь...'})
+            return
+        if path == '/api/app/shutdown':
+            threading.Thread(target=app_shutdown, daemon=True).start()
+            self._json({'ok': True, 'text': 'программа остановлена'})
+            return
+
+        # the LAMMPS folder (installed copy) in the explorer
+        if path == '/api/open_lammps':
+            folder = None
+            try:
+                # find_lmp() returns a display STRING ('D:\...\lmp.exe'),
+                # not a pair — unpacking it broke this endpoint silently
+                lammps = find_lmp()
+                if lammps:
+                    folder = os.path.dirname(lammps) if \
+                        os.sep in lammps or '/' in lammps else None
+            except Exception:
+                folder = None
+            if not folder:
+                self._json({'ok': False, 'error': 'LAMMPS не установлен'},
+                           code=400)
+                return
+            log('[gui] open lammps folder ' + folder)
+            threading.Timer(0.25,
+                            lambda: os.startfile(folder)).start()
+            self._json({'ok': True})
+            return
+
         if path == '/api/open_path':
             p = os.path.abspath(str(_jbody().get('path') or ''))
             allowed = [PROJ, GUI_DIR, os.path.dirname(GUI_DIR)]
+            try:
+                _py = resolve_python() or ''
+                if _py:
+                    allowed += [os.path.dirname(_py),
+                                os.path.dirname(os.path.dirname(_py))]
+            except Exception:
+                pass
             if not any(p == a or p.startswith(a + os.sep)
                        for a in allowed) or not os.path.isdir(p):
                 self._json({'ok': False, 'error': 'нет папки'}, code=400)
@@ -2746,6 +3163,66 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
             self._json({'ok': True})
             return
+        if path == '/api/download/cancel':
+            if not DL['active']:
+                self._json({'ok': False, 'error': 'ничего не качается'})
+                return
+            if DL.get('mode') != 'bytes':
+                self._json({'ok': False,
+                            'error': 'отмена доступна только для скачивания '
+                                     'файла (установки останавливаются '
+                                     'крестиком в очереди до старта)'})
+                return
+            DL['cancel'] = True
+            log('[gui] cancel requested for: ' + (DL.get('label') or ''))
+            self._json({'ok': True})
+            return
+
+        # ---- Excel package: sheet 1 table, sheet 2 charts ----------
+        if path == '/api/export_xlsx':
+            body = _jbody()
+            try:
+                dest = _write_export_xlsx(body)
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)}, code=500)
+                return
+            log('[gui] xlsx export: ' + dest)
+            self._json({'ok': True, 'file': dest,
+                        'name': os.path.basename(dest)})
+            return
+
+        # ---- import: our .xlsx export or a results file (.csv/.txt) -
+        if path == '/api/import_results':
+            body = _jbody()
+            name = str(body.get('name') or 'файл')
+            try:
+                import base64 as _b64
+                raw = _b64.b64decode(str(body.get('data') or ''))
+            except Exception:
+                self._json({'ok': False, 'error': 'битые данные файла'},
+                           code=400)
+                return
+            if not raw:
+                self._json({'ok': False, 'error': 'пустой файл'},
+                           code=400)
+                return
+            try:
+                series = _parse_results_upload(name, raw)
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)}, code=400)
+                return
+            payload = {
+                'series': series,
+                'cte': _compute_cte(series),
+                'meta': {'type': 'import', 'imported': name,
+                         'created_at': time.strftime('%Y-%m-%d %H:%M:%S')},
+                'outdir': _current_outdir(),
+            }
+            log('[gui] imported results: {} ({} compositions)'.format(
+                name, len(series)))
+            self._json({'ok': True, 'results': payload})
+            return
+
         if path == '/api/download_lammps':
             if DL['active']:
                 self._json({'ok': False,
@@ -2897,9 +3374,28 @@ def main():
                                  daemon=True).start()
             else:
                 BOOT['phase'] = 'ready'
-    srv = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
+    srv = None
+    for _try in range(12):
+        try:
+            srv = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
+            break
+        except OSError as exc:
+            log('[gui] port {} busy ({}), retrying...'.format(PORT, exc))
+            time.sleep(1.5)
+    if srv is None:
+        raise RuntimeError('port {} never became free'.format(PORT))
     srv.daemon_threads = True
     url = 'http://127.0.0.1:{}/'.format(PORT)
+    # system tray icon: open GUI / restart / quit
+    try:
+        import tray as tray_mod
+        tray_ok = tray_mod.start(url, on_restart=app_restart,
+                                 on_quit=app_shutdown)
+        log('[gui] tray: ' +
+            ('icon ready' if tray_ok else 'disabled (' +
+             (tray_mod.TRAY_ERR or 'no reason') + ')'))
+    except Exception as exc:
+        log('[gui] tray disabled: ' + str(exc))
     print('FePt GUI running at ' + url)
     print('project: ' + PROJ)
     if '--no-browser' not in sys.argv:

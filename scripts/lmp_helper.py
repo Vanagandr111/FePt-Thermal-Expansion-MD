@@ -118,6 +118,73 @@ def find_lmp():
         if os.path.isfile(p):
             return [p]
 
+    # 5. Registered installs (the NSIS installer finds and removes old
+    #    copies through these entries, so read them too instead of
+    #    telling the user "not installed" while the installer disagrees)
+    reg_lmp = _find_lmp_registered()
+    if reg_lmp:
+        return [reg_lmp]
+
+    return None
+
+
+def _find_lmp_registered():
+    """lmp.exe from the Windows Uninstall registry entries for LAMMPS."""
+    if os.name != 'nt':
+        return None
+    import winreg
+    base = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    hives = [
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY),
+        (winreg.HKEY_CURRENT_USER, winreg.KEY_WOW64_64KEY),
+        (winreg.HKEY_CURRENT_USER, winreg.KEY_WOW64_32KEY),
+    ]
+    for hive, view in hives:
+        try:
+            root = winreg.OpenKey(hive, base, 0,
+                                  winreg.KEY_READ | view)
+        except OSError:
+            continue
+        try:
+            n_sub = winreg.QueryInfoKey(root)[0]
+        except OSError:
+            winreg.CloseKey(root)
+            continue
+        for i in range(n_sub):
+            try:
+                sub_name = winreg.EnumKey(root, i)
+                sub = winreg.OpenKey(root, sub_name, 0,
+                                     winreg.KEY_READ | view)
+            except OSError:
+                continue
+            try:
+                try:
+                    display = str(winreg.QueryValueEx(sub, 'DisplayName')[0])
+                except OSError:
+                    display = ''
+                if 'lammps' not in display.lower():
+                    continue
+                loc = ''
+                try:
+                    loc = str(winreg.QueryValueEx(sub, 'InstallLocation')[0])
+                except OSError:
+                    pass
+            finally:
+                try:
+                    winreg.CloseKey(sub)
+                except OSError:
+                    pass
+            if loc:
+                for cand in (os.path.join(loc, 'lmp.exe'),
+                             os.path.join(loc, 'bin', 'lmp.exe'),
+                             os.path.join(loc, 'lmp')):
+                    if os.path.isfile(cand):
+                        return cand
+        try:
+            winreg.CloseKey(root)
+        except OSError:
+            pass
     return None
 
 
