@@ -741,7 +741,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
       </div>
     </div>
     <div id="prof-cards" class="row" style="flex-wrap:wrap;gap:12px"></div>
-    <b style="font-size:13px">Точки калибровки (мс/\u0448\u0430\u0433 \u0438 VRAM)</b>
+    <b style="font-size:13px">Точки калибровки (мс/шаг и VRAM)</b>
     <div style="overflow-x:auto"><div id="prof-tbl"></div></div>
     <div id="prof-hint" class="hint"></div>
   </div>
@@ -949,7 +949,6 @@ function setLamp(tabName, color) {
   if (color) btn.classList.add('lamp-' + color);
 }
 let LAST_LEVEL = 'ok';   // last seen status level (Diagnostics)
-let READ_LEVEL = null;   // level the user has actually opened/acknowledged
 function toggleAppMenu(e) {
   if (e) e.stopPropagation();
   const m = $('app-menu');
@@ -999,7 +998,7 @@ function tab(name) {
   /* ---- notification lamps are cleared when the section is opened ---- */
   if (name === 'deps') setLamp('deps', '');    // re-armed by loadDeps if
                                                // something is still missing
-  if (name === 'prof') { READ_LEVEL = LAST_LEVEL; setLamp('prof', ''); }
+  if (name === 'prof') setLamp('prof', '');   // acknowledged
   if (name === 'res') {
     /* green "run finished" lamp stays 5 more seconds after the user has
        actually come to look at the results, then it is acknowledged */
@@ -1581,13 +1580,10 @@ async function pollStatus() {
     el.textContent = 'status: ' + j.level;
     el.className = 'hstatus s-' + j.level;
     el.title = j.checks.join('; ');
-    /* Diagnostics lamp: yellow on warn/update, red on error; it is
-       acknowledged (cleared) the moment the user opens that tab */
+    /* Diagnostics lamp is driven by the CONSOLE CONTENT (see
+       appendLines), not by the app-level status: an empty console must
+       not glow. LAST_LEVEL only feeds statusClick(). */
     LAST_LEVEL = j.level;
-    if (j.level !== READ_LEVEL) {
-      setLamp('prof', j.level === 'error' ? 'r'
-              : (j.level === 'ok' ? '' : 'y'));
-    }
     const hv = $('hdr-ver');
     if (hv) hv.textContent = 'MD GUI · v' + j.version;
     $('ab-version').textContent = 'версия v' + j.version +
@@ -2181,12 +2177,19 @@ function renderConsoles() {
   });
 }
 function appendLines(lines) {
+  let lamp = '';
   for (const raw of lines) {
     const c = cls(raw);
-    LOGBUF.push({raw: raw, c: c, z: zoneOf(raw, c)});
+    const e = {raw: raw, c: c, z: zoneOf(raw, c)};
+    LOGBUF.push(e);
+    if (c === 't-err') lamp = 'r';               // errors beat warnings
+    else if (e.z === 'warn' && lamp !== 'r') lamp = 'y';
   }
   while (LOGBUF.length > 6000) LOGBUF.shift();
   renderConsoles();
+  /* Diagnostics lamp = unread warn/error lines in ITS console. Glows
+     only while that tab is closed; opening it (tab()) acknowledges. */
+  if (lamp && $('sec-prof').classList.contains('hidden')) setLamp('prof', lamp);
 }
 function clearZone(zone) {
   const keep = [];
@@ -2198,6 +2201,7 @@ function clearZone(zone) {
   }
   LOGBUF.length = 0; for (const e of keep) LOGBUF.push(e);
   renderConsoles();
+  if (zone === 'warn') setLamp('prof', '');     // console is clean now
 }
 function copyConsole(zone) {
   /* copy the whole visible log of one zone (customer sends it on
