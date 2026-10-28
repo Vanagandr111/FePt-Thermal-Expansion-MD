@@ -292,22 +292,26 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
   border-radius:8px; padding:8px; margin-top:10px; white-space:pre-wrap; }
 .boot-err { color:#f87171; font-size:12px; margin-top:8px; }
 /* hints carousel: cards for the selected element pair */
-.hints-box { border:1px solid #3a3a44; border-radius:8px; padding:8px;
+.hints-box { border:1px solid #3a3a44; border-radius:7px; padding:5px 6px;
   background:#14161d; max-width:100%; box-sizing:border-box; }
-.hints-head { display:flex; gap:8px; align-items:baseline;
-  margin-bottom:6px; flex-wrap:wrap; }
-.hints-track { display:flex; gap:6px; overflow:hidden; padding-bottom:2px;
+.hints-head { display:flex; gap:6px; align-items:baseline;
+  margin-bottom:4px; flex-wrap:wrap; }
+.hints-head b { font-size:12px; }
+.hints-track { display:flex; gap:4px; overflow:hidden; padding-bottom:1px;
   transition:transform .3s ease; min-width:0; max-width:100%; }
-.hint-card { flex:0 0 168px; border:1px solid #3f4658; border-radius:6px;
-  background:#1a1f2b; padding:6px 7px; cursor:pointer;
+.hint-card { flex:0 0 132px; border:1px solid #3f4658; border-radius:5px;
+  background:#1a1f2b; padding:4px 5px; cursor:pointer;
   transition:border-color .2s, transform .2s; }
 .hints-track .hint-card { min-width:0; }
 .hint-card:hover { border-color:#7db4ff; transform:translateY(-1px); }
-.hint-card .ht-t { font-weight:600; font-size:11.5px; color:#e6ebf5; }
-.hint-card .ht-s { font-size:10.5px; color:#9fb0c8; margin-top:2px; }
-.hint-card .ht-a { font-size:10.5px; color:#7db4ff; margin-top:3px; }
-.hint-card .ht-n { font-size:9.5px; color:#8a8a99; margin-top:3px;
-  font-style:italic; }
+.hint-card .ht-t { font-weight:600; font-size:10.5px; color:#e6ebf5;
+  line-height:1.25; }
+.hint-card .ht-s { font-size:9.5px; color:#9fb0c8; margin-top:1px;
+  line-height:1.25; }
+.hint-card .ht-a { font-size:9.5px; color:#7db4ff; margin-top:2px;
+  line-height:1.2; }
+.hint-card .ht-n { font-size:9px; color:#8a8a99; margin-top:2px;
+  font-style:italic; line-height:1.2; }
 /* structure split: 3D view + pair-distance histogram side by side */
 .st-split { display: flex; gap: 12px; flex-wrap: wrap; }
 .st-panel { flex: 1 1 380px; min-width: 340px;
@@ -539,12 +543,12 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
         <div id="compcalc" class="comp-calc" aria-live="polite"></div>
         <div class="hints-box" style="margin-top:8px">
           <div class="hints-head"><b>Подсказки</b>
-            <span class="hint" id="hints-sub">для выбранной пары
-              элементов — авто</span></div>
+            <span class="hint" id="hints-sub">для пары элементов</span>
+          </div>
           <div class="hints-track" id="hints-track"
                title="колесо мыши — листать подсказки"></div>
           <input id="hints-slider" type="range" min="0" max="0" value="0"
-                 step="1" style="width:100%;margin-top:6px"
+                 step="1" style="width:100%;margin-top:4px"
                  title="ползунок: листать подсказки"
                  oninput="hintGo(+this.value)">
         </div>
@@ -1297,8 +1301,8 @@ async function buildHints() {
   HINT_IDX = 0;   // always start from the first card for a new pair
   hintGo(0);
   const sub = $('hints-sub');
-  if (sub) sub.textContent = A + '–' + B + ': ' + cards.length +
-    ' подсказок · листать ползунком или колесом';
+  if (sub) sub.textContent = A + '–' + B + ' · ' + cards.length +
+    ' шт.';
 }
 document.addEventListener('wheel', e => {
   const t = $('hints-track');
