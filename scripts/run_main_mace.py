@@ -262,6 +262,20 @@ def _make_dynamics(atoms, T, timestep_fs):
     return dyn
 
 
+def pre_eq_budget(requested, natoms):
+    """Warm-up steps with a bounded steps*atoms budget.
+
+    A barostat warm-up costs one force call per step, so 4000 steps on a
+    256-atom cell is ~17 minutes per point. Keep the product roughly
+    constant: 32 atoms -> 4000 steps, 256 atoms -> ~1500, floor 1200.
+    Returns 0 when the caller asked for no warm-up.
+    """
+    req = int(requested or 0)
+    if req <= 0:
+        return 0
+    return max(1200, min(req, 400000 // max(1, int(natoms))))
+
+
 def _model_r_max(calc):
     """Neighbour cutoff of the active calculator (0.0 = unknown)."""
     cands = []
@@ -879,10 +893,11 @@ def main():
     ny = args.ny or grid
     nz = args.nz or grid
     cell_kind = args.kind
-    pre_eq = int(getattr(args, 'pre_eq', 4000) or 0)
+    _nat = 4 * nx * ny * nz
+    pre_eq = pre_eq_budget(getattr(args, 'pre_eq', 4000), _nat)
     if pre_eq:
-        print('[gui] volume pre-equilibration: {} steps before eq'
-              .format(pre_eq), flush=True)
+        print('[gui] volume pre-equilibration: {} steps before eq '
+              '({} atoms)'.format(pre_eq, _nat), flush=True)
     # Seed lattice constant (Angstrom): None = LC_TABLE by system
     # (pt = experimental fcc, fe = MACE-MP-0 EOS fit, fept = v1.5 seed).
     lmp.SEED_LC = args.lc

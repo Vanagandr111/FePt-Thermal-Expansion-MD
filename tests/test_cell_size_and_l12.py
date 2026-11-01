@@ -112,6 +112,15 @@ def test_worker_accepts_pre_eq():
     assert 'pre_eq_steps' in p
 
 
+def test_pre_eq_budget_scales_with_atom_count():
+    """Warm-up must not cost 17 min per point on a 256-atom cell."""
+    assert eng.pre_eq_budget(4000, 32) == 4000
+    assert eng.pre_eq_budget(4000, 256) == 1562
+    assert eng.pre_eq_budget(4000, 512) == 1200      # floor
+    assert eng.pre_eq_budget(0, 32) == 0             # explicitly off
+    assert eng.pre_eq_budget(2000, 32) == 2000       # user's own value kept
+
+
 def test_cli_exposes_pre_eq_and_l12():
     src = open(os.path.join(PROJ, 'scripts', 'run_main_mace.py'),
                encoding='utf-8').read()
