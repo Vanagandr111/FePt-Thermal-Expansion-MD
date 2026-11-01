@@ -155,6 +155,13 @@ def run_child(args, grid):
 
 
 def main():
+    # a subprocess inherits cp1251 on a Russian Windows; a marker with a
+    # non-ASCII char (or a nested traceback on stderr) must not crash it
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument('--device', default='cuda', choices=['cuda', 'cpu'])
     ap.add_argument('--grids', type=int, nargs='+', default=[2, 3, 4])

@@ -317,7 +317,8 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 .st-panel { flex: 1 1 380px; min-width: 340px;
   border: 1px solid #3a3a44; border-radius: 8px; padding: 8px;
   background: #14161d; }
-.st-panel .st-hint { margin-top: 6px; }
+.st-panel .st-hint { position: static; margin-top: 6px;
+  letter-spacing: .02em; }
 .st-panel canvas { display: block; width: 100%; height: auto;
   border-radius: 4px; background: #0e1118; }
 /* multi-run button (red, unmistakable) */
@@ -554,13 +555,25 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
         </div>
       </div>
       <div>
-        <label>Суперъячейка n×n×n — <span id="atomcount"></span></label>
+        <label>Вид ячейки</label>
+        <select id="cell_kind" onchange="cellKindChanged()"
+                title="A1 — случайный fcc-раствор; L1₀ — упорядоченные слои Fe/Pt (CuAu-I)">
+          <option value="a1">A1 — fcc случайный раствор</option>
+          <option value="l10">L1₀ — упорядоченная (CuAu-I), x(Pt) = 0.50</option>
+        </select>
+        <label style="margin-top:8px">Суперъячейка nx × ny × nz —
+          <span id="atomcount"></span></label>
         <div class="cellrow">
-          <input id="grid" type="number" min="2" max="12" value="4"
-                 title="n — сторона ячейки, всего 4·n³ атомов"
-                 oninput="atomCount()">
+          <input id="nx" type="number" min="1" max="12" value="4"
+                 title="повторы по x" oninput="atomCount()">
+          <input id="ny" type="number" min="1" max="12" value="4"
+                 title="повторы по y" oninput="atomCount()">
+          <input id="nz" type="number" min="1" max="12" value="4"
+                 title="повторы по z" oninput="atomCount()">
+        </div>
+        <div class="cellrow" style="margin-top:4px">
           <input id="natomsin" type="number" min="4" step="4"
-                 title="Целевое число атомов — подберём ближайшее n"
+                 title="Целевое число атомов — подберём ближайшую кубическую сетку"
                  oninput="atomsEdited()" placeholder="атомов">
         </div>
         <div id="cellhint"></div>
@@ -1074,25 +1087,52 @@ function updateCompCalc() {
 }
 function setComp(v) { $('comp').value = v; compOut(); }
 let lastCellMax = 0;          // from /api/estimate: atoms that fit the card
-function atomCount() {        // edited n -> sync the target-atoms field
-  const n = Math.min(12, Math.max(2, +$('grid').value || 2));
-  const a = 4 * n * n * n;
+function cellDims() {         // one source of truth for the cell shape
+  const cl = (v, d) => Math.min(12, Math.max(1, Math.round(+v) || d));
+  const kindEl = $('cell_kind');
+  return {nx: cl($('nx') && $('nx').value, 4),
+          ny: cl($('ny') && $('ny').value, 4),
+          nz: cl($('nz') && $('nz').value, 4),
+          kind: (kindEl && kindEl.value) || 'a1'};
+}
+function setCellDims(nx, ny, nz) {   // isotropic helper (mode presets)
+  if ($('nx')) $('nx').value = nx;
+  if ($('ny')) $('ny').value = (ny === undefined ? nx : ny);
+  if ($('nz')) $('nz').value = (nz === undefined ? nx : nz);
+}
+function atomCount() {        // edited nx/ny/nz -> sync the target-atoms field
+  const d = cellDims();
+  const a = 4 * d.nx * d.ny * d.nz;
   $('atomcount').textContent = a + ' атомов';
   if ($('natomsin').value !== String(a)) $('natomsin').value = a;
   cellHint();
 }
-function atomsEdited() {      // edited target atoms -> nearest n×n×n
+function atomsEdited() {      // edited target atoms -> nearest n x n x n
   const want = Math.max(4, Math.round(+$('natomsin').value || 4));
-  const n = Math.min(12, Math.max(2, Math.round(Math.cbrt(want / 4))));
-  $('grid').value = n;
+  const n = Math.min(12, Math.max(1, Math.round(Math.cbrt(want / 4))));
+  setCellDims(n);
   const a = 4 * n * n * n;
   $('atomcount').textContent = a + ' атомов';
   cellHint(want);
 }
+function cellShapeName(nx, ny, nz) {
+  if (nx === ny && ny === nz) return 'кубическая';
+  if (nx === ny || ny === nz || nx === nz) return 'тетрагональная';
+  return 'орторомбическая';
+}
 function cellHint(want) {
-  const n = Math.min(12, Math.max(2, +$('grid').value || 2));
-  const a = 4 * n * n * n;
-  let t = 'n=' + n + ' → 4·' + n + '³ = ' + a + ' атомов';
+  const d = cellDims();
+  const a = 4 * d.nx * d.ny * d.nz;
+  let t = d.nx + '×' + d.ny + '×' + d.nz + ' → 4·' + d.nx + '·' + d.ny +
+          '·' + d.nz + ' = ' + a + ' атомов · бокс ' +
+          (d.kind === 'l10' ? 'тетрагональная' :
+                              cellShapeName(d.nx, d.ny, d.nz));
+  if (d.kind === 'l10') {
+    t += ' (a = ' + d.nx + '·3.85, c = ' + d.nz + '·3.717 Å; слои Fe/Pt ' +
+         'вдоль z, c/a ≈ 0.966)';
+    const comp = $('comp') ? +$('comp').value : 0.5;
+    if (Math.abs(comp - 0.5) > 1e-6) t += ' · ⚠ нужен x(Pt) = 0.50';
+  }
   if (want && want !== a) t += ' · ближайшая сетка к ' + want;
   if (lastCellMax) {
     t += a > lastCellMax
@@ -1101,14 +1141,18 @@ function cellHint(want) {
   }
   $('cellhint').textContent = t;
 }
+function cellKindChanged() {
+  if (cellDims().kind === 'l10') setComp(0.5);   // L1_0 is defined at x=0.5
+  atomCount();
+}
 function modeChanged() {
   const m = $('mode').value;
   $('wrap-model').style.display = m === 'mace' ? '' : 'none';
   $('wrap-device').style.display = m === 'mace' ? '' : 'none';
   $('wrap-precision').style.display = m === 'mace' ? '' : 'none';
-  if (m === 'lammps') { $('grid').value = 8; $('eq').value = 2000;
+  if (m === 'lammps') { setCellDims(8); $('eq').value = 2000;
                         $('prod').value = 5000; }
-  else { $('grid').value = 4; $('eq').value = 500; $('prod').value = 1000; }
+  else { setCellDims(4); $('eq').value = 500; $('prod').value = 1000; }
   atomCount();
   checkCompat();
 }
@@ -1128,8 +1172,8 @@ function applyState(st) {
   /* Server-side form (possibly edited by the agent via MCP) -> visible UI */
   const f = st && st.form;
   if (!f) return;
-  const ids = ['mode','model','device','precision','comp','grid','temps','eq','prod',
-               'seed'];
+  const ids = ['mode','model','device','precision','comp','cell_kind','nx','ny','nz',
+               'grid','temps','eq','prod','seed'];
   const touched = [];
   for (const k of ids) {
     if (f[k] === undefined || f[k] === null) continue;
@@ -1159,7 +1203,7 @@ function applyState(st) {
 }
 function quickPreset() {
   $('mode').value = 'mace'; modeChanged();
-  $('grid').value = 2; $('eq').value = 300; $('prod').value = 500;
+  setCellDims(2); $('eq').value = 300; $('prod').value = 500;
   $('temps').value = '300 1200'; atomCount();
   setComp(0.5);
 }
@@ -1422,7 +1466,12 @@ function collectForm() {
   return {
     mode: $('mode').value,
     comp: +$('comp').value,
-    grid: +$('grid').value,
+    cell_kind: $('cell_kind') ? $('cell_kind').value : 'a1',
+    nx: +$('nx').value || 4,
+    ny: +$('ny').value || 4,
+    nz: +$('nz').value || 4,
+    grid: Math.max(+$('nx').value || 4, +$('ny').value || 4,
+                   +$('nz').value || 4),
     temps: $('temps').value,
     eq: +$('eq').value,
     prod: +$('prod').value,
@@ -2098,8 +2147,20 @@ async function loadStructure() {
     lg += '<span>доли: <b>' + Object.keys(j.counts || {})
       .map(s => s + ' ' + (100 * j.counts[s] / j.natoms).toFixed(1) + '%')
       .join(' · ') + '</b></span>';
+    const near = (u, v) => Math.abs(u - v) < 0.01;
+    let shape = 'орторомбическая (a ≠ b ≠ c)';
+    if (near(+L[0], +L[1]) && near(+L[1], +L[2])) {
+      shape = 'кубическая (a = b = c)';
+    } else if (near(+L[0], +L[1]) || near(+L[1], +L[2]) ||
+               near(+L[0], +L[2])) {
+      let aAx, cAx;
+      if (near(+L[0], +L[1])) { aAx = +L[0]; cAx = +L[2]; }
+      else if (near(+L[1], +L[2])) { aAx = +L[1]; cAx = +L[0]; }
+      else { aAx = +L[0]; cAx = +L[1]; }
+      shape = 'тетрагональная (c/a = ' + (cAx / aAx).toFixed(3) + ')';
+    }
     lg += '<span>ячейка <b>' + L.join(' × ') + ' Å</b></span>' +
-          '<span>ортогональная (c = a)</span>';
+          '<span>' + shape + '</span>';
     $('st-legend').innerHTML = lg;
     drawStructure();
     drawHistogram();
@@ -2530,6 +2591,10 @@ function renderResultsPayload(r) {
   $('res-empty').classList.toggle('hidden', !!has);
   $('charts').classList.toggle('hidden', !has);
   if (!has) return;
+  // compact mode collapses every card: without this the charts card stays
+  // folded and the user sees only the structure card ("графиков нет")
+  const hc = $('charts').closest('.card');
+  if (hc) hc.classList.remove('collapsed');
   const seed = (r.meta && r.meta.form && r.meta.form.seed !== undefined)
     ? r.meta.form.seed : null;
   const cp = $('chart-panels');
@@ -2826,6 +2891,10 @@ async function loadDeps(refresh) {
   h += depRow('numpy', 'numpy', L.numpy,
        L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в движке',
        "installLib('numpy')");
+  h += depRow('openpyxl', 'openpyxl (экспорт в Excel)', L.openpyxl,
+       L.openpyxl ? ('v' + (L.openpyxl_v || '?'))
+                   : 'не найдено — кнопка «Excel» не заработает',
+       "installLib('openpyxl')");
   h += depRow('scipy', 'scipy', L.scipy,
        L.scipy ? ('v' + (L.scipy_v || '?')) : 'не найдено в движке',
        "installLib('scipy')");
@@ -2938,14 +3007,8 @@ function potTab(which) {
   potRender();
 }
 
-const CLASSIC_LINKS = [
-  {label: 'NIST Interatomic Potentials Repository — EAM для Fe, Pt и Fe-Pt',
-   url: 'https://www.ctcms.nist.gov/potentials/'},
-  {label: 'LAMMPS: обзор классических потенциалов (EAM, MEAM, Tersoff…)',
-   url: 'https://docs.lammps.org/Intro_potentials.html'},
-  {label: 'OpenKIM — проверенные фильтры (EAM для Fe / Pt)',
-   url: 'https://openkim.org/'},
-];
+/* CPU-ссылки больше НЕ в хардкоде: источник — data/potentials_catalog.json
+   (секция cpu), сервер отдаёт их в j.catalog.cpu */
 
 function potRender() {
   const j = window._DEPS_J || {};
@@ -3006,15 +3069,19 @@ function potRender() {
        'onclick="openCpuFolder()">📁 Папка CPU-потенциалов</button></div>';
     m += '<div class="status" style="margin-top:10px">' +
        'Где брать классические фильтры (все ссылки рабочие):</div>';
-    m += '<table class="mtab"><tr><th>№</th><th>Источник</th>' +
-       '<th>Ссылка</th></tr>';
-    CLASSIC_LINKS.forEach((l, i) => {
-      m += '<tr><td class="mnum">' + (i + 1) + '</td>' +
-         '<td>' + l.label + '</td>' +
-         '<td class="murl"><a href="' + l.url + '" target="_blank">' +
-         l.url + '</a></td></tr>';
+    m += '<table class="mtab"><tr><th>№</th><th>Источник</th>'
+       + '<th>Ссылка</th></tr>';
+    (((j.catalog || {}).cpu) || []).forEach((l, i) => {
+      m += '<tr><td class="mnum">' + (i + 1) + '</td>'
+         + '<td>' + l.label + '</td>'
+         + '<td class="murl"><a href="' + l.url + '" target="_blank">'
+         + l.url + '</a></td></tr>';
     });
     m += '</table>';
+    m += '<div class="row" style="margin-top:8px;gap:6px">'
+       + '<button class="ghost tiny" '
+       + 'onclick="updateCatalog(\'cpu\', this)">'
+       + '🔄 Обновить архив (CPU-фильтры) — сверка с GitHub</button></div>';
     body.innerHTML = m;
   }
 }
@@ -3282,29 +3349,52 @@ function renderModelCatalog(j) {
        + '<td class="mname"><button class="ghost tiny" onclick="'
        + r.btn + '">⬇ ' + r.name
        + (r.rec ? ' <span class="badge-rec">★ Рекомендованный</span>' : '') +
-       '</button></td>',
-       + '<td class="murl">' + (r.url
+       '</button></td>' +
+       '<td class="murl">' + (r.url
           ? '<a href="' + r.url + '" target="_blank" rel="noopener">'
             + r.url + '</a>' : '—') + '</td></tr>';
   });
   h += '<tr class="msec"><td colspan="3">Нейросетевые семейства — веса '
      + 'качаются их загрузчиком (прогресс в консоли зависимостей):'
      + '</td></tr>';
-  [['7net-0', 'SevenNet-0', 'https://github.com/MDIL-SNU/SevenNet'],
-   ['7net-omni-i12', 'SevenNet-Omni-i12',
-    'https://github.com/MDIL-SNU/SevenNet'],
-   ['orb-v3', 'ORB v3 (Orbital)',
-    'https://github.com/orbital-materials/orb-models']].forEach(n => {
-    rows.push(0);  // placeholder keeps numbering simple below
-    h += '<tr><td class="mnum">' + rows.length + '</td>'
+  (((j.catalog || {}).neural) || []).forEach((n, i) => {
+    h += '<tr><td class="mnum">' + (rows.length + i + 1) + '</td>'
        + '<td class="mname"><button class="ghost tiny" onclick="'
-       + 'precacheModel(\'' + n[0] + '\')">⬇ ' + n[1]
+       + 'precacheModel(\'' + n.key + '\')">⬇ ' + n.label
        + ' (предзагрузить веса)</button></td>'
-       + '<td class="murl"><a href="' + n[2] + '" target="_blank" '
-       + 'rel="noopener">' + n[2] + '</a></td></tr>';
+       + '<td class="murl"><a href="' + n.url + '" target="_blank" '
+       + 'rel="noopener">' + n.url + '</a></td></tr>';
   });
   h += '</table>';
+  h += '<div class="row" style="margin-top:8px;gap:6px">'
+     + '<button class="ghost tiny" onclick="updateCatalog(\'gpu\', this)">'
+     + '🔄 Обновить архив каталога (модели GPU) — сверка с GitHub</button>'
+     + '</div>';
   host.innerHTML = h;
+}
+
+/* one click = pull the repo's potentials_catalog.json, merge NEW rows
+   only (the user's own edits always win), no program update needed */
+async function updateCatalog(section, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ сверяю с GitHub…'; }
+  try {
+    const r = await (await fetch('/api/catalog_update', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sections: [section]})})).json();
+    if (!r.ok) {
+      appendLines(['[gui] обновление каталога не удалось: ' +
+                   (r.error || 'нет ответа')]);
+    } else {
+      appendLines(['[gui] каталог ' + section + ': ' +
+        (r.added && r.added.length
+          ? 'добавлено новых записей — ' + r.added.length +
+            ' (' + r.added.join(', ') + ')'
+          : 'уже актуален, новых записей нет')]);
+    }
+  } catch (e) {
+    appendLines(['[gui] обновление каталога: ' + e]);
+  }
+  loadDeps(true);   // перерисовать каталог и локальные списки
 }
 
 async function precacheModel(name) {

@@ -52,7 +52,10 @@ TOOLS = [
             'Only provided keys change. Keys: mode (mace|lammps), model '
             '(path from potentials/gpu), device (cuda|cpu), precision '
             '(fp16 default/recommended, bf16 for Ampere+, fp32), comp (0..1), '
-            'grid (int), temps ("300 1200"), eq (int), prod (int), '
+            'grid (legacy isotropic int), cell_kind (a1 = random fcc solid '
+            'solution | l10 = ordered CuAu-I, requires comp=0.5), '
+            'nx/ny/nz (per-axis replication; equal = cubic, different = '
+            'orthorhombic box), temps ("300 1200"), eq (int), prod (int), '
             'seed (int, RNG seed of the NPT init).'),
         'inputSchema': {
             'type': 'object',
@@ -67,6 +70,13 @@ TOOLS = [
                                    'fp32 (no autocast)'},
                 'comp': {'type': 'number', 'minimum': 0, 'maximum': 1},
                 'grid': {'type': 'integer', 'minimum': 2, 'maximum': 12},
+                'cell_kind': {'type': 'string', 'enum': ['a1', 'l10'],
+                              'description': 'a1 = random fcc solid solution; '
+                                             'l10 = ordered CuAu-I '
+                                             '(requires comp = 0.5)'},
+                'nx': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'ny': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'nz': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'temps': {'type': 'string',
                           'description': 'space-separated temperatures'},
                 'eq': {'type': 'integer'},
@@ -111,6 +121,10 @@ TOOLS = [
                               'enum': ['fp16', 'bf16', 'fp32']},
                 'comp': {'type': 'number'},
                 'grid': {'type': 'integer'},
+                'cell_kind': {'type': 'string', 'enum': ['a1', 'l10']},
+                'nx': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'ny': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'nz': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'temps': {'type': 'string'},
                 'eq': {'type': 'integer'},
                 'prod': {'type': 'integer'},
@@ -319,7 +333,7 @@ def require_gui():
 
 def form_keys(args):
     keys = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
-            'eq', 'prod', 'seed')
+            'eq', 'prod', 'seed', 'cell_kind', 'nx', 'ny', 'nz')
     return {k: args[k] for k in keys if k in args and args[k] is not None}
 
 

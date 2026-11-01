@@ -147,6 +147,7 @@ def apply_app_root(root):
     GPU_DIR = os.path.join(root, 'potentials', 'gpu')
     CPU_DIR = os.path.join(root, 'potentials', 'cpu')
     ELEMENTS_PATH = os.path.join(root, 'data', 'elements.json')
+    _CATALOG['data'] = None       # re-read potentials_catalog.json
     os.environ['FEPT_PROJECT_DIR'] = root
     BOOT['root'] = root
 
@@ -165,92 +166,113 @@ GH_API_LATEST = 'https://api.github.com/repos/lammps/lammps/releases/latest'
 # checkpoints locally for models nobody runs is pointless, so the GUI
 # downloads any of them in one click through its own Python loader.
 # Licenses: MIT (MP family) / ASL (OMAT, MATPES, MH) - not ours.
-MODEL_URLS = {
-    # MACE-MP-0 (1st generation, MPTrj, PBE+U)
-    'mace-mp-0-small.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0/2023-12-10-mace-128-L0_epoch-199.model',
-    'mace-mp-0-small-energy.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model',
-    'mace-mp-0-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0/2023-12-03-mace-128-L1_epoch-199.model',
-    'mace-mp-0-large.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0/2024-01-07-mace-128-L2_epoch-199.model',
-    'mace-mPtrj-2022.9.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0/MACE_MPtrj_2022.9.model',
-    # MACE-MP-0b (2nd generation: core repulsion, stable MD)
-    'mace-mp-0b-small.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b/mace_agnesi_small.model',
-    'mace-mp-0b-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b/mace_agnesi_medium.model',
-    # MACE-MP-0b2 (high-pressure stability)
-    'mace-mp-0b2-small.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b2/mace-small-density-agnesi-stress.model',
-    'mace-mp-0b2-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b2/mace-medium-density-agnesi-stress.model',
-    'mace-large-0b2.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b2/mace-large-density-agnesi-stress.model',
-    # MACE-MP-0b3 (fixed phonons vs b2)
-    'mace-mp-0b3-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mp_0b3/mace-mp-0b3-medium.model',
-    # MACE-MPA-0 (MPTrj + sAlex, SOTA Matbench)
-    'mace-mpa-0-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_mpa_0/mace-mpa-0-medium.model',
-    # MACE-OMAT-0 (excellent phonons)
-    'mace-omat-0-medium.model':
-        'https://github.com/ACEsuit/mace-mp/releases/download/'
-        'mace_omat_0/mace-omat-0-medium.model',
-    'mace-omat-0-small.model':
-        'https://github.com/ACEsuit/mace-foundations/releases/download/'
-        'mace_omat_0/mace-omat-0-small.model',
-    # MACE-MATPES (surrogate functionals)
-    'mace-matpes-pbe-0-medium.model':
-        'https://github.com/ACEsuit/mace-foundations/releases/download/'
-        'mace_matpes_0/MACE-matpes-pbe-omat-ft.model',
-    'mace-matpes-r2scan-0-medium.model':
-        'https://github.com/ACEsuit/mace-foundations/releases/download/'
-        'mace_matpes_0/MACE-matpes-r2scan-omat-ft.model',
-    # MACE-MH (hybrid OMAT/OMOL/OC20/MATPES)
-    'mace-mh-0.model':
-        'https://github.com/ACEsuit/mace-foundations/releases/download/'
-        'mace_mh_1/mace-mh-0.model',
-    'mace-mh-1.model':
-        'https://github.com/ACEsuit/mace-foundations/releases/download/'
-        'mace_mh_1/mace-mh-1.model',
-}
+# ---- потенциалы: каталог живёт в data/potentials_catalog.json ----
+# Таблица каталога — JSON, чтобы правки/дописывание своих моделей не
+# требовали пересборки exe. Правимая копия — в главной папке заказчика
+# (PROJ), дефолт сеется из бандла (RESOURCE, п. 20).
+CATALOG_BUNDLED = os.path.join(RESOURCE, 'data', 'potentials_catalog.json')
+_CATALOG = {'data': None}
 
-# (file, family, human label, MB) - drives the GUI download buttons
-MODEL_CATALOG = [
-    ('mace-mp-0-small.model', 'MP-0', 'MP-0 small (L0)', 32.6),
-    ('mace-mp-0-small-energy.model', 'MP-0', 'MP-0 small, energy fit', 32.6),
-    ('mace-mp-0-medium.model', 'MP-0', 'MP-0 medium (L1)', 44.4),
-    ('mace-mp-0-large.model', 'MP-0', 'MP-0 large (L2)', 63.5),
-    ('mace-mPtrj-2022.9.model', 'MP-0', 'MPtrj 2022.9 prototype', 133.8),
-    ('mace-mp-0b-small.model', 'MP-0b', 'MP-0b small (agnesi)', 67.6),
-    ('mace-mp-0b-medium.model', 'MP-0b', 'MP-0b medium (agnesi)', 79.4),
-    ('mace-mp-0b2-small.model', 'MP-0b2', 'MP-0b2 small', 67.6),
-    ('mace-mp-0b2-medium.model', 'MP-0b2', 'MP-0b2 medium', 79.5),
-    ('mace-large-0b2.model', 'MP-0b2', 'MP-0b2 large', 98.5),
-    ('mace-mp-0b3-medium.model', 'MP-0b3', 'MP-0b3 medium (fixed phonons)', 79.5),
-    ('mace-mpa-0-medium.model', 'MPA-0', 'MPA-0 medium (MPTrj+sAlex)', 79.5),
-    ('mace-omat-0-medium.model', 'OMAT-0', 'OMAT-0 medium (excellent phonons)', 79.5),
-    ('mace-omat-0-small.model', 'OMAT-0', 'OMAT-0 small', 67.6),
-    ('mace-matpes-pbe-0-medium.model', 'MATPES', 'MATPES-PBE medium (no +U)', 79.5),
-    ('mace-matpes-r2scan-0-medium.model', 'MATPES', 'MATPES-r2SCAN medium', 79.5),
-    ('mace-mh-0.model', 'MH', 'MH-0 hybrid (crystals+surfaces)', 39.9),
-    ('mace-mh-1.model', 'MH', 'MH-1 hybrid', 59.2),
-]
+
+def catalog_path():
+    return os.path.join(PROJ, 'data', 'potentials_catalog.json')
+
+
+def _catalog_empty():
+    return {'version': 1, 'gpu': [], 'neural': [], 'cpu': []}
+
+
+def _catalog_load_file(path):
+    with open(path, 'r', encoding='utf-8') as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError('catalog is not an object')
+    for key in ('gpu', 'neural', 'cpu'):
+        if not isinstance(data.get(key), list):
+            data[key] = [r for r in (data.get(key) or []) if False]
+    return data
+
+
+def _catalog_seed():
+    """Bundled default -> editable copy in the user's app folder."""
+    try:
+        data = _catalog_load_file(CATALOG_BUNDLED)
+    except Exception as exc:
+        log('[gui] catalog: bundled default unreadable: %s' % exc)
+        return _catalog_empty()
+    try:
+        os.makedirs(os.path.dirname(catalog_path()), exist_ok=True)
+        with open(catalog_path(), 'w', encoding='utf-8') as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=1)
+        log('[gui] catalog: seeded editable copy at ' + catalog_path())
+    except Exception as exc:
+        log('[gui] catalog: cannot seed user copy: %s' % exc)
+    return data
+
+
+def load_catalog():
+    """User catalog first (hand-edited, no rebuild), bundled copy as the
+    seed; a broken file falls back instead of killing the deps tab."""
+    if _CATALOG['data'] is not None:
+        return _CATALOG['data']
+    data = None
+    try:
+        data = _catalog_load_file(catalog_path())
+    except FileNotFoundError:
+        data = _catalog_seed()
+    except Exception as exc:
+        log('[gui] catalog: %s broken (%s), using bundled' % (
+            catalog_path(), exc))
+        try:
+            data = _catalog_load_file(CATALOG_BUNDLED)
+        except Exception:
+            data = _catalog_empty()
+    _CATALOG['data'] = data
+    return data
+
+
+def catalog_merge_key(section):
+    return {'gpu': 'name', 'neural': 'key', 'cpu': 'url'}.get(section, 'url')
+
+
+def catalog_update(sections):
+    """Fresh rows from the repo JSON (raw.githubusercontent): the repo adds
+    NEW entries, the user's local rows always win. Returns added labels."""
+    raw = ('https://raw.githubusercontent.com/Vanagandr111/'
+           'FePt-Thermal-Expansion-MD/main/data/potentials_catalog.json')
+    req = urllib.request.Request(
+        raw, headers={'User-Agent': 'fept-gui/' + APP_VERSION})
+    with url_open(req, timeout=30) as resp:
+        remote = json.loads(resp.read().decode('utf-8'))
+    if not isinstance(remote, dict):
+        raise ValueError('remote catalog is not an object')
+    local = load_catalog()
+    added = []
+    for sec in sections:
+        rows = remote.get(sec)
+        if not isinstance(rows, list):
+            continue
+        keyf = catalog_merge_key(sec)
+        known = set()
+        for r in local.get(sec, []):
+            if isinstance(r, dict) and r.get(keyf):
+                known.add(r.get(keyf))
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            k = r.get(keyf)
+            if not k or k in known:
+                continue          # existing/local rows are never touched
+            local.setdefault(sec, []).append(r)
+            known.add(k)
+            # cpu key is the url -> show the human label instead
+            added.append('%s/%s' % (sec, (r.get('label') or k)
+                                    if sec == 'cpu' else k))
+    os.makedirs(os.path.dirname(catalog_path()), exist_ok=True)
+    with open(catalog_path(), 'w', encoding='utf-8') as fh:
+        json.dump(local, fh, ensure_ascii=False, indent=1)
+    _CATALOG['data'] = local
+    return added
 
 # Neural families ship weights through THEIR loader (sevenn / orb-models)
 # instead of a raw URL: a tiny precache job pulls the weights once, so the
@@ -289,6 +311,10 @@ FORM = {
     'comp': 0.5, 'grid': 4, 'temps': '300 1200',
     'eq': 500, 'prod': 1000, 'seed': 42,
     'elem_a': 'Fe', 'elem_b': 'Pt',
+    # 'a1' = random fcc solid solution, 'l10' = ordered CuAu-I (x_Pt = 0.5).
+    # nx/ny/nz are per-axis replications: equal -> cubic, different ->
+    # orthorhombic box (nx*a x ny*a x nz*c).
+    'cell_kind': 'a1', 'nx': 4, 'ny': 4, 'nz': 4,
 }
 _PY_MISS_LOGGED = False
 _PY_PICK_LOGGED = False
@@ -771,18 +797,24 @@ def _probe_libs(python_bin):
 
 FORM_KEYS = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
              'eq', 'prod',
-             'seed', 'elem_a', 'elem_b')
+             'seed', 'elem_a', 'elem_b',
+             # cell shape: kind of lattice + per-axis replication
+             'cell_kind', 'nx', 'ny', 'nz')
 
 
 def build_estimate(form):
     """Estimate payload for a form dict (GET shows FORM; POST may override)."""
     prof = estimator.load_profile()
+    _g = int(form.get('grid') or 4)
+    _nx = int(form.get('nx') or _g)
+    _ny = int(form.get('ny') or _g)
+    _nz = int(form.get('nz') or _g)
     est = estimator.estimate(
         prof,
         form.get('mode', 'mace'), form.get('device', 'cuda'),
-        int(form.get('grid', 4)), str(form.get('temps', '')),
+        _nx, str(form.get('temps', '')),
         int(form.get('eq', 500)), int(form.get('prod', 1000)),
-        precision=form.get('precision', 'fp16'))
+        precision=form.get('precision', 'fp16'), ny=_ny, nz=_nz)
     want_vram = (form.get('mode') == 'mace'
                  and form.get('device') == 'cuda')
     total_vram = sysmetrics.gpu_info().get('vram_total_mb')
@@ -808,6 +840,13 @@ def state_update(diff, source=None):
             clean[key] = diff[key]
     if not clean:
         return
+    # keep the legacy isotropic `grid` truthful when per-axis values move
+    # (it is only a display/lammps fallback; the engine reads nx/ny/nz)
+    if any(k in clean for k in ('nx', 'ny', 'nz')):
+        _g = int(FORM.get('grid') or 4)
+        clean['grid'] = max(int(clean.get('nx') or FORM.get('nx') or _g),
+                            int(clean.get('ny') or FORM.get('ny') or _g),
+                            int(clean.get('nz') or FORM.get('nz') or _g))
     with COND:
         FORM.update(clean)
         RUN['state_n'] += 1
@@ -926,12 +965,17 @@ def collect_deps(refresh=False):
         'potentials': scan_potentials(),
         # on-demand model catalog: name/label/size for the download
         # buttons (weights themselves are NOT kept locally)
-        'models': [{'name': n, 'family': fam, 'label': lab, 'mb': mb,
-                    'url': MODEL_URLS.get(n, '')}
-                   for (n, fam, lab, mb) in MODEL_CATALOG
-                   if n not in [p.get('name')
-                                for p in scan_potentials().get('gpu', [])]],
-        'catalog_names': [n for (n, _f, _l, _m) in MODEL_CATALOG],
+        'models': [{'name': g.get('name'), 'family': g.get('family'),
+                    'label': g.get('label'), 'mb': g.get('mb'),
+                    'url': g.get('url', '')}
+                   for g in load_catalog().get('gpu', [])
+                   if g.get('name') not in
+                   [p.get('name')
+                    for p in scan_potentials().get('gpu', [])]],
+        'catalog_names': [g.get('name')
+                          for g in load_catalog().get('gpu', [])],
+        # full editable catalog for the potentials table (gpu+neural+cpu)
+        'catalog': load_catalog(),
         'folders': {'gpu': GPU_DIR, 'cpu': CPU_DIR, 'lammps': LAMMPS_DIR},
         # ---- fast component state + mirrors + proxy (deps tab) ----
         'components': engine_component_state(),
@@ -1764,7 +1808,20 @@ def start_run(params):
     state_update(merged, source=params.get('source'))
     mode = merged.get('mode', 'mace')
     comp = float(merged.get('comp', 0.5))
-    grid = int(merged.get('grid', 4))
+    grid = int(merged.get('grid') or 4)
+    # Per-axis replication + lattice kind. Legacy clients send only `grid`
+    # (isotropic) - it stays the fallback for each missing axis.
+    nx = max(1, min(12, int(merged.get('nx') or grid)))
+    ny = max(1, min(12, int(merged.get('ny') or grid)))
+    nz = max(1, min(12, int(merged.get('nz') or grid)))
+    cell_kind = str(merged.get('cell_kind') or 'a1').lower()
+    if cell_kind not in ('a1', 'l10'):
+        cell_kind = 'a1'
+    if cell_kind == 'l10' and abs(comp - 0.5) > 1e-6:
+        return {'ok': False,
+                'error': 'ячейка L1₀ (упорядоченная CuAu-I) существует только '
+                         'при x_Pt = 0.50, а задано x_Pt = {:.2f}. '
+                         'Поставьте 0.50 или выберите A1.'.format(comp)}
     eq = int(merged.get('eq', 500))
     prod = int(merged.get('prod', 1000))
     temps = [int(t) for t in str(merged.get('temps', '300 1200')).split()]
@@ -1814,7 +1871,10 @@ def start_run(params):
         cmd += ['--device', device, '--model', model,
                 '--precision', precision,
                 '--comps', str(comp), '--temps'] + [str(t) for t in temps] + \
-               ['--grid', str(grid), '--eq', str(eq), '--prod', str(prod),
+               ['--grid', str(max(nx, ny, nz)),
+                '--nx', str(nx), '--ny', str(ny), '--nz', str(nz),
+                '--kind', cell_kind,
+                '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
         if not compile_enabled():
             cmd.append('--no-compile')
@@ -1831,8 +1891,8 @@ def start_run(params):
         return {'ok': False, 'error': 'unknown mode ' + mode}
 
     src = (params.get('source') or 'ui').upper()
-    log('[{}] === start {} mode | comp={} grid={} eq={} prod={} T={}'
-        .format(src, mode, comp, grid, eq, prod, temps))
+    log('[{}] === start {} mode | comp={} cell={} {}x{}x{} eq={} prod={} T={}'
+        .format(src, mode, comp, cell_kind, nx, ny, nz, eq, prod, temps))
     log('[gui] out: ' + outdir)
     try:
         os.makedirs(outdir, exist_ok=True)
@@ -2018,7 +2078,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.5'
+APP_VERSION = '2.2.6'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2425,9 +2485,9 @@ def pip_proxy_args():
 # Every install is recorded in <app root>/install_manifest.json, so the
 # splash loader only does a sub-second presence check on later launches
 # instead of re-verifying the whole environment every time.
-INSTALL_LIBS = ['numpy', 'ase', 'pysocks', 'psutil', 'triton', 'torch',
-                'mace']
-LIGHT_LIBS = ['numpy', 'ase', 'pysocks', 'psutil']
+INSTALL_LIBS = ['numpy', 'ase', 'pysocks', 'psutil', 'openpyxl', 'triton',
+                'torch', 'mace']
+LIGHT_LIBS = ['numpy', 'ase', 'pysocks', 'psutil', 'openpyxl']
 # Heavy parts are NEVER installed on first boot: torch alone is ~2.5 GB
 # (slow lines) and LAMMPS ships under its own license - the user clicks
 # Install in the Deps tab and the tab blinks red until everything is in.
@@ -3328,6 +3388,25 @@ class Handler(BaseHTTPRequestHandler):
             self._json({'ok': True, 'proxy': proxy_summary()})
             return
 
+        if path == '/api/catalog_update':
+            # one button per group (GPU / neural / CPU): pull the repo's
+            # JSON, merge only NEW rows, no program update needed
+            sec = _jbody().get('sections') or ['gpu', 'neural']
+            if isinstance(sec, str):
+                sec = [sec]
+            sec = [s for s in sec if s in ('gpu', 'neural', 'cpu')]
+            try:
+                added = catalog_update(sec)
+            except Exception as exc:
+                self._json({'ok': False, 'error': str(exc)})
+                return
+            log('[gui] catalog update (%s): %d new entries' % (
+                ','.join(sec), len(added)))
+            _DEPS_CACHE['t'] = 0.0
+            self._json({'ok': True, 'added': added,
+                        'catalog': load_catalog()})
+            return
+
         if path == '/api/proxy/test':
             # three independent targets: a real proxy check, not a ping
             targets = [
@@ -3734,7 +3813,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/download_model':
             name = body.get('name')
-            url = body.get('url') or MODEL_URLS.get(name)
+            url = body.get('url') or next(
+                (g.get('url') for g in load_catalog().get('gpu', [])
+                 if g.get('name') == name), None)
             if not name or not url:
                 self._json({'ok': False, 'error': 'unknown model'})
                 return

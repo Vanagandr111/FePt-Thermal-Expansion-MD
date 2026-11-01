@@ -68,6 +68,9 @@ from gen_structure import generate_structure  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
+    # stderr TOO: a traceback printed to the default cp1251 console on a
+    # Russian Windows raises UnicodeEncodeError and HIDES the real error
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
@@ -261,19 +264,25 @@ def _make_dynamics(atoms, T, timestep_fs):
 
 def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
-              md_log=None):
+              md_log=None, nx=None, ny=None, nz=None, kind='a1'):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
     Here: NPT integrator at 0 bar -> volume expands with T.
-    `grid`: supercell replication (4 -> 256 atoms, 2 -> 32 atoms).
+    `grid`: legacy isotropic replication (used when nx/ny/nz are None).
+    `nx`, `ny`, `nz`: per-axis replication -> orthorhombic cell when the
+    three differ (box = nx*a x ny*a x nz*c).
+    `kind`: 'a1' random fcc solution | 'l10' ordered CuAu-I (x_Pt = 0.5).
     `prepare=False`: structure must already exist (parallel workers must
     not regenerate the same file concurrently - torn reads).
     Returns dict in lmp_helper.parse_production() format.
     """
     t0 = time.time()
-    datafile = lmp.gen_structure(comp, nx=grid, ny=grid, nz=grid,
-                                 force=prepare)
+    nx = int(nx or grid)
+    ny = int(ny or grid)
+    nz = int(nz or grid)
+    datafile = lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz,
+                                 force=prepare, kind=kind)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
 
@@ -301,6 +310,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             log_fh = open(md_log, 'w', newline='')
             meta = {'x_Pt': '{:.2f}'.format(comp), 'T_K': T,
                     'atoms': len(atoms), 'grid': grid,
+                    'nx': nx, 'ny': ny, 'nz': nz, 'cell_kind': kind,
                     'eq_steps': eq_steps, 'prod_steps': prod_steps,
                     'dt_fs': timestep_fs, 'thermo_interval':
                     thermo_interval, 'seed': seed}
@@ -628,8 +638,8 @@ def rescue_or_raise(exc, compile_on):
 
 
 def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
-               eq_steps, prod_steps, interval, grid, base_seed,
-               outdir=None):
+               eq_steps, prod_steps, interval, nx, ny, nz, cell_kind,
+               base_seed, outdir=None):
     """Parallel worker: own compiled calculator on the shared GPU."""
     # Windows: spawned workers race on the shared triton cache (Permission
     # error on .cubin). Give each worker its own sub-cache; single-worker
@@ -679,8 +689,8 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
             try:
                 parsed = run_point(
                     calc, comp, T, eq_steps, prod_steps, interval,
-                    seed=base_seed, grid=grid, prepare=False,
-                    md_log=md_log)
+                    seed=base_seed, grid=max(nx, ny, nz), prepare=False,
+                    md_log=md_log, nx=nx, ny=ny, nz=nz, kind=cell_kind)
                 break
             except Exception as e:               # noqa: BLE001
                 if not rescue_or_raise(e, compile_mode):
@@ -709,6 +719,17 @@ def main():
     ap.add_argument('--grid', type=int, default=None,
                     help='supercell replication N: atoms=4*N^3 '
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
+    ap.add_argument('--nx', type=int, default=None,
+                    help='supercell replication along x (default: --grid)')
+    ap.add_argument('--ny', type=int, default=None,
+                    help='supercell replication along y (default: --grid)')
+    ap.add_argument('--nz', type=int, default=None,
+                    help='supercell replication along z (default: --grid)')
+    ap.add_argument('--kind', default='a1', choices=['a1', 'l10'],
+                    help="cell kind: 'a1' random fcc solid solution, "
+                         "'l10' ordered CuAu-I (requires x_Pt=0.5)")
+    ap.add_argument('--c-over-a', type=float, default=None,
+                    help='L1_0 tetragonal ratio c/a (default 0.966)')
     ap.add_argument('--lc', type=float, default=None,
                     help='seed lattice constant in Angstrom; default: '
                          'LC_TABLE by system (pt=experimental fcc 3.9242 A, '
@@ -759,9 +780,17 @@ def main():
                       args.interval, prod_steps, new_int), flush=True)
             args.interval = new_int
     grid = args.grid or (2 if args.quick else 4)
+    # Per-axis replication: --nx/--ny/--nz override the isotropic --grid,
+    # so an orthorhombic box is a first-class option (nx != ny != nz).
+    nx = args.nx or grid
+    ny = args.ny or grid
+    nz = args.nz or grid
+    cell_kind = args.kind
     # Seed lattice constant (Angstrom): None = LC_TABLE by system
-    # (pt = our MACE-MP-0 EOS fit, fe/fept = historical v1.5 seed).
+    # (pt = experimental fcc, fe = MACE-MP-0 EOS fit, fept = v1.5 seed).
     lmp.SEED_LC = args.lc
+    lmp.SEED_KIND = cell_kind
+    lmp.SEED_C_OVER_A = args.c_over_a
     # D lever: skin-cached neighbour list (process-local patch; workers>1
     # does not inherit it -> use --workers 1 when --nl-skin is on).
     if args.nl_skin > 0:
@@ -818,9 +847,9 @@ def main():
         _OUT = os.path.abspath(args.out)
     os.makedirs(_OUT, exist_ok=True)
     print('Fe-Pt CTE — MACE NNP | {}x{} grid, EQ={} PROD={}, '
-          '{} atoms/point ({}^3 supercell)'
+          '{} atoms/point ({}x{}x{} {} supercell)'
           .format(len(comps), len(temps), eq_steps, prod_steps,
-                  4 * grid ** 3, grid))
+                  4 * nx * ny * nz, nx, ny, nz, cell_kind))
 
     seed = args.seed
     parsed_all = {}
@@ -829,7 +858,8 @@ def main():
     if workers is None:
         # 256-atom points already saturate the GPU (measured: 140s sequential
         # vs 147s with 2 workers) -> extra workers only help tiny systems.
-        workers = 2 if (device.startswith('cuda') and grid <= 2
+        workers = 2 if (device.startswith('cuda')
+                        and nx * ny * nz <= 8
                         and len(tasks) > 1) else 1
     workers = max(1, min(workers, len(tasks)))
     print('Workers: {}'.format(workers))
@@ -855,7 +885,8 @@ def main():
                 try:
                     parsed = run_point(
                         calc, comp, T, eq_steps, prod_steps, args.interval,
-                        seed=seed, grid=grid, md_log=md_log)
+                        seed=seed, grid=grid, md_log=md_log,
+                        nx=nx, ny=ny, nz=nz, kind=cell_kind)
                     break
                 except Exception as e:           # noqa: BLE001
                     if not rescue_or_raise(e, compile_mode):
@@ -872,7 +903,8 @@ def main():
         # Pre-generate structures in the parent: workers must never
         # regenerate the same file concurrently (torn-read race).
         for comp in {c for c, _ in tasks}:
-            lmp.gen_structure(comp, nx=grid, ny=grid, nz=grid, force=True)
+            lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz, force=True,
+                              kind=cell_kind)
         from multiprocessing import get_context
         ctx = get_context('spawn')
         q = ctx.Queue()
@@ -882,8 +914,8 @@ def main():
             p = ctx.Process(
                 target=_mp_worker,
                 args=(chunk, q, model, device, compile_mode, precision,
-                      eq_steps, prod_steps, args.interval, grid, seed,
-                      _OUT))
+                      eq_steps, prod_steps, args.interval, nx, ny, nz,
+                      cell_kind, seed, _OUT))
             p.start()
             procs.append(p)
         # Collect with timeout: a dead worker must fail fast instead of

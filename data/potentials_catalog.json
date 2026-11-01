@@ -1,0 +1,187 @@
+{
+ "version": 1,
+ "note": "Каталог потенциалов GUI. Правится руками без пересборки; кнопка «Обновить архив» подтягивает новые записи с GitHub. gpu: скачиваемые модели (name/family/label/mb/url/rec), neural: НС-семейства (кнопка загрузки своим загрузчиком), cpu: ссылки на классические фильтры (label/url).",
+ "gpu": [
+  {
+   "name": "mace-mp-0-small.model",
+   "family": "MP-0",
+   "label": "MP-0 small (L0)",
+   "mb": 32.6,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-10-mace-128-L0_epoch-199.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0-small-energy.model",
+   "family": "MP-0",
+   "label": "MP-0 small, energy fit",
+   "mb": 32.6,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-10-mace-128-L0_energy_epoch-249.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0-medium.model",
+   "family": "MP-0",
+   "label": "MP-0 medium (L1)",
+   "mb": 44.4,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2023-12-03-mace-128-L1_epoch-199.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0-large.model",
+   "family": "MP-0",
+   "label": "MP-0 large (L2)",
+   "mb": 63.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/2024-01-07-mace-128-L2_epoch-199.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mPtrj-2022.9.model",
+   "family": "MP-0",
+   "label": "MPtrj 2022.9 prototype",
+   "mb": 133.8,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/MACE_MPtrj_2022.9.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0b-small.model",
+   "family": "MP-0b",
+   "label": "MP-0b small (agnesi)",
+   "mb": 67.6,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b/mace_agnesi_small.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0b-medium.model",
+   "family": "MP-0b",
+   "label": "MP-0b medium (agnesi)",
+   "mb": 79.4,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b/mace_agnesi_medium.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0b2-small.model",
+   "family": "MP-0b2",
+   "label": "MP-0b2 small",
+   "mb": 67.6,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-small-density-agnesi-stress.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0b2-medium.model",
+   "family": "MP-0b2",
+   "label": "MP-0b2 medium",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-medium-density-agnesi-stress.model",
+   "rec": false
+  },
+  {
+   "name": "mace-large-0b2.model",
+   "family": "MP-0b2",
+   "label": "MP-0b2 large",
+   "mb": 98.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b2/mace-large-density-agnesi-stress.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mp-0b3-medium.model",
+   "family": "MP-0b3",
+   "label": "MP-0b3 medium (fixed phonons)",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0b3/mace-mp-0b3-medium.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mpa-0-medium.model",
+   "family": "MPA-0",
+   "label": "MPA-0 medium (MPTrj+sAlex)",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model",
+   "rec": false
+  },
+  {
+   "name": "mace-omat-0-medium.model",
+   "family": "OMAT-0",
+   "label": "OMAT-0 medium (excellent phonons)",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-mp/releases/download/mace_omat_0/mace-omat-0-medium.model",
+   "rec": false
+  },
+  {
+   "name": "mace-omat-0-small.model",
+   "family": "OMAT-0",
+   "label": "OMAT-0 small",
+   "mb": 67.6,
+   "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_omat_0/mace-omat-0-small.model",
+   "rec": false
+  },
+  {
+   "name": "mace-matpes-pbe-0-medium.model",
+   "family": "MATPES",
+   "label": "MATPES-PBE medium (no +U)",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_matpes_0/MACE-matpes-pbe-omat-ft.model",
+   "rec": false
+  },
+  {
+   "name": "mace-matpes-r2scan-0-medium.model",
+   "family": "MATPES",
+   "label": "MATPES-r2SCAN medium",
+   "mb": 79.5,
+   "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_matpes_0/MACE-matpes-r2scan-omat-ft.model",
+   "rec": true
+  },
+  {
+   "name": "mace-mh-0.model",
+   "family": "MH",
+   "label": "MH-0 hybrid (crystals+surfaces)",
+   "mb": 39.9,
+   "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-mh-0.model",
+   "rec": false
+  },
+  {
+   "name": "mace-mh-1.model",
+   "family": "MH",
+   "label": "MH-1 hybrid",
+   "mb": 59.2,
+   "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_mh_1/mace-mh-1.model",
+   "rec": false
+  }
+ ],
+ "neural": [
+  {
+   "key": "7net-0",
+   "label": "SevenNet-0",
+   "family": "SevenNet",
+   "url": "https://github.com/MDIL-SNU/SevenNet",
+   "btn": "precache-7net"
+  },
+  {
+   "key": "7net-omni-i12",
+   "label": "SevenNet-Omni-i12",
+   "family": "SevenNet",
+   "url": "https://github.com/MDIL-SNU/SevenNet",
+   "btn": "precache-7net"
+  },
+  {
+   "key": "orb-v3",
+   "label": "ORB v3 (conservative)",
+   "family": "ORB",
+   "url": "https://github.com/orbital-materials/orb-models",
+   "btn": "precache-orb"
+  }
+ ],
+ "cpu": [
+  {
+   "label": "NIST Interatomic Potentials Repository — EAM для Fe, Pt и Fe-Pt",
+   "url": "https://www.ctcms.nist.gov/potentials/"
+  },
+  {
+   "label": "LAMMPS: обзор классических потенциалов (EAM, MEAM, Tersoff…)",
+   "url": "https://docs.lammps.org/Intro_potentials.html"
+  },
+  {
+   "label": "OpenKIM — проверенные фильтры (EAM для Fe / Pt)",
+   "url": "https://openkim.org/"
+  }
+ ]
+}

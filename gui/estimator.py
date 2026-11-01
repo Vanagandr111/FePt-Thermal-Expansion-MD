@@ -73,10 +73,17 @@ PRECISION_VRAM = {'fp16': 0.95, 'bf16': 1.0, 'fp32': 1.6}
 PRECISION_MS = {'fp16': 1.0, 'bf16': 1.0, 'fp32': 1.7}
 
 
-def natoms_of(grid):
-    """fcc supercell atoms for grid n: 4*n^3 (2 -> 32, 4 -> 256)."""
-    n = max(1, int(grid))
-    return 4 * n ** 3
+def natoms_of(grid, ny=None, nz=None):
+    """fcc supercell atoms: 4*n^3 isotropic, 4*nx*ny*nz orthorhombic.
+
+    `grid` is nx; ny/nz default to grid (the old isotropic behaviour).
+    """
+    nx = max(1, int(grid))
+    if ny is None and nz is None:
+        return 4 * nx ** 3
+    ny = max(1, int(ny if ny is not None else nx))
+    nz = max(1, int(nz if nz is not None else nx))
+    return 4 * nx * ny * nz
 
 
 def interp(points, natoms):
@@ -113,7 +120,8 @@ def _profile_points(profile, mode, device):
             and p.get('ms_per_step')]
 
 
-def estimate(profile, mode, device, grid, temps, eq, prod, precision='fp16'):
+def estimate(profile, mode, device, grid, temps, eq, prod, precision='fp16',
+             ny=None, nz=None):
     """One pre-run estimate dict for the GUI card.
 
     mode: 'mace'|'lammps'; device: 'cuda'|'cpu'; grid: int n;
@@ -125,7 +133,7 @@ def estimate(profile, mode, device, grid, temps, eq, prod, precision='fp16'):
     precision = str(precision or 'fp16').lower()
     if precision not in PRECISION_VRAM:
         precision = 'fp16'
-    n = natoms_of(grid)
+    n = natoms_of(grid, ny, nz)
     try:
         ntemps = len(str(temps).split())
     except Exception:

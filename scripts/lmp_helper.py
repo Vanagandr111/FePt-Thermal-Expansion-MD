@@ -299,23 +299,43 @@ def run_lmp(infile, logfile=None, timeout=900, lmp_label='', omp_threads=0,
 # --lc so every generation path (single-worker, parent pre-generation)
 # shares one explicit value instead of a hardcoded one.
 SEED_LC = None
+# Cell kind + tetragonal ratio shared by every generation path (same
+# reasoning as SEED_LC: run_main_mace.main() sets them from CLI flags).
+SEED_KIND = 'a1'
+SEED_C_OVER_A = None
 
 
-def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None):
-    """Generate structure via gen_structure.py. force=True = regenerate even if exists.
-    lc = explicit seed lattice constant (Angstrom); None = SEED_LC, else LC_TABLE by system."""
+def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
+                  kind=None, c_over_a=None):
+    """Generate structure via gen_structure.py.
+
+    force=True = regenerate even if it exists. lc = explicit seed lattice
+    constant a (Angstrom); None = SEED_LC, else LC_TABLE by system.
+    kind = 'a1' (random fcc) | 'l10' (ordered CuAu-I, x_Pt must be 0.5);
+    c_over_a = L1_0 tetragonal ratio (default from LC_TABLE).
+    """
     if lc is None:
         lc = SEED_LC
+    kind = kind or SEED_KIND
+    if c_over_a is None:
+        c_over_a = SEED_C_OVER_A
     gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
-    outfile = os.path.join(DATA_DIR, 'data.fept_c{:.2f}.lmp'.format(comp))
+    # the file name encodes EVERYTHING that changes the geometry: a cached
+    # 4x4x4 A1 file must never be served for a 2x3x4 L1_0 request
+    outfile = os.path.join(DATA_DIR, 'data.fept_{}_c{:.2f}_{}x{}x{}.lmp'
+                           .format(kind, comp, nx, ny, nz))
     if os.path.exists(outfile):
         if not force:
             return outfile
         os.remove(outfile)
     os.makedirs(DATA_DIR, exist_ok=True)
-    cmd = [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp), outfile]
+    cmd = [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp),
+           outfile]
     if lc is not None:
         cmd.append(str(lc))
+    cmd += ['--kind', str(kind)]
+    if c_over_a is not None:
+        cmd += ['--c-over-a', str(c_over_a)]
     proc = subprocess.run(
         cmd, capture_output=True, timeout=30
     )
