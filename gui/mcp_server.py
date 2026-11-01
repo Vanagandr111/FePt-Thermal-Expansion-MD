@@ -70,7 +70,8 @@ TOOLS = [
                                    'fp32 (no autocast)'},
                 'comp': {'type': 'number', 'minimum': 0, 'maximum': 1},
                 'grid': {'type': 'integer', 'minimum': 2, 'maximum': 12},
-                'cell_kind': {'type': 'string', 'enum': ['a1', 'l10'],
+                'cell_kind': {'type': 'string',
+                              'enum': ['a1', 'l10', 'l12'],
                               'description': 'a1 = random fcc solid solution; '
                                              'l10 = ordered CuAu-I '
                                              '(requires comp = 0.5)'},
@@ -121,7 +122,8 @@ TOOLS = [
                               'enum': ['fp16', 'bf16', 'fp32']},
                 'comp': {'type': 'number'},
                 'grid': {'type': 'integer'},
-                'cell_kind': {'type': 'string', 'enum': ['a1', 'l10']},
+                'cell_kind': {'type': 'string',
+                              'enum': ['a1', 'l10', 'l12']},
                 'nx': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'ny': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'nz': {'type': 'integer', 'minimum': 1, 'maximum': 12},

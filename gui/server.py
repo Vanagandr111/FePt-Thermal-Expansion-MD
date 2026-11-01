@@ -1815,8 +1815,15 @@ def start_run(params):
     ny = max(1, min(12, int(merged.get('ny') or grid)))
     nz = max(1, min(12, int(merged.get('nz') or grid)))
     cell_kind = str(merged.get('cell_kind') or 'a1').lower()
-    if cell_kind not in ('a1', 'l10'):
+    if cell_kind not in ('a1', 'l10', 'l12'):
         cell_kind = 'a1'
+    if cell_kind == 'l12' and min(abs(comp - 0.25),
+                                  abs(comp - 0.75)) > 1e-6:
+        return {'ok': False,
+                'error': 'ячейка L1₂ (упорядоченная Cu3Au) существует при '
+                         'x_Pt = 0.25 (Fe₃Pt) или 0.75 (FePt₃), а задано '
+                         'x_Pt = {:.2f}. Поставьте 0.25/0.75 или выберите '
+                         'A1.'.format(comp)}
     if cell_kind == 'l10' and abs(comp - 0.5) > 1e-6:
         return {'ok': False,
                 'error': 'ячейка L1₀ (упорядоченная CuAu-I) существует только '
@@ -2078,7 +2085,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.6'
+APP_VERSION = '2.2.7'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.

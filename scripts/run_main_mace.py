@@ -262,9 +262,34 @@ def _make_dynamics(atoms, T, timestep_fs):
     return dyn
 
 
+def _model_r_max(calc):
+    """Neighbour cutoff of the active calculator (0.0 = unknown)."""
+    cands = []
+    for holder in (calc, getattr(calc, 'model', None)):
+        if holder is None:
+            continue
+        cands.append(holder)
+        cands.extend(getattr(holder, 'models', None) or [])
+    for m in cands:
+        v = getattr(m, 'r_max', None)
+        if v:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+        fn = getattr(m, 'get_max_radius', None)
+        if callable(fn):
+            try:
+                return float(fn())
+            except Exception:            # noqa: BLE001
+                pass
+    return 0.0
+
+
 def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
-              md_log=None, nx=None, ny=None, nz=None, kind='a1'):
+              md_log=None, nx=None, ny=None, nz=None, kind='a1',
+              pre_eq_steps=4000):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
@@ -272,7 +297,12 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     `grid`: legacy isotropic replication (used when nx/ny/nz are None).
     `nx`, `ny`, `nz`: per-axis replication -> orthorhombic cell when the
     three differ (box = nx*a x ny*a x nz*c).
-    `kind`: 'a1' random fcc solution | 'l10' ordered CuAu-I (x_Pt = 0.5).
+    `kind`: 'a1' random fcc solution | 'l10' ordered CuAu-I (x_Pt = 0.5)
+    | 'l12' ordered Cu3Au (x_Pt = 0.25 / 0.75).
+    `pre_eq_steps`: barostat-only warm-up that relaxes the volume BEFORE the
+    statistics window (0 = off). The MTK barostat moves the cell on the
+    ~1 ps pdamp scale, so with eq=500 steps the production window samples a
+    still-drifting volume and the result depends on the run length.
     `prepare=False`: structure must already exist (parallel workers must
     not regenerate the same file concurrently - torn reads).
     Returns dict in lmp_helper.parse_production() format.
@@ -286,6 +316,23 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
 
+    # Finite-size guard: the potential sees periodic images that fall inside
+    # its neighbour cutoff. A box shorter than 2*r_max puts an atom in touch
+    # with its own copies, and then a(T) is biased by the CELL SIZE through
+    # the cutoff rather than by the physics - the "small cell swells, large
+    # cell shrinks" effect. Say it out loud instead of hiding it.
+    r_max = _model_r_max(calc)
+    L_min = float(min(atoms.cell.lengths()))
+    if r_max and L_min < 2.0 * r_max:
+        print('  [cell] WARNING: box {:.2f} A < 2*r_max {:.2f} A -> atoms '
+              'see their own periodic images; the lattice constant is biased '
+              'by the cell size. Increase nx/ny/nz so the box exceeds '
+              '{:.1f} A.'.format(L_min, 2.0 * r_max, 2.0 * r_max),
+              flush=True)
+    elif r_max:
+        print('  [cell] box {:.2f} A > 2*r_max {:.2f} A (no image bias)'
+              .format(L_min, 2.0 * r_max), flush=True)
+
     # 1. relax internal coordinates (client had this, but cell was frozen).
     #    MACE force call on CPU is ~4s for 256 atoms -> hard cap the steps.
     dyn_opt = BFGS(atoms, logfile=None)
@@ -296,6 +343,36 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
 
     # 3. NPT — THE fix: cell is free to expand
     dyn_md = _make_dynamics(atoms, T, timestep_fs)
+
+    # Volume pre-equilibration: run the barostat before the statistics
+    # window. The cell relaxes on the pdamp scale (~1 ps); the default
+    # eq=500 steps is only 0.5 ps, so without this the production window
+    # measures a drift and the answer depends on eq/prod instead of
+    # converging. These steps never enter the averages.
+    pre_eq = int(pre_eq_steps or 0)
+    a_start = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+    if pre_eq > 0:
+        # Adaptive: the barostat overshoots, so run in 500-step chunks and
+        # stop as soon as a stops moving. The cap is pre_eq_steps.
+        a_prev, done, settled = None, 0, False
+        while done < pre_eq:
+            chunk = min(500, pre_eq - done)
+            dyn_md.run(chunk)
+            done += chunk
+            a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+            if (a_prev is not None and done >= 1500
+                    and abs(a_now - a_prev) < 5.0e-3):
+                settled = True
+                break
+            a_prev = a_now
+        a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+        p_now = (float(np.mean(atoms.get_stress(voigt=True)[:3]))
+                 / units.GPa * 1.0e5)
+        print('  [pre-eq] a {:.4f} -> {:.4f} A in {} steps ({}), '
+              'P {:+.0f} bar'
+              .format(a_start, a_now, done,
+                      'settled' if settled else 'cap reached', p_now),
+              flush=True)
 
     records = []
     _K_B = 8.617333262145e-5  # eV/K
@@ -312,6 +389,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                     'atoms': len(atoms), 'grid': grid,
                     'nx': nx, 'ny': ny, 'nz': nz, 'cell_kind': kind,
                     'eq_steps': eq_steps, 'prod_steps': prod_steps,
+                    'pre_eq_steps': pre_eq, 'r_max': r_max,
                     'dt_fs': timestep_fs, 'thermo_interval':
                     thermo_interval, 'seed': seed}
             for h in lmp.md_log_header(meta):
@@ -363,6 +441,14 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     p_vals = [r[1] for r in records[n_eq:]]
     a_arr = np.array(a_vals)
     drift = float(a_arr[-1] - a_arr[0]) if len(a_arr) > 1 else 0.0
+    if len(a_arr) > 3:
+        _std = float(a_arr.std())
+        _se = _std / float(np.sqrt(len(a_arr)))
+        if abs(drift) > max(0.01, 3.0 * _se):
+            print('  [conv] WARNING: a drifted {:+.4f} A across production '
+                  '(std {:.4f}, se {:.4f}) -> the volume is still moving and '
+                  'the mean is biased; raise eq/prod'
+                  .format(drift, _std, _se), flush=True)
     wall = time.time() - t0
 
     print('  comp={:.2f} T={:4d}K  a={:.5f} A  n={:d}  wall={:.0f}s  '
@@ -410,6 +496,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         't_eq': 0, 't_prod': 0, 'wall_s': wall,
         'max_t': T, 'final_step': 0,
         'drift_pct': 100.0 * drift / float(a_arr.mean()) if len(a_arr) else 0.0,
+        'pre_eq_steps': pre_eq, 'r_max': r_max, 'box_min': L_min,
+        'a_start': a_start,
         'log': datafile,
     }
 
@@ -639,7 +727,7 @@ def rescue_or_raise(exc, compile_on):
 
 def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                eq_steps, prod_steps, interval, nx, ny, nz, cell_kind,
-               base_seed, outdir=None):
+               base_seed, outdir=None, pre_eq_steps=4000):
     """Parallel worker: own compiled calculator on the shared GPU."""
     # Windows: spawned workers race on the shared triton cache (Permission
     # error on .cubin). Give each worker its own sub-cache; single-worker
@@ -690,7 +778,8 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                 parsed = run_point(
                     calc, comp, T, eq_steps, prod_steps, interval,
                     seed=base_seed, grid=max(nx, ny, nz), prepare=False,
-                    md_log=md_log, nx=nx, ny=ny, nz=nz, kind=cell_kind)
+                    md_log=md_log, nx=nx, ny=ny, nz=nz, kind=cell_kind,
+                    pre_eq_steps=pre_eq_steps)
                 break
             except Exception as e:               # noqa: BLE001
                 if not rescue_or_raise(e, compile_mode):
@@ -725,7 +814,11 @@ def main():
                     help='supercell replication along y (default: --grid)')
     ap.add_argument('--nz', type=int, default=None,
                     help='supercell replication along z (default: --grid)')
-    ap.add_argument('--kind', default='a1', choices=['a1', 'l10'],
+    ap.add_argument('--pre-eq', type=int, default=4000,
+                    help='barostat-only warm-up steps before eq (0 = off); '
+                         'relaxes the volume so the statistics window is '
+                         'not taken while the cell is still moving')
+    ap.add_argument('--kind', default='a1', choices=['a1', 'l10', 'l12'],
                     help="cell kind: 'a1' random fcc solid solution, "
                          "'l10' ordered CuAu-I (requires x_Pt=0.5)")
     ap.add_argument('--c-over-a', type=float, default=None,
@@ -786,6 +879,10 @@ def main():
     ny = args.ny or grid
     nz = args.nz or grid
     cell_kind = args.kind
+    pre_eq = int(getattr(args, 'pre_eq', 4000) or 0)
+    if pre_eq:
+        print('[gui] volume pre-equilibration: {} steps before eq'
+              .format(pre_eq), flush=True)
     # Seed lattice constant (Angstrom): None = LC_TABLE by system
     # (pt = experimental fcc, fe = MACE-MP-0 EOS fit, fept = v1.5 seed).
     lmp.SEED_LC = args.lc
@@ -886,7 +983,8 @@ def main():
                     parsed = run_point(
                         calc, comp, T, eq_steps, prod_steps, args.interval,
                         seed=seed, grid=grid, md_log=md_log,
-                        nx=nx, ny=ny, nz=nz, kind=cell_kind)
+                        nx=nx, ny=ny, nz=nz, kind=cell_kind,
+                        pre_eq_steps=pre_eq)
                     break
                 except Exception as e:           # noqa: BLE001
                     if not rescue_or_raise(e, compile_mode):
@@ -915,7 +1013,7 @@ def main():
                 target=_mp_worker,
                 args=(chunk, q, model, device, compile_mode, precision,
                       eq_steps, prod_steps, args.interval, nx, ny, nz,
-                      cell_kind, seed, _OUT))
+                      cell_kind, seed, _OUT, pre_eq))
             p.start()
             procs.append(p)
         # Collect with timeout: a dead worker must fail fast instead of

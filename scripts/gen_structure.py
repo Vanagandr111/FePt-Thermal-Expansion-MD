@@ -5,7 +5,9 @@
   a1  - ГЦК (fcc) случайный твёрдый раствор, кубическая или орторомбическая
         ячейка (зависит от nx, ny, nz), 4 атома на ячейку;
   l10 - упорядоченная L1_0 (CuAu-I): чередование плоскостей Fe и Pt вдоль
-        z, тетрагональная ячейка a x a x c (c/a ~ 0.965), только x_Pt = 0.5.
+        z, тетрагональная ячейка a x a x c (c/a ~ 0.965), только x_Pt = 0.5;
+  l12 - упорядоченная L1_2 (Cu3Au): кубическая ячейка, угол занят меньшинством
+        (x_Pt = 0.25 -> Fe3Pt, x_Pt = 0.75 -> FePt3).
 
 Бокс пишется ПО КАЖДОЙ ОСИ: xhi = nx*a, yhi = ny*a, zhi = nz*c. Раньше
 стояло `max(nx,ny,nz)*lc` во все три оси - при nx != ny != nz это давало
@@ -56,7 +58,7 @@ LC_TABLE = {
     'l10_c': 3.717,
 }
 
-KINDS = ('a1', 'l10')
+KINDS = ('a1', 'l10', 'l12')
 
 
 # intent: pick the seed lattice constant by system, honoring an override
@@ -83,6 +85,13 @@ def lattice_constant(comp_pt, lc_override=None, kind='a1', c_over_a=None):
             note = ('L1_0 tetragonal, experimental a=3.85 c=3.717 A '
                     '(CuAu-I ordering)')
         return a, c, note
+    if kind == 'l12':
+        # L1_2 (Cu3Au) is cubic; no experimental seed is hardcoded here -
+        # the a is the Vegard value over our own Fe/Pt seeds, and NPT
+        # relaxes the volume to the model's own equilibrium anyway.
+        a = (float(lc_override) if lc_override is not None
+             else LC_TABLE['fe'] + comp_pt * (LC_TABLE['pt'] - LC_TABLE['fe']))
+        return a, a, ('L1_2 cubic (Cu3Au), Vegard seed {:.4f} A'.format(a))
     if lc_override is not None:
         return float(lc_override), float(lc_override), 'explicit override'
     if comp_pt >= 0.999:
@@ -122,7 +131,27 @@ def _l10_types(natoms_total):
     return types, natoms_total // 2, natoms_total // 2
 
 
-# intent: Generate an A1 (random fcc) or L1_0 (ordered tetragonal) cell
+def _l12_types(natoms_total, comp_pt):
+    """L1_2 (Cu3Au): corner site holds the minority element.
+
+    x_Pt = 0.25 -> Fe3Pt (corner = Pt, face centres = Fe);
+    x_Pt = 0.75 -> FePt3 (corner = Fe, face centres = Pt).
+    basis order: 0 = corner, 1..3 = face centres.
+    """
+    corner_is_pt = abs(comp_pt - 0.25) < 1e-6
+    types = []
+    for _ in range(natoms_total // 4):
+        if corner_is_pt:
+            types.extend([2, 1, 1, 1])
+        else:
+            types.extend([1, 2, 2, 2])
+    if len(types) < natoms_total:
+        types.extend([1] * (natoms_total - len(types)))
+    n_pt = sum(1 for t in types if t == 2)
+    return types, natoms_total - n_pt, n_pt
+
+
+# intent: Generate an A1 (random fcc), L1_0 or L1_2 ordered cell
 # allies: called by lmp_helper.gen_structure(), run_*.py scripts
 # sidefx: io (writes data.fept_*.lmp to data/ or given outpath)
 # purity: impure
@@ -141,8 +170,9 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
         Path to output LAMMPS data file.
     lc_override : float or None
         Explicit seed lattice constant a (Angstrom).
-    kind : 'a1' | 'l10'
-        a1 = random fcc solid solution, l10 = ordered CuAu-I.
+    kind : 'a1' | 'l10' | 'l12'
+        a1 = random fcc solid solution, l10 = ordered CuAu-I (x_Pt=0.5),
+        l12 = ordered Cu3Au (x_Pt=0.25 Fe3Pt or 0.75 FePt3).
     c_over_a : float or None
         L1_0 only: explicit tetragonal ratio (default 0.966).
     """
@@ -155,6 +185,11 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
             'L1_0 (упорядоченная CuAu-I) существует только при x_Pt = 0.5, '
             'а задано x_Pt = {:.3f}; выберите A1 для других составов'
             .format(comp_pt))
+    if kind == 'l12' and min(abs(comp_pt - 0.25), abs(comp_pt - 0.75)) > 1e-6:
+        raise ValueError(
+            'L1_2 (упорядоченная Cu3Au) существует при x_Pt = 0.25 (Fe3Pt) '
+            'или 0.75 (FePt3), а задано x_Pt = {:.3f}; выберите A1 для '
+            'других составов'.format(comp_pt))
     a, c, lc_note = lattice_constant(comp_pt, lc_override, kind=kind,
                                      c_over_a=c_over_a)
     print("cell kind = {}  a = {:.4f} A  c = {:.4f} A  ({})"
@@ -163,6 +198,8 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
 
     if kind == 'l10':
         types, n_fe, n_pt = _l10_types(natoms_total)
+    elif kind == 'l12':
+        types, n_fe, n_pt = _l12_types(natoms_total, comp_pt)
     else:
         types, n_fe, n_pt = _a1_types(natoms_total, comp_pt)
 
@@ -190,10 +227,10 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
     lx, ly, lz = nx * a, ny * a, nz * c
 
     with open(outfile, 'w') as f:
+        label = {'l10': 'L1_0', 'l12': 'L1_2'}.get(kind, 'fcc(A1)')
         f.write("Fe-Pt {} solid solution, comp_Pt={:.2f}, "
                 "a={:.4f}, c={:.4f}, box={:.3f}x{:.3f}x{:.3f}\n\n"
-                .format('L1_0' if kind == 'l10' else 'fcc(A1)', comp_pt,
-                        a, c, lx, ly, lz))
+                .format(label, comp_pt, a, c, lx, ly, lz))
         f.write("{} atoms\n".format(natoms_total))
         f.write("2 atom types\n\n")
         f.write("0.0 {:.6f} xlo xhi\n".format(lx))
@@ -219,7 +256,9 @@ def main(argv=None):
     ap.add_argument('lc', nargs='?', type=float, default=None,
                     help='seed lattice constant a in Angstrom (optional)')
     ap.add_argument('--kind', default='a1', choices=KINDS,
-                    help='a1 = random fcc solution, l10 = ordered CuAu-I')
+                    help='a1 = random fcc solution, l10 = ordered CuAu-I '
+                         '(x_Pt=0.5), l12 = ordered Cu3Au '
+                         '(x_Pt=0.25 Fe3Pt / 0.75 FePt3)')
     ap.add_argument('--c-over-a', type=float, default=None,
                     help='L1_0 tetragonal ratio c/a (default 0.966)')
     args = ap.parse_args(argv)

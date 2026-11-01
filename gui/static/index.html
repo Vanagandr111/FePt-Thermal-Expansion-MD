@@ -557,9 +557,10 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
       <div>
         <label>Вид ячейки</label>
         <select id="cell_kind" onchange="cellKindChanged()"
-                title="A1 — случайный fcc-раствор; L1₀ — упорядоченные слои Fe/Pt (CuAu-I)">
+                title="A1 — случайный fcc-раствор; L1₀ — слои Fe/Pt (CuAu-I), x(Pt)=0.5; L1₂ — Cu3Au, x(Pt)=0.25 (Fe₃Pt) или 0.75 (FePt₃)">
           <option value="a1">A1 — fcc случайный раствор</option>
           <option value="l10">L1₀ — упорядоченная (CuAu-I), x(Pt) = 0.50</option>
+          <option value="l12">L1₂ — упорядоченная (Cu₃Au), x(Pt) = 0.25 / 0.75</option>
         </select>
         <label style="margin-top:8px">Суперъячейка nx × ny × nz —
           <span id="atomcount"></span></label>
@@ -1126,12 +1127,27 @@ function cellHint(want) {
   let t = d.nx + '×' + d.ny + '×' + d.nz + ' → 4·' + d.nx + '·' + d.ny +
           '·' + d.nz + ' = ' + a + ' атомов · бокс ' +
           (d.kind === 'l10' ? 'тетрагональная' :
+           d.kind === 'l12' ? 'кубическая (a = b = c)' :
                               cellShapeName(d.nx, d.ny, d.nz));
+  if (d.kind === 'l12') {
+    const comp = $('comp') ? +$('comp').value : 0.25;
+    const ok = Math.abs(comp - 0.25) < 1e-6 || Math.abs(comp - 0.75) < 1e-6;
+    t += ' (углы — меньшинство: x(Pt)=0.25 → Fe₃Pt, 0.75 → FePt₃)';
+    if (!ok) t += ' · ⚠ нужен x(Pt) = 0.25 или 0.75';
+  }
   if (d.kind === 'l10') {
     t += ' (a = ' + d.nx + '·3.85, c = ' + d.nz + '·3.717 Å; слои Fe/Pt ' +
          'вдоль z, c/a ≈ 0.966)';
     const comp = $('comp') ? +$('comp').value : 0.5;
     if (Math.abs(comp - 0.5) > 1e-6) t += ' · ⚠ нужен x(Pt) = 0.50';
+  }
+  // MACE sees periodic images inside its ~6 A cutoff: a box below 12 A puts
+  // an atom in touch with its own copies, and then a(T) starts to depend on
+  // the cell size. Warn here, before the run, not after it.
+  const Lmin = Math.min(d.nx, d.ny, d.nz) * 3.7;
+  if (Lmin < 12.0) {
+    t += ' · ⚠ бокс ' + Lmin.toFixed(1) + ' Å < 2·cutoff (12 Å): атомы видят ' +
+         'свои периодические образы, размер начнёт влиять на a — увеличьте сетку';
   }
   if (want && want !== a) t += ' · ближайшая сетка к ' + want;
   if (lastCellMax) {
@@ -1142,7 +1158,12 @@ function cellHint(want) {
   $('cellhint').textContent = t;
 }
 function cellKindChanged() {
-  if (cellDims().kind === 'l10') setComp(0.5);   // L1_0 is defined at x=0.5
+  const k = cellDims().kind;
+  const comp = $('comp') ? +$('comp').value : 0.5;
+  // ordered phases exist only at their stoichiometric compositions
+  if (k === 'l10') setComp(0.5);
+  if (k === 'l12' && Math.abs(comp - 0.25) > 1e-6 &&
+      Math.abs(comp - 0.75) > 1e-6) setComp(0.25);
   atomCount();
 }
 function modeChanged() {
