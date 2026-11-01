@@ -315,6 +315,12 @@ FORM = {
     # nx/ny/nz are per-axis replications: equal -> cubic, different ->
     # orthorhombic box (nx*a x ny*a x nz*c).
     'cell_kind': 'a1', 'nx': 4, 'ny': 4, 'nz': 4,
+    # explicit lattice constants in Angstrom (0 = auto/seed). The box is
+    # nx*a x ny*b x nz*c, so the user can ask for exact a, b and c instead
+    # of a seed multiplied by an integer number of cells.
+    'a_ang': 0.0, 'b_ang': 0.0, 'c_ang': 0.0,
+    # 1 = anisotropic barostat (per-axis stress -> alpha_x/y/z, c/a of L1_0)
+    'aniso': 0,
 }
 _PY_MISS_LOGGED = False
 _PY_PICK_LOGGED = False
@@ -799,7 +805,8 @@ FORM_KEYS = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
              'eq', 'prod',
              'seed', 'elem_a', 'elem_b',
              # cell shape: kind of lattice + per-axis replication
-             'cell_kind', 'nx', 'ny', 'nz')
+             'cell_kind', 'nx', 'ny', 'nz',
+             'a_ang', 'b_ang', 'c_ang', 'aniso')
 
 
 def build_estimate(form):
@@ -1829,6 +1836,20 @@ def start_run(params):
                 'error': 'ячейка L1₀ (упорядоченная CuAu-I) существует только '
                          'при x_Pt = 0.50, а задано x_Pt = {:.2f}. '
                          'Поставьте 0.50 или выберите A1.'.format(comp)}
+    # explicit lattice constants (0 = seed) and the barostat mode
+    axes = {}
+    for _k in ('a_ang', 'b_ang', 'c_ang'):
+        try:
+            _v = float(merged.get(_k) or 0)
+        except (TypeError, ValueError):
+            _v = 0.0
+        if _v and not (1.5 <= _v <= 12.0):
+            return {'ok': False,
+                    'error': '{}={:.3f} A вне диапазона 1.5..12 A: задайте '
+                             'параметр решётки в ангстремах или 0 (авто)'
+                             .format(_k, _v)}
+        axes[_k] = _v
+    aniso = bool(int(merged.get('aniso') or 0))
     eq = int(merged.get('eq', 500))
     prod = int(merged.get('prod', 1000))
     temps = [int(t) for t in str(merged.get('temps', '300 1200')).split()]
@@ -1883,6 +1904,11 @@ def start_run(params):
                 '--kind', cell_kind,
                 '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
+        for _k in ('a_ang', 'b_ang', 'c_ang'):
+            if axes.get(_k):
+                cmd += ['--' + _k.replace('_ang', '-ang'), str(axes[_k])]
+        if aniso:
+            cmd.append('--aniso')
         if not compile_enabled():
             cmd.append('--no-compile')
             log('[gui] torch.compile OFF for this run (default; '
@@ -1898,8 +1924,14 @@ def start_run(params):
         return {'ok': False, 'error': 'unknown mode ' + mode}
 
     src = (params.get('source') or 'ui').upper()
-    log('[{}] === start {} mode | comp={} cell={} {}x{}x{} eq={} prod={} T={}'
-        .format(src, mode, comp, cell_kind, nx, ny, nz, eq, prod, temps))
+    _ax = ''
+    if any(axes.values()):
+        _ax = ' a={:g} b={:g} c={:g} A'.format(
+            axes['a_ang'], axes['b_ang'], axes['c_ang'])
+    log('[{}] === start {} mode | comp={} cell={} {}x{}x{}{} '
+        'barostat={} eq={} prod={} T={}'
+        .format(src, mode, comp, cell_kind, nx, ny, nz, _ax,
+                'aniso' if aniso else 'iso', eq, prod, temps))
     log('[gui] out: ' + outdir)
     try:
         os.makedirs(outdir, exist_ok=True)
@@ -2085,7 +2117,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.8'
+APP_VERSION = '2.2.9'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2240,6 +2272,26 @@ def _sh_quote(s):
     return "'" + str(s).replace("'", "'\\''") + "'"
 
 
+def clean_update_env():
+    """Environment for the updater/relaunch, without PyInstaller's pointers.
+
+    A frozen one-file exe exports _PYI_APPLICATION_HOME_DIR / _PYI_ARCHIVE_FILE
+    / _PYI_PARENT_PROCESS_LEVEL to its children. The relaunched copy inherits
+    them and thinks it is a *child* of the old process: it skips unpacking and
+    tries to load python312.dll from the old (already deleted) _MEI folder,
+    which ends in a modal "Failed to load Python DLL" box and a process that
+    hangs forever on the desktop. Dropping those keys makes the new copy boot
+    as a first-level process and unpack itself normally.
+    """
+    out = {}
+    for k, v in os.environ.items():
+        ku = k.upper()
+        if ku.startswith('_PYI') or ku.startswith('_MEI') or ku == 'MEIPASS2':
+            continue
+        out[k] = v
+    return out
+
+
 def build_update_bat(self_pid, new_exe, cur_exe):
     """Batch file that swaps the frozen exe after we exit.
 
@@ -2251,6 +2303,11 @@ def build_update_bat(self_pid, new_exe, cur_exe):
     return (
         '@echo off\r\n'
         'chcp 65001 >nul\r\n'
+        'set _PYI_APPLICATION_HOME_DIR=\r\n'
+        'set _PYI_ARCHIVE_FILE=\r\n'
+        'set _PYI_PARENT_PROCESS_LEVEL=\r\n'
+        'set _MEIPASS2=\r\n'
+        'cd /d "%(curdir)s"\r\n'
         'echo bat-start %(ver)s -> %(ts)s >> "%(report)s"\r\n'
         'ping -n 3 127.0.0.1 >nul\r\n'
         'taskkill /F /PID %(pid)d >nul 2>nul\r\n'
@@ -2272,6 +2329,7 @@ def build_update_bat(self_pid, new_exe, cur_exe):
         'echo watchdog-relaunch %%TIME%% >> "%(report)s"\r\n'
         'del "%%~f0"\r\n'
     ) % {'pid': int(self_pid), 'new': new_exe, 'cur': cur_exe,
+         'curdir': os.path.dirname(os.path.abspath(cur_exe)),
          'report': report, 'ver': APP_VERSION,
          'ts': time.strftime('%F %T')}
 
@@ -2283,6 +2341,8 @@ def build_update_sh(self_pid, new_exe, cur_exe):
     return (
         '#!/bin/sh\n'
         'set -u\n'
+        'unset _PYI_APPLICATION_HOME_DIR _PYI_ARCHIVE_FILE '
+        '_PYI_PARENT_PROCESS_LEVEL _MEIPASS2\n'
         'report=' + _sh_quote(report) + '\n'
         'echo "sh-start %(ver)s -> $(date -u +%%F_%%T)" >> "$report"\n'
         'sleep 1\n'
@@ -2345,7 +2405,8 @@ def run_self_update():
     log('[gui] update v{} -> v{} staged ({} bytes); restarting '
         'via {}'.format(APP_VERSION, latest, size, bat))
     threading.Timer(2.0, lambda: subprocess.Popen(
-        runner, cwd=upd_dir, creationflags=NOWIN,
+        runner, cwd=upd_dir, creationflags=NOWIN, env=clean_update_env(),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)).start()
     return {'ok': True, 'action': 'restart-pending',
             'version': APP_VERSION, 'latest': latest, 'size': size}

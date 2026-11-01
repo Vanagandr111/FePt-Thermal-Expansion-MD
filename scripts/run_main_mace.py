@@ -63,6 +63,7 @@ from mace.calculators import MACECalculator  # noqa: E402 (needs torch env)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lmp_helper as lmp                      # noqa: E402
+from aniso_barostat import AnisoBerendsen     # noqa: E402  (no torch)
 import lmpdata                                # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
 
@@ -109,6 +110,13 @@ except ImportError:
         _NPT_MODE = 'langevin+mtk'
     except ImportError:
         MTKBarostat = None
+
+# The anisotropic branch always needs a plain NVT propagator (the barostat
+# rescales the cell itself), so import it unconditionally.
+try:
+    from ase.md.langevin import Langevin       # noqa: E402
+except ImportError:                            # pragma: no cover
+    Langevin = None
 
 _PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA = os.path.join(_PROJ, 'data')
@@ -232,7 +240,7 @@ def find_model(cli_model):
 
 
 # ── per-point MD ───────────────────────────────────────────────────
-def _make_dynamics(atoms, T, timestep_fs):
+def _make_dynamics(atoms, T, timestep_fs, aniso=False):
     """Build NPT integrator for the installed ASE version."""
     # Absolute-zero test points (T=0 in the form): thermostats are not
     # defined at exactly zero target temperature, so simulate at a 1 K
@@ -241,6 +249,18 @@ def _make_dynamics(atoms, T, timestep_fs):
     if T_sim < 1.0:
         print('[gui] T={} K -> thermostat floor 1.0 K (0 K limit test)'.format(T))
         T_sim = 1.0
+    if aniso:
+        # NVT thermostat + per-axis barostat: the old ASE API is enough here
+        # and every installed version has it.
+        dyn = Langevin(atoms, timestep_fs * units.fs,
+                       temperature_K=T_sim, friction=0.01 / units.fs)
+        baro = AnisoBerendsen(atoms, timestep_fs * units.fs,
+                              pressure_au=0.0, taut_ps=2.0,
+                              bulk_modulus_gpa=150.0)
+        dyn.attach(baro, interval=1)
+        print('[gui] barostat: ANISOTROPIC (per-axis stress, B=150 GPa, '
+              'tau=2 ps) -> c/a and alpha_x/y/z are meaningful', flush=True)
+        return dyn
     if _NPT_MODE == 'nhc':
         # ASE >= 3.29: all-in-one isothermal-isobaric integrator
         return IsotropicMTKNPT(
@@ -303,7 +323,8 @@ def _model_r_max(calc):
 def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
               md_log=None, nx=None, ny=None, nz=None, kind='a1',
-              pre_eq_steps=4000):
+              pre_eq_steps=4000, a_ang=None, b_ang=None, c_ang=None,
+              aniso=False):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
@@ -326,6 +347,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     ny = int(ny or grid)
     nz = int(nz or grid)
     datafile = lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz,
+                                 a_ang=a_ang, b_ang=b_ang, c_ang=c_ang,
                                  force=prepare, kind=kind)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
@@ -356,7 +378,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     _mb_init(atoms, temperature_K=T, rng=np.random.default_rng(seed))
 
     # 3. NPT — THE fix: cell is free to expand
-    dyn_md = _make_dynamics(atoms, T, timestep_fs)
+    dyn_md = _make_dynamics(atoms, T, timestep_fs, aniso=aniso)
 
     # Volume pre-equilibration: run the barostat before the statistics
     # window. The cell relaxes on the pdamp scale (~1 ps); the default
@@ -418,7 +440,10 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         p_bar = float(np.mean(stress[:3])) / units.GPa * 1.0e5  # GPa->bar
         vol = atoms.get_volume()
         a_lat = (4.0 * vol / len(atoms)) ** (1.0 / 3.0)
-        records.append((a_lat, p_bar, vol))
+        _L = atoms.cell.lengths()
+        records.append((a_lat, p_bar, vol,
+                        float(_L[0]) / nx, float(_L[1]) / ny,
+                        float(_L[2]) / nz))
         # one LAMMPS-style frame: console (live GUI stream) + md_*.log
         step = int(getattr(dyn_md, 'nsteps', 0))
         pe = float(atoms.get_potential_energy())
@@ -453,6 +478,12 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     # parse production window
     a_vals = [r[0] for r in records[n_eq:]]
     p_vals = [r[1] for r in records[n_eq:]]
+    ax_vals = [r[3] for r in records[n_eq:]]
+    ay_vals = [r[4] for r in records[n_eq:]]
+    az_vals = [r[5] for r in records[n_eq:]]
+    ax_arr = np.array(ax_vals) if ax_vals else np.array([])
+    ay_arr = np.array(ay_vals) if ay_vals else np.array([])
+    az_arr = np.array(az_vals) if az_vals else np.array([])
     a_arr = np.array(a_vals)
     drift = float(a_arr[-1] - a_arr[0]) if len(a_arr) > 1 else 0.0
     if len(a_arr) > 3:
@@ -465,9 +496,18 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                   .format(drift, _std, _se), flush=True)
     wall = time.time() - t0
 
+    _ca = ''
+    if aniso and records and len(records[-1]) >= 6:
+        _w = records[-max(1, len(a_arr)):]
+        _ax = float(np.mean([r[3] for r in _w]))
+        _ay = float(np.mean([r[4] for r in _w]))
+        _az = float(np.mean([r[5] for r in _w]))
+        if _ax > 0:
+            _ca = '  c/a={:.4f} (a={:.4f} b={:.4f} c={:.4f} A)'.format(
+                _az / _ax, _ax, _ay, _az)
     print('  comp={:.2f} T={:4d}K  a={:.5f} A  n={:d}  wall={:.0f}s  '
-          'ms/step={:.1f}'
-          .format(comp, T, float(a_arr.mean()), len(a_arr), wall, ms_step))
+          'ms/step={:.1f}{}'
+          .format(comp, T, float(a_arr.mean()), len(a_arr), wall, ms_step, _ca))
     mem_report('T{}'.format(T))
 
     # # === FINAL === end-of-run summary: console tail AND md_*.log
@@ -510,6 +550,12 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         't_eq': 0, 't_prod': 0, 'wall_s': wall,
         'max_t': T, 'final_step': 0,
         'drift_pct': 100.0 * drift / float(a_arr.mean()) if len(a_arr) else 0.0,
+        'a_x': float(ax_arr.mean()) if len(ax_arr) else float('nan'),
+        'a_y': float(ay_arr.mean()) if len(ay_arr) else float('nan'),
+        'a_z': float(az_arr.mean()) if len(az_arr) else float('nan'),
+        'c_over_a': (float(az_arr.mean()) / float(ax_arr.mean()))
+        if (len(az_arr) and len(ax_arr) and ax_arr.mean()) else float('nan'),
+        'barostat': 'aniso' if aniso else 'iso',
         'pre_eq_steps': pre_eq, 'r_max': r_max, 'box_min': L_min,
         'a_start': a_start,
         'log': datafile,
@@ -528,7 +574,9 @@ def write_cte_full(parsed_all, comps, temps, out):
         w = _csv.writer(f, delimiter=';')
         w.writerow(['x_Pt', 'a_300K', 'a_maxT', 'dA', 'CTE_fit',
                     'CTE_chordal', 'CTE_300_1200', 'R2', 'n_points',
-                    'seg_300_600', 'seg_600_900', 'seg_900_1200'])
+                    'seg_300_600', 'seg_600_900', 'seg_900_1200',
+                    'CTE_x', 'CTE_y', 'CTE_z',
+                    'c_over_a_lo', 'c_over_a_hi', 'barostat'])
         for comp in comps:
             pts = [(T, parsed_all[(comp, T)]['a_mean'])
                    for T in temps if (comp, T) in parsed_all
@@ -539,6 +587,31 @@ def write_cte_full(parsed_all, comps, temps, out):
             rep = lmp.calc_cte_report(pts)
             if rep is None:
                 continue
+
+            def _axis_cte(key):
+                """Chordal alpha along one axis over the whole T range."""
+                vals = [(T, parsed_all[(comp, T)].get(key))
+                        for T in temps if (comp, T) in parsed_all]
+                vals = [(T, v) for T, v in vals
+                        if v is not None and v == v]      # drop nan
+                if len(vals) < 2:
+                    return float('nan')
+                vals.sort(key=lambda p: p[0])
+                lo, hi = vals[0], vals[-1]
+                if hi[1] <= 0 or hi[0] == lo[0]:
+                    return float('nan')
+                return (hi[1] - lo[1]) / (lo[1] * (hi[0] - lo[0]))
+
+            def _ratio(tag):
+                cand = [parsed_all[(comp, T)].get('c_over_a')
+                        for T in temps if (comp, T) in parsed_all]
+                cand = [v for v in cand if v is not None and v == v]
+                if not cand:
+                    return float('nan')
+                return cand[0] if tag == 'lo' else cand[-1]
+
+            def _f(v):
+                return '{:.6e}'.format(v) if v == v else ''
             a_lo, a_hi = rep['a_min'], rep['a_max']
             T_lo, T_hi = rep['T_min'], rep['T_max']
             chord = ((a_hi - a_lo) / (a_lo * (T_hi - T_lo))
@@ -567,6 +640,14 @@ def write_cte_full(parsed_all, comps, temps, out):
                 _seg('300-600K'),
                 _seg('600-900K'),
                 _seg('900-1200K'),
+                _f(_axis_cte('a_x')),
+                _f(_axis_cte('a_y')),
+                _f(_axis_cte('a_z')),
+                ('{:.5f}'.format(_ratio('lo'))
+                 if _ratio('lo') == _ratio('lo') else ''),
+                ('{:.5f}'.format(_ratio('hi'))
+                 if _ratio('hi') == _ratio('hi') else ''),
+                parsed_all[(comp, temps[0])].get('barostat', 'iso'),
             ])
     print('  CTE: {}'.format(path))
     return path
@@ -741,7 +822,8 @@ def rescue_or_raise(exc, compile_on):
 
 def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                eq_steps, prod_steps, interval, nx, ny, nz, cell_kind,
-               base_seed, outdir=None, pre_eq_steps=4000):
+               base_seed, outdir=None, pre_eq_steps=4000,
+               a_ang=None, b_ang=None, c_ang=None, aniso=False):
     """Parallel worker: own compiled calculator on the shared GPU."""
     # Windows: spawned workers race on the shared triton cache (Permission
     # error on .cubin). Give each worker its own sub-cache; single-worker
@@ -793,7 +875,8 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                     calc, comp, T, eq_steps, prod_steps, interval,
                     seed=base_seed, grid=max(nx, ny, nz), prepare=False,
                     md_log=md_log, nx=nx, ny=ny, nz=nz, kind=cell_kind,
-                    pre_eq_steps=pre_eq_steps)
+                    pre_eq_steps=pre_eq_steps,
+                    a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso)
                 break
             except Exception as e:               # noqa: BLE001
                 if not rescue_or_raise(e, compile_mode):
@@ -837,6 +920,15 @@ def main():
                          "'l10' ordered CuAu-I (requires x_Pt=0.5)")
     ap.add_argument('--c-over-a', type=float, default=None,
                     help='L1_0 tetragonal ratio c/a (default 0.966)')
+    for _ax in ('a', 'b', 'c'):
+        ap.add_argument('--' + _ax + '-ang', type=float, default=None,
+                        help='explicit lattice constant %s in Angstrom '
+                             '(0/absent = seed); the box becomes '
+                             'nx*a x ny*b x nz*c' % _ax)
+    ap.add_argument('--aniso', action='store_true',
+                    help='anisotropic barostat: relax the cell SHAPE too '
+                         '(per-axis stress), so c/a of L1_0 and alpha along '
+                         'x/y/z become meaningful; default is isotropic MTK')
     ap.add_argument('--lc', type=float, default=None,
                     help='seed lattice constant in Angstrom; default: '
                          'LC_TABLE by system (pt=experimental fcc 3.9242 A, '
@@ -893,6 +985,14 @@ def main():
     ny = args.ny or grid
     nz = args.nz or grid
     cell_kind = args.kind
+    # explicit lattice constants (0/None = seed) + barostat mode
+    a_ang = getattr(args, 'a_ang', None)
+    b_ang = getattr(args, 'b_ang', None)
+    c_ang = getattr(args, 'c_ang', None)
+    aniso = bool(getattr(args, 'aniso', False))
+    if aniso:
+        print('[gui] anisotropic barostat requested: cell shape will relax '
+              '(a, b, c free)', flush=True)
     _nat = 4 * nx * ny * nz
     pre_eq = pre_eq_budget(getattr(args, 'pre_eq', 4000), _nat)
     if pre_eq:
@@ -999,7 +1099,8 @@ def main():
                         calc, comp, T, eq_steps, prod_steps, args.interval,
                         seed=seed, grid=grid, md_log=md_log,
                         nx=nx, ny=ny, nz=nz, kind=cell_kind,
-                        pre_eq_steps=pre_eq)
+                        pre_eq_steps=pre_eq,
+                        a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso)
                     break
                 except Exception as e:           # noqa: BLE001
                     if not rescue_or_raise(e, compile_mode):
@@ -1017,7 +1118,8 @@ def main():
         # regenerate the same file concurrently (torn-read race).
         for comp in {c for c, _ in tasks}:
             lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz, force=True,
-                              kind=cell_kind)
+                              kind=cell_kind, a_ang=a_ang, b_ang=b_ang,
+                              c_ang=c_ang)
         from multiprocessing import get_context
         ctx = get_context('spawn')
         q = ctx.Queue()
@@ -1028,7 +1130,11 @@ def main():
                 target=_mp_worker,
                 args=(chunk, q, model, device, compile_mode, precision,
                       eq_steps, prod_steps, args.interval, nx, ny, nz,
-                      cell_kind, seed, _OUT, pre_eq))
+                      cell_kind, seed, _OUT, pre_eq,
+                      getattr(args, 'a_ang', None),
+                      getattr(args, 'b_ang', None),
+                      getattr(args, 'c_ang', None),
+                      bool(getattr(args, 'aniso', False))))
             p.start()
             procs.append(p)
         # Collect with timeout: a dead worker must fail fast instead of

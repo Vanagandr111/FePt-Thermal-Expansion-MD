@@ -306,13 +306,16 @@ SEED_C_OVER_A = None
 
 
 def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
-                  kind=None, c_over_a=None):
+                  kind=None, c_over_a=None, a_ang=None, b_ang=None,
+                  c_ang=None):
     """Generate structure via gen_structure.py.
 
     force=True = regenerate even if it exists. lc = explicit seed lattice
     constant a (Angstrom); None = SEED_LC, else LC_TABLE by system.
     kind = 'a1' (random fcc) | 'l10' (ordered CuAu-I, x_Pt must be 0.5);
     c_over_a = L1_0 tetragonal ratio (default from LC_TABLE).
+    a_ang/b_ang/c_ang = explicit lattice constants per axis in Angstrom
+    (None/0 = seed); the box becomes nx*a x ny*b x nz*c.
     """
     if lc is None:
         lc = SEED_LC
@@ -322,8 +325,12 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
     gen_script = os.path.join(SCRIPTS, 'gen_structure.py')
     # the file name encodes EVERYTHING that changes the geometry: a cached
     # 4x4x4 A1 file must never be served for a 2x3x4 L1_0 request
-    outfile = os.path.join(DATA_DIR, 'data.fept_{}_c{:.2f}_{}x{}x{}.lmp'
-                           .format(kind, comp, nx, ny, nz))
+    ax_tag = ''
+    if any(v not in (None, 0, 0.0) for v in (a_ang, b_ang, c_ang)):
+        ax_tag = '_a{:.3f}b{:.3f}c{:.3f}'.format(
+            float(a_ang or 0), float(b_ang or 0), float(c_ang or 0))
+    outfile = os.path.join(DATA_DIR, 'data.fept_{}_c{:.2f}_{}x{}x{}{}.lmp'
+                           .format(kind, comp, nx, ny, nz, ax_tag))
     if os.path.exists(outfile):
         if not force:
             return outfile
@@ -336,6 +343,10 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
     cmd += ['--kind', str(kind)]
     if c_over_a is not None:
         cmd += ['--c-over-a', str(c_over_a)]
+    for _flag, _val in (('--a-ang', a_ang), ('--b-ang', b_ang),
+                        ('--c-ang', c_ang)):
+        if _val not in (None, 0, 0.0):
+            cmd += [_flag, str(_val)]
     proc = subprocess.run(
         cmd, capture_output=True, timeout=30
     )
@@ -583,7 +594,7 @@ def write_csv(parsed_all, comps, temps, out, seed,
             header += ['eq_steps']
         if prod_steps is not None:
             header += ['prod_steps']
-        header += ['seed']
+        header += ['seed'] + ['a_x_Angstrom', 'a_y_Angstrom', 'a_z_Angstrom', 'c_over_a', 'barostat']
         w.writerow(header)
 
         for comp in comps:
@@ -607,6 +618,11 @@ def write_csv(parsed_all, comps, temps, out, seed,
                     if prod_steps is not None:
                         row += [prod_steps]
                     row += [seed]
+                    for _k in ('a_x', 'a_y', 'a_z', 'c_over_a'):
+                        _v = p.get(_k)
+                        row += ['' if _v is None or _v != _v
+                                else '{:.6f}'.format(_v)]
+                    row += [p.get('barostat', 'iso')]
                     w.writerow(row)
 
     print('  CSV: {}'.format(csv_path))
@@ -672,7 +688,7 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
         header += ['eq_steps']
     if prod_steps is not None:
         header += ['prod_steps']
-    header += ['seed']
+    header += ['seed'] + ['a_x_Angstrom', 'a_y_Angstrom', 'a_z_Angstrom', 'c_over_a', 'barostat']
 
     # Number formats per column index (0-based)
     num_fmts = {
@@ -717,6 +733,11 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
                 if prod_steps is not None:
                     vals += [prod_steps]
                 vals += [seed]
+                for _k in ('a_x', 'a_y', 'a_z', 'c_over_a'):
+                    _v = p.get(_k)
+                    vals += [None if _v is None or _v != _v
+                             else round(_v, 6)]
+                vals += [p.get('barostat', 'iso')]
 
                 for ci, val in enumerate(vals):
                     cell = ws.cell(row=row_idx, column=ci + 1, value=val)

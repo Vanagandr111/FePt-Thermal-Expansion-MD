@@ -157,7 +157,8 @@ def _l12_types(natoms_total, comp_pt):
 # purity: impure
 # errors: ValueError on unknown kind / L1_0 with x_Pt != 0.5
 def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
-                       kind='a1', c_over_a=None):
+                       kind='a1', c_over_a=None, a_ang=None, b_ang=None,
+                       c_ang=None):
     """Generate a supercell data file.
 
     Parameters
@@ -175,7 +176,22 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
         l12 = ordered Cu3Au (x_Pt=0.25 Fe3Pt or 0.75 FePt3).
     c_over_a : float or None
         L1_0 only: explicit tetragonal ratio (default 0.966).
+    a_ang, b_ang, c_ang : float or None
+        Explicit lattice constants per axis in Angstrom (0/None = auto).
+        This is what lets the user ask for a given a, b and c instead of a
+        seed times an integer number of cells: the box becomes
+        nx*a_ang x ny*b_ang x nz*c_ang and the basis is scaled per axis.
     """
+    def _axis(v, fallback, name):
+        if v in (None, 0, 0.0, ''):
+            return float(fallback)
+        v = float(v)
+        if not (1.5 <= v <= 12.0):
+            raise ValueError(
+                '{} = {:.4f} A вне разумного диапазона 1.5..12 A'
+                .format(name, v))
+        return v
+
     nx, ny, nz = int(nx), int(ny), int(nz)
     if min(nx, ny, nz) < 1:
         raise ValueError('nx, ny, nz must be >= 1')
@@ -192,8 +208,21 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
             'других составов'.format(comp_pt))
     a, c, lc_note = lattice_constant(comp_pt, lc_override, kind=kind,
                                      c_over_a=c_over_a)
-    print("cell kind = {}  a = {:.4f} A  c = {:.4f} A  ({})"
-          .format(kind, a, c, lc_note))
+    a_seed, c_seed = a, c
+    a = _axis(a_ang, a_seed, 'a')
+    # b follows the (possibly explicit) a; c keeps the seed c/a ratio of L1_0
+    b = _axis(b_ang, a, 'b')
+    if c_ang not in (None, 0, 0.0, '') or not a_seed:
+        c = _axis(c_ang, c_seed, 'c')
+    elif kind == 'l10':
+        c = a * (c_seed / a_seed)
+    else:
+        c = _axis(c_ang, a, 'c')
+    if a_ang not in (None, 0, 0.0, '') or b_ang not in (None, 0, 0.0, '') \
+            or c_ang not in (None, 0, 0.0, ''):
+        lc_note += ' | явные a={:.4f} b={:.4f} c={:.4f} A'.format(a, b, c)
+    print("cell kind = {}  a = {:.4f} A  b = {:.4f} A  c = {:.4f} A  ({})"
+          .format(kind, a, b, c, lc_note))
     natoms_total = 4 * nx * ny * nz
 
     if kind == 'l10':
@@ -217,20 +246,20 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
             for iz in range(nz):
                 for dx, dy, dz in basis:
                     x = (ix + dx) * a
-                    y = (iy + dy) * a
+                    y = (iy + dy) * b
                     z = (iz + dz) * c
                     aid += 1
                     atoms.append((aid, x, y, z))
 
     # FIX: box per axis, not a cube of max(nx,ny,nz) - an orthorhombic
     # cell must not carry vacuum layers along the short axes.
-    lx, ly, lz = nx * a, ny * a, nz * c
+    lx, ly, lz = nx * a, ny * b, nz * c
 
     with open(outfile, 'w') as f:
         label = {'l10': 'L1_0', 'l12': 'L1_2'}.get(kind, 'fcc(A1)')
         f.write("Fe-Pt {} solid solution, comp_Pt={:.2f}, "
-                "a={:.4f}, c={:.4f}, box={:.3f}x{:.3f}x{:.3f}\n\n"
-                .format(label, comp_pt, a, c, lx, ly, lz))
+                "a={:.4f}, b={:.4f}, c={:.4f}, box={:.3f}x{:.3f}x{:.3f}\n\n"
+                .format(label, comp_pt, a, b, c, lx, ly, lz))
         f.write("{} atoms\n".format(natoms_total))
         f.write("2 atom types\n\n")
         f.write("0.0 {:.6f} xlo xhi\n".format(lx))
@@ -261,10 +290,16 @@ def main(argv=None):
                          '(x_Pt=0.25 Fe3Pt / 0.75 FePt3)')
     ap.add_argument('--c-over-a', type=float, default=None,
                     help='L1_0 tetragonal ratio c/a (default 0.966)')
+    for _ax in ('a', 'b', 'c'):
+        ap.add_argument('--' + _ax + '-ang', type=float, default=None,
+                        help='explicit lattice constant %s in Angstrom '
+                             '(0 = auto)' % _ax)
     args = ap.parse_args(argv)
     try:
         generate_structure(args.nx, args.ny, args.nz, args.comp, args.outfile,
                            lc_override=args.lc, kind=args.kind,
+                           a_ang=args.a_ang, b_ang=args.b_ang,
+                           c_ang=args.c_ang,
                            c_over_a=args.c_over_a)
     except ValueError as e:
         print('error: {}'.format(e), file=sys.stderr)

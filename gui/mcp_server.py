@@ -78,6 +78,14 @@ TOOLS = [
                 'nx': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'ny': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'nz': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'a_ang': {'type': 'number', 'minimum': 0, 'maximum': 12,
+                          'description': 'explicit lattice constant a in '
+                                         'Angstrom (0 = auto)'},
+                'b_ang': {'type': 'number', 'minimum': 0, 'maximum': 12},
+                'c_ang': {'type': 'number', 'minimum': 0, 'maximum': 12},
+                'aniso': {'type': 'integer', 'enum': [0, 1],
+                          'description': '1 = anisotropic barostat: relax the '
+                                         'cell shape too (alpha_x/y/z, c/a)'},
                 'temps': {'type': 'string',
                           'description': 'space-separated temperatures'},
                 'eq': {'type': 'integer'},
@@ -127,6 +135,14 @@ TOOLS = [
                 'nx': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'ny': {'type': 'integer', 'minimum': 1, 'maximum': 12},
                 'nz': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+                'a_ang': {'type': 'number', 'minimum': 0, 'maximum': 12,
+                          'description': 'explicit lattice constant a in '
+                                         'Angstrom (0 = auto)'},
+                'b_ang': {'type': 'number', 'minimum': 0, 'maximum': 12},
+                'c_ang': {'type': 'number', 'minimum': 0, 'maximum': 12},
+                'aniso': {'type': 'integer', 'enum': [0, 1],
+                          'description': '1 = anisotropic barostat: relax the '
+                                         'cell shape too (alpha_x/y/z, c/a)'},
                 'temps': {'type': 'string'},
                 'eq': {'type': 'integer'},
                 'prod': {'type': 'integer'},
@@ -335,7 +351,8 @@ def require_gui():
 
 def form_keys(args):
     keys = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
-            'eq', 'prod', 'seed', 'cell_kind', 'nx', 'ny', 'nz')
+            'eq', 'prod', 'seed', 'cell_kind', 'nx', 'ny', 'nz',
+            'a_ang', 'b_ang', 'c_ang', 'aniso')
     return {k: args[k] for k in keys if k in args and args[k] is not None}
 
 
