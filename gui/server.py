@@ -1219,6 +1219,8 @@ def collect_results(outdir):
                 'seg_300_600': f(row, 'seg_300_600'),
                 'seg_600_900': f(row, 'seg_600_900'),
                 'seg_900_1200': f(row, 'seg_900_1200'),
+                'a300_raw': f(row, 'a300_raw') or f(row, 'a_300K'),
+                'a_exp300': f(row, 'a_exp300'),
             }
         else:
             entry = {
@@ -1230,6 +1232,8 @@ def collect_results(outdir):
                 'seg_300_600': f(row, 'seg_300_600'),
                 'seg_600_900': f(row, 'seg_600_900'),
                 'seg_900_1200': f(row, 'seg_900_1200'),
+                'a300_raw': f(row, 'a300_raw') or f(row, 'a_300K'),
+                'a_exp300': f(row, 'a_exp300'),
             }
         cte.append(entry)
     cte.sort(key=lambda d: d['x_Pt'] if d['x_Pt'] is not None else 0)
@@ -2141,7 +2145,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.3.0'
+APP_VERSION = '2.3.1'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.

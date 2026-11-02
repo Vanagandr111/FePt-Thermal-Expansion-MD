@@ -412,23 +412,44 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     #     minimum of the potential (Pt: 3.9242 table vs ~4.008 MACE-PBE), so
     #     starting MD from the seed injects a 60-80 kbar shock that the
     #     barostat then has to absorb for thousands of steps - and often
-    #     fails to. Relax the CELL here instead: BFGS + FrechetCellFilter,
-    #     stop as soon as |P| < 0.5 kbar.
+    #     fails to. Relax the CELL here instead: an isotropic volume solve
+    #     on the pressure itself (the barostat only cares about P, and BFGS
+    #     on a cell filter stops on forces with tens of kbar still standing),
+    #     stop as soon as |P| < 0.3 kbar.
     a_seed = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+    cell_seed = atoms.get_cell().copy()
     if os.environ.get('FEPT_STATIC_RELAX', '1') != '0':
         try:
-            from ase.filters import FrechetCellFilter
-            ecf = FrechetCellFilter(atoms)
-            opt_cell = BFGS(ecf, logfile=None, maxstep=0.02)
-            n_max = int(os.environ.get('FEPT_STATIC_STEPS', '30'))
-            for _ in range(n_max):
-                opt_cell.run(steps=1)
-                if abs(pressure_bar(atoms)) < 500.0:
+            # Isotropic volume solve instead of a cell filter. BFGS on
+            # FrechetCellFilter stops when the FORCES are small, and on a
+            # stiff metal that happens while the stress is still tens of
+            # kbar (r2SCAN Cu: forces converged at P = -43 kbar). The
+            # barostat only cares about pressure, so solve P(a) = 0
+            # directly: da/a = +P/(3B), damped, at most 16 iterations.
+            b_gpa = 150.0
+            n_it = 0
+            for _ in range(int(os.environ.get('FEPT_STATIC_STEPS', '24'))):
+                p_now = pressure_bar(atoms)
+                if abs(p_now) < 300.0:
                     break
+                # a too-large cell reports NEGATIVE P (tension) and must
+                # shrink, so the step follows P with a PLUS sign:
+                # da/a = +P/(3B)
+                s = (1.0 + 0.7 * (p_now * 1e-4) / (3.0 * b_gpa)) ** (1.0 / 3.0)
+                s = max(0.90, min(1.10, s))
+                atoms.set_cell(atoms.get_cell() * s, scale_atoms=True)
+                n_it += 1
             a0 = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+            p_static = pressure_bar(atoms)
+            if abs(p_static) > 10000.0:
+                # a half-converged solve must not decide where the MD starts
+                atoms.set_cell(cell_seed, scale_atoms=True)
+                print('  [0k] WARNING: static relaxation did not converge '
+                      '(P {:+.0f} bar, {} iterations) - the seed cell is kept'
+                      .format(p_static, n_it), flush=True)
             print('  [0k] static cell relaxation: a {:.4f} -> {:.4f} A, '
-                  'P {:+0.0f} bar ({} steps)'.format(
-                      a_seed, a0, pressure_bar(atoms), opt_cell.nsteps),
+                  'P {:+0.0f} bar ({} iterations)'.format(
+                      a_seed, a0, pressure_bar(atoms), n_it),
                   flush=True)
         except Exception as _e:                     # noqa: BLE001
             print('  [0k] static cell relaxation skipped: {}'.format(_e),

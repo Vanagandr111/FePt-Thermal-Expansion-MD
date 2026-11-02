@@ -387,6 +387,13 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 .fnum{font-size:16px;color:#e8f3ff;font-variant-numeric:tabular-nums}
 .fsub{font-size:11px;color:#7d93a8;margin-top:2px}
 canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;border-radius:6px;margin:3px 0 8px}
+.q{display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border-radius:50%;background:#1d2b38;color:#8fb6d6;font:10px/1 sans-serif;cursor:help;margin-left:5px;position:relative;border:1px solid #2c4358;vertical-align:middle}
+.q:hover{background:#26405a;color:#fff}
+.q::after{content:attr(data-tip);position:absolute;left:-4px;top:20px;z-index:60;width:270px;padding:8px 10px;background:#0e1a24;border:1px solid #2c4358;border-radius:6px;color:#d5e3ef;font:11px/1.45 sans-serif;white-space:normal;text-align:left;opacity:0;pointer-events:none;transition:opacity .12s;box-shadow:0 6px 18px rgba(0,0,0,.55)}
+.q:hover::after{opacity:1}
+.jbox{max-height:520px;overflow:auto;background:#0d141b;border:1px solid #1d2b38;border-radius:6px;padding:4px}
+.jline{font:11px/1.45 monospace;padding:1px 4px;white-space:pre-wrap;word-break:break-word;border-bottom:1px solid #14202b}
+.j-info{color:#c9d6e2}.j-phys{color:#7cc4ff}.j-warning{color:#ffcc66}.j-error{color:#ff6b6b;font-weight:600}
 .filelist{font-size:12px}
 .filelist div{padding:2px 0;border-bottom:1px solid #1a2531;display:flex;gap:8px}
 .filelist span.sz{color:#7d93a8;margin-left:auto}
@@ -503,6 +510,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
   <button id="tab-prof" onclick="tab('prof')">Диагностика</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
   <button id="tab-trace" onclick="tab('trace')">Прозрачность</button>
+  <button id="tab-journal" onclick="tab('journal')">Журнал расчёта</button>
   <button id="tab-about" onclick="tab('about')">О программе</button>
   <label class="ctoggle" id="compact-wrap"
          title="Компактный режим: свернуть карточки во всех вкладках — только нужное"
@@ -527,7 +535,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
         </select>
       </div>
       <div id="wrap-model" style="flex:2;min-width:260px">
-        <label>Потенциал MACE (индексируется из potentials/gpu/)</label>
+        <label>Потенциал MACE (индексируется из potentials/gpu/)<span class="q" data-tip="Нейросетевой потенциал: файл .model, обученный на DFT-данных. PBE-модели обычно завышают объём металлов на 0.5–2 %, r2SCAN ближе к эксперименту. Выбор модели — главный источник систематики, поэтому в отчёте всегда показываются и a_raw, и a_calibrated.">?</span></label>
         <select id="model"></select>
         <button class="ghost tiny" style="margin-top:5px"
                 onclick="openPotModal()">＋ Добавить потенциал</button>
@@ -619,7 +627,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
           <option value="l10">L1₀ — упорядоченная (CuAu-I), x(Pt) = 0.50</option>
           <option value="l12">L1₂ — упорядоченная (Cu₃Au), x(Pt) = 0.25 / 0.75</option>
         </select>
-        <label style="margin-top:8px">Суперъячейка nx × ny × nz —
+        <label style="margin-top:8px">Суперъячейка nx × ny × nz —<span class="q" data-tip="Сколько раз повторить ячейку по каждой оси. Больше атомов — меньше шума давления и температуры, но расчёт дольше и больше VRAM. Бокс обязан быть не меньше двух радиусов обрезки потенциала (обычно ≥ 12 Å), иначе атом видит сам себя через периодические границы: программа показывает это светофором в паспорте.">?</span> 
           <span id="atomcount"></span></label>
         <div class="cellrow">
           <input id="nx" type="number" min="1" max="12" value="4"
@@ -657,15 +665,15 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
         <div id="cellhint"></div>
       </div>
       <div>
-        <label>Температуры K (через пробел)</label>
+        <label>Температуры K (через пробел)<span class="q" data-tip="Список температур, например 300 400 500 600. По точкам строится зависимость a(T) и считается КТР. Точка 300 K нужна обязательно: по ней берётся коэффициент приведения к эталону РФА.">?</span></label>
         <input id="temps" value="300 1200">
       </div>
       <div>
-        <label>Equilibration шагов</label>
+        <label>Equilibration шагов<span class="q" data-tip="Сколько шагов МД отводится на релаксацию объёма баростатом и выход на заданную температуру. Расчёт не перейдёт к замеру, пока среднее давление не окажется в коридоре ±1.5 кбар и температура не выйдет на цель; при необходимости стадия продлевается автоматически.">?</span></label>
         <input id="eq" type="number" value="500">
       </div>
       <div>
-        <label>Production шагов</label>
+        <label>Production шагов<span class="q" data-tip="Шаги, по которым считается среднее: параметр решётки, его погрешность σ, давление и потенциальная энергия. Чем больше шагов, тем стабильнее четвёртый знак после запятой, но время растёт линейно.">?</span></label>
         <input id="prod" type="number" value="1000">
       </div>
       <div>
@@ -778,6 +786,12 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
         <span class="status">сетка a(T), a(T), α и гистограмма — по одному файлу</span>
       </div>
       <b style="font-size:13px">Данные расчёта (all_results.csv)</b>
+      <div class="prow" style="margin:6px 0">
+        <span class="fsub">Вид таблицы и графика:</span>
+        <button id="cal-raw" class="act" onclick="setCalMode('raw')">Сырые данные потенциала (a_raw)</button>
+        <button id="cal-cal" onclick="setCalMode('cal')">Калибровка под РФА (a_calibrated)</button>
+      </div>
+      <div id="cal-note" class="fsub" style="margin-bottom:6px"></div>
       <div style="overflow-x:auto"><div id="tbl"></div></div>
     </div>
     <div class="struct-block">
@@ -996,12 +1010,33 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
     <canvas id="cvA" class="pulse" width="880" height="150"></canvas>
     <div class="fsub">Температура T(t), K</div>
     <canvas id="cvT" class="pulse" width="880" height="130"></canvas>
+    <div class="fsub">Потенциальная энергия Ep(t), эВ/атом — выход на плато</div>
+    <canvas id="cvE" class="pulse" width="880" height="130"></canvas>
   </div>
 
   <div class="card">
     <h3>Файлы расчёта</h3>
     <div class="prow"><button onclick="loadFiles()">Обновить список</button></div>
     <div id="filelist" class="filelist">—</div>
+  </div>
+</section>
+<section id="sec-journal" class="hidden">
+  <div class="card">
+    <h3>Журнал расчёта</h3>
+    <div class="prow" id="jfilters">
+      <button class="act" data-f="all" onclick="setJFilter('all')">ВСЕ</button>
+      <button data-f="info" onclick="setJFilter('info')">INFO</button>
+      <button data-f="phys" onclick="setJFilter('phys')">PHYSICS-CHECK</button>
+      <button data-f="warning" onclick="setJFilter('warning')">WARNING</button>
+      <button data-f="error" onclick="setJFilter('error')">ERROR</button>
+      <input id="jsearch" placeholder="поиск по журналу…" style="min-width:220px"
+             oninput="JLOG_Q=this.value;renderJournal()">
+      <span id="jcount" class="fsub"></span>
+      <button onclick="renderJournal()">Обновить</button>
+    </div>
+    <div id="journal" class="jbox"></div>
+    <div class="fsub">PHYSICS-CHECK — строки статики 0 K, гейта давления и баростата;
+    WARNING и ERROR подсвечены цветом.</div>
   </div>
 </section>
 <section id="sec-about" class="hidden">
@@ -1204,7 +1239,7 @@ let GREEN_PENDING = false;   // run finished; waiting for the user
 let resGreenTimer = null;
 
 function tab(name) {
-  ['run','res','prof','deps','trace','about'].forEach(t => {
+  ['run','res','prof','deps','trace','journal','about'].forEach(t => {
     const b = $('tab-' + t);
     if (b) b.classList.toggle('on', t === name);
     const s = $('sec-' + t);
@@ -2518,6 +2553,50 @@ function renderConsoles() {
     box.appendChild(frag);
     box.scrollTop = box.scrollHeight;
   });
+  if (!$('sec-journal') || !$('sec-journal').classList.contains('hidden')) {
+    renderJournal();
+  }
+}
+
+/* ---------------- journal tab: levels + search ---------------- */
+let JLOG_FILTER = 'all', JLOG_Q = '';
+function jlevel(raw, c) {
+  if (c === 't-err' || /traceback|\berror\b|critical|exception|ошибк|failed|killed/i.test(raw)) return 'error';
+  if (/\bwarn(ing)?\b|предупрежд/i.test(raw)) return 'warning';
+  if (/\[0k\]|\[eq\]|\[pre-eq\]|PASS=|RESULT|давлен|баростат|barostat|pressure/i.test(raw)) return 'phys';
+  return 'info';
+}
+function setJFilter(f) {
+  JLOG_FILTER = f;
+  document.querySelectorAll('#jfilters button[data-f]').forEach(b =>
+    b.classList.toggle('act', b.dataset.f === f));
+  renderJournal();
+}
+function renderJournal() {
+  const box = $('journal');
+  if (!box) return;
+  const q = String(JLOG_Q || '').trim().toLowerCase();
+  const frag = document.createDocumentFragment();
+  let n = 0;
+  for (const e of LOGBUF) {
+    const lv = jlevel(e.raw, e.c);
+    if (JLOG_FILTER !== 'all' && lv !== JLOG_FILTER) continue;
+    if (q && String(e.raw).toLowerCase().indexOf(q) < 0) continue;
+    const d = document.createElement('div');
+    d.className = 'jline j-' + lv;
+    d.textContent = e.raw;
+    frag.appendChild(d);
+    n++;
+  }
+  box.textContent = '';
+  if (!n) {
+    box.innerHTML = '<div class="status">Нет строк по этому фильтру.</div>';
+  } else {
+    box.appendChild(frag);
+    box.scrollTop = box.scrollHeight;
+  }
+  const cnt = $('jcount');
+  if (cnt) cnt.textContent = n + ' из ' + LOGBUF.length + ' строк';
 }
 function appendLines(lines) {
   let lamp = '';
@@ -2847,7 +2926,9 @@ function drawCTE(cte) {
 }
 
 function renderTable(series) {
-  let html = '<table><tr><th>x(Pt)</th><th>T, K</th><th>a, Å</th><th>σ(a)</th>' +
+  const aLbl = (typeof CAL_MODE !== 'undefined' && CAL_MODE === 'cal')
+    ? 'a_cal, Å' : 'a, Å';
+  let html = '<table><tr><th>x(Pt)</th><th>T, K</th><th>' + aLbl + '</th><th>σ(a)</th>' +
              '<th>runtime, s</th></tr>';
   Object.keys(series).sort().forEach(k => {
     series[k].forEach((d, i) => {
@@ -2860,13 +2941,49 @@ function renderTable(series) {
   return html + '</table>';
 }
 
+let CAL_MODE = 'raw';
+let LAST_RESULT = null;
+
+function calK(cte, key) {
+  const c = (cte || []).find(z => String(z.x_Pt) === String(key));
+  if (!c) return null;
+  const a300 = +c.a300_raw, aexp = +c.a_exp300;
+  return (a300 > 0 && aexp > 0) ? aexp / a300 : null;
+}
+
+function seriesForMode(r, mode) {
+  if (mode !== 'cal') return r.series;
+  const out = {};
+  for (const k of Object.keys(r.series)) {
+    const kk = calK(r.cte, k);
+    out[k] = kk ? r.series[k].map(d => Object.assign({}, d,
+      {a: d.a * kk, std: d.std * kk})) : r.series[k];
+  }
+  return out;
+}
+
+function setCalMode(mode) {
+  CAL_MODE = mode;
+  const bRaw = $('cal-raw'), bCal = $('cal-cal'), note = $('cal-note');
+  if (bRaw) bRaw.classList.toggle('act', mode === 'raw');
+  if (bCal) bCal.classList.toggle('act', mode === 'cal');
+  if (note) {
+    note.textContent = mode === 'cal'
+      ? 'a_cal(T) = a_exp(300)·a_raw(T)/a_raw(300): абсолют приведён к эталону РФА, наклон da/dT и КТР не изменены.'
+      : 'a_raw(T) — абсолютные значения потенциала, без приведения к эксперименту.';
+  }
+  if (LAST_RESULT) renderResultsPayload(LAST_RESULT);
+}
+
 function renderResultsPayload(r) {
+  LAST_RESULT = r;
   // one renderer for both sources: the live run folder and an imported
   // .xlsx / results file (the importer just builds the same payload)
   $('res-dir').textContent = r.outdir || '';
   LAST_RES_DIR = r.outdir || LAST_RES_DIR;
   renderSummary(r);
-  const has = r.series && Object.keys(r.series).length;
+  const ser = seriesForMode(r, CAL_MODE);
+  const has = ser && Object.keys(ser).length;
   $('res-empty').classList.toggle('hidden', !!has);
   $('charts').classList.toggle('hidden', !has);
   if (!has) return;
@@ -2877,8 +2994,8 @@ function renderResultsPayload(r) {
   const seed = (r.meta && r.meta.form && r.meta.form.seed !== undefined)
     ? r.meta.form.seed : null;
   const cp = $('chart-panels');
-  if (cp) { cp.innerHTML = ''; cp.appendChild(drawATPanels(r.series, r.cte || [], seed)); }
-  const ca = $('chart-a'); ca.innerHTML = ''; ca.appendChild(drawAT(r.series));
+  if (cp) { cp.innerHTML = ''; cp.appendChild(drawATPanels(ser, r.cte || [], seed)); }
+  const ca = $('chart-a'); ca.innerHTML = ''; ca.appendChild(drawAT(ser));
   const cc = $('chart-cte'); cc.innerHTML = '';
   if (r.cte && r.cte.length) {
     cc.appendChild(drawCTE(r.cte));
@@ -2892,7 +3009,10 @@ function renderResultsPayload(r) {
   } else {
     cc.innerHTML = '<div class="status">cte_report.csv не найден.</div>';
   }
-  $('tbl').innerHTML = renderTable(r.series);
+  $('tbl').innerHTML = renderTable(ser);
+  const bRaw = $('cal-raw'), bCal = $('cal-cal');
+  if (bRaw) bRaw.classList.toggle('act', CAL_MODE === 'raw');
+  if (bCal) bCal.classList.toggle('act', CAL_MODE === 'cal');
 }
 async function loadResults() {
   const r = await (await fetch('/api/results')).json();
@@ -4044,6 +4164,8 @@ function traceDraw(){
   drawSeries('cvA', pts.map(q => q.a), '#ffd166',
              {exp:TRC.aexp, unit:'Å'});
   drawSeries('cvT', pts.map(q => q.temp), '#7ee787', {unit:'K'});
+  const nat = TRC.natoms > 0 ? TRC.natoms : 1;
+  drawSeries('cvE', pts.map(q => q.pe / nat), '#c792ea', {unit:'эВ/ат'});
 }
 
 function drawSeries(id, vals, color, opt){
@@ -4088,6 +4210,7 @@ async function loadPassport(){
     const okBox = st.box_ok === undefined ? '<span class="fsub">—</span>'
       : (st.box_ok ? '<span class="ok">зелёный: L ≥ 2·r_cut</span>'
                    : '<span class="bad">жёлтый: бокс меньше 2·r_cut</span>');
+    TRC.natoms = (st.natoms || 0);
     const cal = d.calibration || {};
     const calEl = document.getElementById('f-cal');
     if (calEl) {
