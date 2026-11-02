@@ -63,7 +63,7 @@ from mace.calculators import MACECalculator  # noqa: E402 (needs torch env)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lmp_helper as lmp                      # noqa: E402
-from aniso_barostat import AnisoBerendsen     # noqa: E402  (no torch)
+from aniso_barostat import AnisoBerendsen, IsoBerendsen     # noqa: E402  (no torch)
 import lmpdata                                # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
 
@@ -240,6 +240,24 @@ def find_model(cli_model):
 
 
 # ── per-point MD ───────────────────────────────────────────────────
+def pressure_bar(atoms):
+    """Isotropic pressure in bar from ASE stress.
+
+    ASE's get_stress() is tensile-positive (sigma = dE/deps / V), so the
+    physical pressure is P = -trace(sigma)/3: a compressed cell has sigma < 0
+    and a positive pressure. Getting this sign wrong made a stretched cell
+    look compressed in every log, CSV and report row.
+    """
+    # include_ideal_gas=True is ESSENTIAL: ASE defaults to False, i.e. the
+    # POTENTIAL part of the stress only. At 300 K the kinetic term of a
+    # 108-atom cell is NkT/V = 3.5 kbar - exactly the "residual pressure"
+    # that every barostat check used to report as a failure while the cell
+    # was already at equilibrium.
+    s = atoms.get_stress(voigt=True, include_ideal_gas=True)
+    # 1 GPa = 1e4 bar (not 1e5): the old factor inflated every pressure 10x
+    return -float(np.mean(s[:3])) / units.GPa * 1.0e4
+
+
 def _make_dynamics(atoms, T, timestep_fs, aniso=False):
     """Build NPT integrator for the installed ASE version."""
     # Absolute-zero test points (T=0 in the form): thermostats are not
@@ -261,12 +279,27 @@ def _make_dynamics(atoms, T, timestep_fs, aniso=False):
         print('[gui] barostat: ANISOTROPIC (per-axis stress, B=150 GPa, '
               'tau=2 ps) -> c/a and alpha_x/y/z are meaningful', flush=True)
         return dyn
-    if _NPT_MODE == 'nhc':
-        # ASE >= 3.29: all-in-one isothermal-isobaric integrator
+    if _NPT_MODE == 'nhc' and os.environ.get('FEPT_NPT') != 'berendsen':
+        # ASE >= 3.29: all-in-one isothermal-isobaric integrator.
+        # Kept as an option (FEPT_NPT=mtk) - it needs a long eq window to
+        # settle a small cell, which the default path cannot afford.
         return IsotropicMTKNPT(
             atoms, timestep_fs * units.fs,
             temperature_K=T_sim, pressure_au=0.0,
             tdamp=100.0 * units.fs, pdamp=1000.0 * units.fs)
+    if _NPT_MODE == 'nhc':
+        # Default: Langevin thermostat + isotropic Berendsen barostat.
+        # Monotone convergence to P=0 in a few tau; no barostat ringing.
+        dyn = Langevin(atoms, timestep_fs * units.fs,
+                       temperature_K=T_sim, friction=0.01 / units.fs)
+        baro = IsoBerendsen(atoms, timestep_fs * units.fs,
+                            pressure_au=0.0, taut_ps=1.5,
+                            bulk_modulus_gpa=150.0, max_step=5.0e-4,
+                            smooth_steps=150)
+        dyn.attach(baro, interval=1)
+        print('[gui] barostat: ISOTROPIC Berendsen (tau=0.5 ps, B=150 GPa) '
+              '-> monotone volume relaxation to 0 bar', flush=True)
+        return dyn
     # older ASE: Langevin thermostat, barostat attached separately
     dyn = Langevin(atoms, timestep_fs * units.fs,
                    temperature_K=T_sim, friction=0.01 / units.fs)
@@ -351,6 +384,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                                  force=prepare, kind=kind, system=system)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
+    os.environ['FEPT_SYSTEM'] = str(system or 'fept').lower()
 
     # Finite-size guard: the potential sees periodic images that fall inside
     # its neighbour cutoff. A box shorter than 2*r_max puts an atom in touch
@@ -374,6 +408,32 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     dyn_opt = BFGS(atoms, logfile=None)
     dyn_opt.run(fmax=0.1, steps=100)
 
+    # 2b. STATIC 0 K CELL RELAXATION. The tabulated seed lattice is not the
+    #     minimum of the potential (Pt: 3.9242 table vs ~4.008 MACE-PBE), so
+    #     starting MD from the seed injects a 60-80 kbar shock that the
+    #     barostat then has to absorb for thousands of steps - and often
+    #     fails to. Relax the CELL here instead: BFGS + FrechetCellFilter,
+    #     stop as soon as |P| < 0.5 kbar.
+    a_seed = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+    if os.environ.get('FEPT_STATIC_RELAX', '1') != '0':
+        try:
+            from ase.filters import FrechetCellFilter
+            ecf = FrechetCellFilter(atoms)
+            opt_cell = BFGS(ecf, logfile=None, maxstep=0.02)
+            n_max = int(os.environ.get('FEPT_STATIC_STEPS', '30'))
+            for _ in range(n_max):
+                opt_cell.run(steps=1)
+                if abs(pressure_bar(atoms)) < 500.0:
+                    break
+            a0 = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+            print('  [0k] static cell relaxation: a {:.4f} -> {:.4f} A, '
+                  'P {:+0.0f} bar ({} steps)'.format(
+                      a_seed, a0, pressure_bar(atoms), opt_cell.nsteps),
+                  flush=True)
+        except Exception as _e:                     # noqa: BLE001
+            print('  [0k] static cell relaxation skipped: {}'.format(_e),
+                  flush=True)
+
     # 2. thermal velocities (new ASE name; same rng stream -> identical MD)
     _mb_init(atoms, temperature_K=T, rng=np.random.default_rng(seed))
 
@@ -396,14 +456,15 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             dyn_md.run(chunk)
             done += chunk
             a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
-            if (a_prev is not None and done >= 1500
-                    and abs(a_now - a_prev) < 5.0e-3):
+            p_now = pressure_bar(atoms)
+            if (a_prev is not None and done >= 1000
+                    and abs(a_now - a_prev) < 5.0e-3
+                    and abs(p_now) < 1500.0):
                 settled = True
                 break
             a_prev = a_now
         a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
-        p_now = (float(np.mean(atoms.get_stress(voigt=True)[:3]))
-                 / units.GPa * 1.0e5)
+        p_now = pressure_bar(atoms)
         print('  [pre-eq] a {:.4f} -> {:.4f} A in {} steps ({}), '
               'P {:+.0f} bar'
               .format(a_start, a_now, done,
@@ -437,7 +498,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     def collect():
         # get_stress(voigt=True) already returns the 6-component voigt vector
         stress = atoms.get_stress(voigt=True)
-        p_bar = float(np.mean(stress[:3])) / units.GPa * 1.0e5  # GPa->bar
+        p_bar = pressure_bar(atoms)
         vol = atoms.get_volume()
         a_lat = (4.0 * vol / len(atoms)) ** (1.0 / 3.0)
         _L = atoms.cell.lengths()
@@ -464,6 +525,28 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     dyn_md.attach(collect, interval=thermo_interval)
     try:
         dyn_md.run(eq_steps)
+        # Barostat settle gate: production must not start while the cell is
+        # still relaxing, otherwise the mean a(T) carries a pressure bias.
+        # One instantaneous sample is meaningless: pressure in a 100-atom
+        # cell fluctuates by tens of kbar. Average 200 steps (10 samples)
+        # before deciding whether the barostat has settled.
+        extra, p_eq = 0, None
+        while extra < 4 * eq_steps:
+            vals, temps = [], []
+            for _ in range(10):
+                dyn_md.run(20)
+                vals.append(pressure_bar(atoms))
+                temps.append(atoms.get_temperature())
+            extra += 200
+            p_eq = float(np.mean(vals))
+            t_eq = float(np.mean(temps))
+            # Both gates: the cell must be at the target T as well, otherwise
+            # the run leaves eq still heating and the volume drifts in prod.
+            if abs(p_eq) <= 1500.0 and abs(t_eq - max(1.0, float(T))) <= 20.0:
+                break
+        if extra:
+            print('  [eq] extended by {} steps to settle the barostat '
+                  '(P {:+.0f} bar)'.format(extra, p_eq or 0.0), flush=True)
         n_eq = len(records)
         phase['name'] = 'prod'
         t_prod0 = time.time()

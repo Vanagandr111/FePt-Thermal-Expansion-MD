@@ -1988,7 +1988,11 @@ def start_run(params):
     RUN.update(proc=proc, running=True, outdir=outdir, mode=mode,
                start=time.time(),
                run_device=merged.get('device', 'cuda'),
-               run_grid=grid)
+               run_grid=grid,
+               cmd=list(cmd) if isinstance(cmd, (list, tuple)) else [str(cmd)],
+               model=str(merged.get('model') or ''),
+               params={k: merged.get(k) for k in FORM_KEYS},
+               lmp=None)
     # --- multi-run queue (mean over N legs, average at the end) ---
     if from_multi:
         MULTI['dirs'].append(outdir)
@@ -2007,8 +2011,12 @@ def start_run(params):
         import re
         ms_re = re.compile(r'ms/step=([0-9.]+)')
         pt_re = re.compile(r'^\s+comp=[\d.]+\s+T=\s*\d+K\s+a=')
+        lmp_re = re.compile(r'->\s*(\S+\.lmp)')
         for line in proc.stdout:
             log(line)
+            m_lmp = lmp_re.search(line)
+            if m_lmp:
+                RUN['lmp'] = m_lmp.group(1)
             if '[preflight] torch.compile disabled' in line:
                 RUN['compile_off'] = True
             if pt_re.match(line):
@@ -2039,6 +2047,12 @@ def start_run(params):
         log('[gui] === run finished (exit {}), took {:.1f} s'.format(
             proc.returncode, time.time() - RUN['start']))
         log('[gui] results: ' + outdir)
+        # human-readable report for the customer (never fatal)
+        try:
+            rp = write_calculation_report(outdir)
+            log('[gui] report: ' + rp)
+        except Exception as e:                      # noqa: BLE001
+            log('[gui] report failed: ' + str(e))
         # --- multi-run: next leg, or average everything at the end ---
         if (proc.returncode == 0 and MULTI.get('left', 0) > 0
                 and MULTI.get('params')):
@@ -2127,7 +2141,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.11'
+APP_VERSION = '2.3.0'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -3146,6 +3160,210 @@ def app_shutdown():
     os._exit(0)
 
 
+def _sha256(path, limit_bytes=None):
+    import hashlib
+    h = hashlib.sha256()
+    left = limit_bytes
+    with open(path, 'rb') as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                break
+            if left is not None:
+                chunk = chunk[:left]
+                left -= len(chunk)
+            h.update(chunk)
+            if left is not None and left <= 0:
+                break
+    return h.hexdigest()
+
+
+def _model_functional(name):
+    low = (name or '').lower()
+    if 'r2scan' in low:
+        return 'r2SCAN (MACE-MATPES)'
+    if 'mpa' in low:
+        return 'PBE (MACE-MPA-0)'
+    if 'omat' in low:
+        return 'PBE (MACE-OMAT-0)'
+    if 'mh-' in low:
+        return 'PBE (MACE-MH)'
+    return 'PBE (MACE-MP-0)'
+
+
+def api_passport(cap):
+    """Everything the run is about to use: model, structure, box, command."""
+    params = RUN.get('params') or {}
+    model = RUN.get('model') or ''
+    if not model:
+        mp = ''
+    else:
+        mp = model if os.path.isabs(model) else os.path.join(PROJ, model)
+    if not os.path.exists(mp):
+        cand = os.path.join(PROJ, 'potentials', 'gpu', os.path.basename(model))
+        mp = cand if os.path.exists(cand) else mp
+    info = {'model': {'path': mp, 'exists': bool(mp) and os.path.isfile(mp)},
+            'structure': {'path': RUN.get('lmp')},
+            'command': ' '.join(RUN.get('cmd') or []),
+            'outdir': RUN.get('outdir'),
+            'params': params}
+    if mp and os.path.isfile(mp):
+        st = os.stat(mp)
+        info['model'].update(size_mb=round(st.st_size / 1e6, 1),
+                             functional=_model_functional(mp),
+                             sha256=_sha256(mp))
+    lmp = RUN.get('lmp')
+    if lmp and os.path.exists(lmp):
+        head = []
+        try:
+            with open(lmp, 'r', encoding='utf-8', errors='replace') as fh:
+                for i, line in enumerate(fh):
+                    if i >= 30:
+                        break
+                    head.append(line.rstrip('\n'))
+        except OSError:
+            pass
+        natoms, box = None, None
+        for line in head:
+            if line.strip().endswith('atoms'):
+                try:
+                    natoms = int(line.split()[0])
+                except ValueError:
+                    pass
+            if 'xlo xhi' in line:
+                parts = line.split()
+                try:
+                    box = [float(parts[1]) - float(parts[0])]
+                except (ValueError, IndexError):
+                    pass
+            elif box is not None and len(box) == 1 and 'ylo yhi' in line:
+                parts = line.split()
+                box.append(float(parts[1]) - float(parts[0]))
+            elif box is not None and len(box) == 2 and 'zlo zhi' in line:
+                parts = line.split()
+                box.append(float(parts[1]) - float(parts[0]))
+        info['structure'].update(natoms=natoms, box_ang=box, head=head)
+        if box:
+            r_cut = 6.0
+            info['structure']['box_ok'] = min(box) >= 2.0 * r_cut
+            info['structure']['r_cut'] = r_cut
+    # XRD calibration factor, when the run already produced cte_report.csv
+    cal = {}
+    out = RUN.get('outdir')
+    cte_path = os.path.join(out, 'cte_report.csv') if out else ''
+    if cte_path and os.path.exists(cte_path):
+        try:
+            import csv as _csv3
+            with open(cte_path, encoding='utf-8-sig', newline='') as fh3:
+                _r = list(_csv3.DictReader(fh3, delimiter=';'))
+            if _r:
+                _a300 = float(_r[0].get('a300_raw') or 0)
+                _aexp = float(_r[0].get('a_exp300') or 0)
+                if _a300 and _aexp:
+                    cal = {'a300_raw': _a300, 'a_exp300': _aexp,
+                           'k': _aexp / _a300}
+        except (OSError, ValueError, KeyError):
+            cal = {}
+    info['calibration'] = cal
+    return info
+
+
+def api_files(cap):
+    out = RUN.get('outdir')
+    items = []
+    if out and os.path.isdir(out):
+        for name in sorted(os.listdir(out)):
+            p = os.path.join(out, name)
+            if os.path.isfile(p):
+                st = os.stat(p)
+                items.append({'name': name, 'size': st.st_size,
+                              'mtime': st.st_mtime, 'path': p})
+    return {'outdir': out, 'files': items}
+
+
+def write_calculation_report(outdir):
+    """Human-readable calculation_report.md next to the results."""
+    import csv as _csv
+    rows = []
+    csv_path = os.path.join(outdir, 'all_results.csv')
+    if os.path.exists(csv_path):
+        with open(csv_path, 'r', encoding='utf-8-sig', newline='') as fh:
+            rows = list(_csv.DictReader(fh, delimiter=';'))
+    meta = {}
+    mp = os.path.join(outdir, 'meta.json')
+    if os.path.exists(mp):
+        try:
+            with open(mp, encoding='utf-8') as _mf:
+                meta = json.load(_mf)
+        except Exception:                      # noqa: BLE001
+            meta = {}
+    model = RUN.get('model') or meta.get('model') or '—'
+    lines = ['# Отчёт о расчёте', '',
+             '- версия: {}'.format(APP_VERSION),
+             '- модель: `{}`'.format(os.path.basename(str(model))),
+             '- тип ячейки: {}'.format(RUN.get('params', {}).get('cell_kind', '—')),
+             '- режим: {}'.format(meta.get('mode', RUN.get('mode', '—'))),
+             '- создано: {}'.format(time.strftime('%Y-%m-%d %H:%M')),
+             '']
+    if rows:
+        head = rows[0].keys()
+        cols = [c for c in ('x_Pt', 'T_K', 'a_mean_Angstrom', 'a_std_Angstrom',
+                            'mean_press_bar', 'drift', 'n_points')
+                if c in head]
+        lines.append('| ' + ' | '.join(cols) + ' |')
+        lines.append('|' + '---|' * len(cols))
+        for r in rows:
+            lines.append('| ' + ' | '.join(str(r.get(c, '')) for c in cols) + ' |')
+        lines.append('')
+        try:
+            press = [abs(float(r.get('mean_press_bar') or 0)) for r in rows]
+            worst = max(press) if press else 0.0
+            lines.append('Максимальное |остаточное давление| по точкам: '
+                         '**{:.0f} бар** ({})'.format(
+                             worst, 'в норме ≤ 1500' if worst <= 1500
+                             else 'выше порога 1500 — увеличьте eq/prod'))
+        except (TypeError, ValueError):
+            pass
+        # XRD-referenced variant: a_cal(T) = a_exp(300) * a_raw(T) / a_raw(300).
+        # The slope (and therefore alpha) is unchanged by construction, but the
+        # absolute value lines up with the customer's diffraction reference.
+        try:
+            a300 = float(rows[0].get('a_mean_Angstrom') or 0)
+            exp300 = None
+            cte_path = os.path.join(outdir, 'cte_report.csv')
+            if os.path.exists(cte_path):
+                import csv as _csv2
+                with open(cte_path, encoding='utf-8-sig', newline='') as fh2:
+                    cr = list(_csv2.DictReader(fh2, delimiter=';'))
+                if cr:
+                    a300 = float(cr[0].get('a300_raw') or a300)
+                    exp300 = float(cr[0].get('a_exp300') or 0)
+            if a300 and exp300 and 'a_mean_Angstrom' in head:
+                k = exp300 / a300
+                lines.append('')
+                lines.append('## Параметр решётки, приведённый к эталону РФА')
+                lines.append('')
+                lines.append('| T, K | a_raw, Å | a_calibrated, Å |')
+                lines.append('|---|---|---|')
+                for r in rows:
+                    try:
+                        ar = float(r['a_mean_Angstrom'])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    lines.append('| {} | {:.5f} | {:.5f} |'.format(
+                        r.get('T_K', ''), ar, ar * k))
+                lines.append('')
+                lines.append('Коэффициент приведения k = a_exp(300)/a_raw(300) = '
+                             '{:.6f}; наклон da/dT и КТР при этом не меняются.'.format(k))
+        except (ValueError, TypeError, OSError) as _e:
+            lines.append('_калибровка недоступна: {}_'.format(_e))
+    else:
+        lines.append('_Числовых точек нет._')
+    path = os.path.join(outdir, 'calculation_report.md')
+    with open(path, 'w', encoding='utf-8') as _rf:
+        _rf.write('\n'.join(lines) + '\n')
+    return path
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'FePtGUI/1.0'
 
@@ -3211,6 +3429,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/progress':
             self._json(progress_summary())
+            return
+        if path == '/api/passport':
+            try:
+                self._json(api_passport(None))
+            except Exception as e:                      # noqa: BLE001
+                self._json({'error': str(e)}, 500)
+            return
+        if path == '/api/files':
+            try:
+                self._json(api_files(None))
+            except Exception as e:                      # noqa: BLE001
+                self._json({'error': str(e)}, 500)
             return
         if path == '/api/status_summary':
             self._json(status_summary())

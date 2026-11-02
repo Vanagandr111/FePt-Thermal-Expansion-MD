@@ -774,6 +774,25 @@ def _write_xlsx(parsed_all, comps, temps, out, seed,
 # allies: calc_cte_report (computation), write_csv (complement)
 # sidefx: io (writes CSV file)
 # purity: impure
+def _exp_a300(comp):
+    """Experimental 300 K lattice constant (Vegard for Fe-Pt)."""
+    import json as _json
+    sysname = os.environ.get('FEPT_SYSTEM', 'fept').lower()
+    try:
+        p = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'data', 'elements.json')
+        with open(p, encoding='utf-8') as fh:
+            rows = _json.load(fh)
+        lc = {r['symbol']: float(r['lc']) for r in rows}
+        fe, pt, cu = lc.get('Fe', 3.5647), lc.get('Pt', 3.9242), lc.get('Cu', 3.615)
+    except Exception:                       # noqa: BLE001
+        fe, pt, cu = 3.5647, 3.9242, 3.615
+    if sysname.startswith('cu'):
+        return cu
+    x = 0.0 if comp is None else max(0.0, min(1.0, float(comp)))
+    return fe + x * (pt - fe)
+
+
 def write_cte_csv(parsed_all, comps, temps, out):
     """Write CTE report CSV per composition."""
     cte_csv_path = os.path.join(out, 'cte_report.csv')
@@ -782,12 +801,15 @@ def write_cte_csv(parsed_all, comps, temps, out):
         w.writerow(['x_Pt', 'R_squared', 'alpha_2pt', 'alpha_fit',
                      'alpha_min', 'alpha_max', 'alpha_range',
                      'seg_300_600', 'seg_600_900', 'seg_900_1200',
-                     'delta_a_rise', 'delta_a_fit'])
+                     'delta_a_rise', 'delta_a_fit',
+                     'a300_raw', 'a_exp300', 'alpha_calibrated'])
         for comp in comps:
             a_vals = [(T, parsed_all[(comp, T)]['a_mean'])
                       for T in temps
                       if (comp, T) in parsed_all and parsed_all[(comp, T)].get('a_mean')]
             _cte = calc_cte_report(a_vals) if len(a_vals) == 4 else None
+            a300 = next((v for T, v in a_vals if int(T) == 300), None)
+            a_exp = _exp_a300(comp)
             if _cte:
                 seg = _cte['alpha_segmental']
                 w.writerow(['{:.2f}'.format(comp),
@@ -801,7 +823,10 @@ def write_cte_csv(parsed_all, comps, temps, out):
                             '{:.3e}'.format(seg[1]) if len(seg) > 1 else '',
                             '{:.3e}'.format(seg[2]) if len(seg) > 2 else '',
                             '{:.6f}'.format(_cte['delta_a_rise']),
-                            '{:.6f}'.format(_cte['delta_a_fit'])])
+                            '{:.6f}'.format(_cte['delta_a_fit']),
+                            '{:.6f}'.format(a300),
+                            '{:.6f}'.format(a_exp),
+                            '{:.3e}'.format(_cte['alpha_fit'])])
     print('  CTE CSV: {}'.format(cte_csv_path))
 
 

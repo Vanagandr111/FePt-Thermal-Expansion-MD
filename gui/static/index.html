@@ -363,6 +363,34 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 ::-webkit-scrollbar-corner { background:#0d1016; }
 * { scrollbar-width: thin; scrollbar-color: #454b58 #0d1016; }
 </style>
+
+<style id="trace-css">
+.pipe{display:flex;align-items:stretch;flex-wrap:wrap;gap:4px;margin:8px 0}
+.pnode{flex:1 1 110px;min-width:104px;border:1px solid #2b3a4a;border-radius:8px;padding:6px 8px;background:#131a22;transition:.25s}
+.pnode b{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:#243447;font-size:11px;margin-right:4px}
+.pnode span{font-size:12px;color:#cfe3f7}
+.pnode i{display:block;font-size:10px;color:#7d93a8;font-style:normal;margin-top:2px}
+.pnode.done{border-color:#2f6b46;background:#12241a}
+.pnode.active{border-color:#3d8fd1;background:#12222e;box-shadow:0 0 0 2px #1d4a6b inset;animation:pulseN 1.1s infinite}
+@keyframes pulseN{0%,100%{opacity:1}50%{opacity:.62}}
+.parrow{display:flex;align-items:center;color:#4a6178;font-size:14px}
+.pdetail{margin-top:8px;font-size:12px;color:#9fb4c8;min-height:18px}
+.prow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.pcmd{font-family:monospace;font-size:11px;color:#8fb0cc;word-break:break-all}
+.passport{font-size:12px;line-height:1.55;color:#c6d8e8}
+.passport code{background:#0d141b;padding:1px 4px;border-radius:3px}
+.ok{color:#5fd08a}.bad{color:#ff7a7a}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
+.fcard{border:1px solid #223243;border-radius:8px;padding:8px;background:#111820}
+.ftitle{font-size:11px;color:#7d93a8;text-transform:uppercase;letter-spacing:.04em}
+.fml{font-size:13px;color:#9fc3e0;margin:4px 0}
+.fnum{font-size:16px;color:#e8f3ff;font-variant-numeric:tabular-nums}
+.fsub{font-size:11px;color:#7d93a8;margin-top:2px}
+canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;border-radius:6px;margin:3px 0 8px}
+.filelist{font-size:12px}
+.filelist div{padding:2px 0;border-bottom:1px solid #1a2531;display:flex;gap:8px}
+.filelist span.sz{color:#7d93a8;margin-left:auto}
+</style>
 </head>
 <body>
 <!-- first-boot splash: folder pick + engine install, hides when ready -->
@@ -474,6 +502,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
   <button id="tab-res" onclick="tab('res')">Результаты</button>
   <button id="tab-prof" onclick="tab('prof')">Диагностика</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
+  <button id="tab-trace" onclick="tab('trace')">Прозрачность</button>
   <button id="tab-about" onclick="tab('about')">О программе</button>
   <label class="ctoggle" id="compact-wrap"
          title="Компактный режим: свернуть карточки во всех вкладках — только нужное"
@@ -648,20 +677,20 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
     </div>
     <div class="row" style="margin-top:14px;align-items:center">
       <button class="act" id="btn-start" onclick="startRun()">▶ Запустить</button>
-      <span class="hint" style="margin:0">прогонов для среднего:</span>
+      <span class="hint" style="margin:0">расчётов для среднего:</span>
       <input id="runs-count" type="number" min="1" max="20" value="3"
-             style="width:56px" title="Сколько независимых прогонов
+             style="width:56px" title="Сколько независимых расчётов
              считать подряд — в конце посчитается среднее">
       <button class="act danger" id="btn-start-multi"
               onclick="startRunMulti()"
-              title="N прогонов подряд, логи каждого отдельно,
-              затем среднее по всем">🔴 Среднее по прогонам</button>
+              title="N расчётов подряд, логи каждого отдельно,
+              затем среднее по всем">🔴 Среднее по расчётам</button>
       <button class="ghost" id="btn-stop" onclick="stopRun()">⏹ Стоп</button>
       <button class="ghost" onclick="openFolder()">📂 Открыть папку результатов</button>
       <button class="ghost" onclick="quickPreset()">⚡ Быстрый тест</button>
     </div>
     <div class="est-card" id="prog-card">
-      <div class="est-title">Текущий прогон — факт
+      <div class="est-title">Текущий расчёт — факт
         <span id="prog-state" class="t-dim"
               style="color:var(--dim);font-size:11px"></span>
         <span id="pg-pct" style="margin-left:auto">0%</span></div>
@@ -894,6 +923,87 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 </main>
 
 <!-- ======================= ABOUT ======================= -->
+
+<section id="sec-trace" class="hidden">
+  <div class="card">
+    <h3>Что сейчас работает</h3>
+    <div id="pipe" class="pipe">
+      <div class="pnode" data-stage="gen"><b>1</b><span>Решётка</span><i>gen_structure.py</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="lmp"><b>2</b><span>Файл .lmp</span><i>координаты</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="model"><b>3</b><span>Нейросеть</span><i>.model → VRAM</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="zero"><b>4</b><span>0 K</span><i>снятие давления</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="preeq"><b>5</b><span>Pre-Eq / Eq</span><i>баростат</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="prod"><b>6</b><span>Замер</span><i>prod</i></div>
+      <div class="parrow">→</div>
+      <div class="pnode" data-stage="cte"><b>7</b><span>КТР</span><i>CSV/XLSX</i></div>
+    </div>
+    <div id="pipedetail" class="pdetail">нажмите на этап — покажу детали</div>
+  </div>
+
+  <div class="card">
+    <h3>Паспорт расчёта</h3>
+    <div class="prow">
+      <button onclick="loadPassport()">Обновить</button>
+      <button onclick="copyRunCmd()">Скопировать команду</button>
+      <span id="passportcmd" class="pcmd"></span>
+    </div>
+    <div id="passport" class="passport">—</div>
+  </div>
+
+  <div class="card">
+    <h3>Живые формулы</h3>
+    <div class="fgrid">
+      <div class="fcard">
+        <div class="ftitle">Параметр решётки</div>
+        <div class="fml">a = L<sub>x</sub> / n<sub>x</sub></div>
+        <div class="fnum" id="f-a">—</div>
+      </div>
+      <div class="fcard">
+        <div class="ftitle">Баростат Берендсена</div>
+        <div class="fml">μ = 1 + (Δt/τ)·(P − P₀)/B</div>
+        <div class="fnum" id="f-mu">—</div>
+        <div class="fsub" id="f-dir"></div>
+      </div>
+      <div class="fcard">
+        <div class="ftitle">Усреднение на Production</div>
+        <div class="fml">⟨a⟩ = (1/N)Σa<sub>i</sub> ± σ</div>
+        <div class="fnum" id="f-mean">—</div>
+      </div>
+      <div class="fcard">
+        <div class="ftitle">Калибровка на эталон РФА</div>
+        <div class="fml">a_cal(T) = a_exp(300)·a_raw(T)/a_raw(300)</div>
+        <div class="fnum" id="f-cal">—</div>
+        <div class="fsub" id="f-calnote">наклон da/dT и КТР не меняются</div>
+      </div>
+      <div class="fcard">
+        <div class="ftitle">Коэффициент теплового расширения</div>
+        <div class="fml">α = (1/a)·da/dT</div>
+        <div class="fnum" id="f-cte">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Пульс расчёта</h3>
+    <div class="fsub">Давление P(t), кбар — зелёная зона ±1.5 кбар</div>
+    <canvas id="cvP" class="pulse" width="880" height="150"></canvas>
+    <div class="fsub">Параметр решётки a(t), Å — пунктир: эксперимент</div>
+    <canvas id="cvA" class="pulse" width="880" height="150"></canvas>
+    <div class="fsub">Температура T(t), K</div>
+    <canvas id="cvT" class="pulse" width="880" height="130"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Файлы расчёта</h3>
+    <div class="prow"><button onclick="loadFiles()">Обновить список</button></div>
+    <div id="filelist" class="filelist">—</div>
+  </div>
+</section>
 <section id="sec-about" class="hidden">
   <div class="card">
     <div class="cbar"><b>О программе</b>
@@ -941,7 +1051,7 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
       • <b>CLI</b>: движком управляется и напрямую —
       <code>python scripts/run_main_mace.py --help</code> и
       <code>python scripts/run_main.py --help</code> (LAMMPS-режим);
-      все прогоны пишут CSV/XLSX/графики/md_*.log в results_*/.<br>
+      все расчёты пишут CSV/XLSX/графики/md_*.log в results_*/.<br>
       • <b>Тесты</b>: <code>python -m pytest -q</code> (~30 с, без сети и GPU).
     </div>
   </div>
@@ -1094,7 +1204,7 @@ let GREEN_PENDING = false;   // run finished; waiting for the user
 let resGreenTimer = null;
 
 function tab(name) {
-  ['run','res','prof','deps','about'].forEach(t => {
+  ['run','res','prof','deps','trace','about'].forEach(t => {
     const b = $('tab-' + t);
     if (b) b.classList.toggle('on', t === name);
     const s = $('sec-' + t);
@@ -1761,7 +1871,7 @@ async function pollProgress() {
     if (running) {
       const legs = (p.legs_total || 1);
       $('prog-state').textContent = legs > 1
-        ? 'идёт… прогон ' + p.leg + ' из ' + legs
+        ? 'идёт… расчёт ' + p.leg + ' из ' + legs
         : 'идёт…';
     } else if (p.done > 0 && p.total && p.done >= p.total) {
       $('prog-state').textContent = 'точки завершены (' +
@@ -1942,7 +2052,7 @@ function renderEstimate(e) {
     ' шагов · ' + e.ms_step + ' мс/шаг';
   const C = {calibrated: 'по калибровке этой машины',
              extrapolated: '⚠ экстраполяция за пределы калибровки',
-             guess: 'предположение (модель по данным прошлых прогонов)'};
+             guess: 'предположение (модель по данным прошлых расчётов)'};
   $('est-conf').textContent = (C[e.confidence] || e.confidence) +
     (e.machine_gpu ? ' · ' + e.machine_gpu : '') +
     (e.calibrated_at ? ' · калибровка ' + e.calibrated_at : '');
@@ -2419,6 +2529,7 @@ function appendLines(lines) {
     else if (e.z === 'warn' && lamp !== 'r') lamp = 'y';
   }
   while (LOGBUF.length > 6000) LOGBUF.shift();
+  if (typeof traceFeed === 'function') { try { traceFeed(lines); } catch (e) {} }
   renderConsoles();
   /* Diagnostics lamp = unread warn/error lines in ITS console. Glows
      only while that tab is closed; opening it (tab()) acknowledges. */
@@ -2980,7 +3091,7 @@ function renderSummary(r) {
   const isAvg = m.type === 'average';
   let h = '<div class="card" style="margin:10px 0">' +
     '<div class="cbar" style="margin:0 0 8px"><b>Сводка расчёта' +
-    (isAvg ? ' — СРЕДНЕЕ по ' + (m.runs_n || '?') + ' прогонам' : '') +
+    (isAvg ? ' — СРЕДНЕЕ по ' + (m.runs_n || '?') + ' расчётам' : '') +
     '</b><span style="color:var(--dim);font-size:11px">' +
     (m.started_at || m.created_at || '') + '</span></div>' +
     '<div class="row" style="flex-wrap:wrap;gap:12px">'
@@ -3865,6 +3976,179 @@ pollQueue();
   })();
 }
 bootPoll();
+</script>
+
+<script id="trace-js">
+/* ===================== Прозрачность: живые данные ===================== */
+const TRC = {stage: null, pts: [], aexp: null, last: null, mean: null,
+             started: false, nprod: 0, sum: 0, sum2: 0, cmd: ''};
+const MD_RE = /^\s*(\d+)\s+([\d.]+)\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*$/;
+
+function traceStage(st){
+  TRC.stage = st;
+  document.querySelectorAll('#pipe .pnode').forEach(n => {
+    const order = ['gen','lmp','model','zero','preeq','prod','cte'];
+    const i = order.indexOf(n.dataset.stage), j = order.indexOf(st);
+    n.classList.toggle('active', n.dataset.stage === st);
+    n.classList.toggle('done', i > -1 && j > -1 && i < j);
+  });
+}
+
+function traceFeed(lines){
+  for (const raw of lines){
+    const s = String(raw);
+    if (!s) continue;
+    if (s.indexOf('Wrote ') >= 0 && s.indexOf('.lmp') >= 0) traceStage('lmp');
+    if (s.indexOf('[gui] volume pre-equilibration') >= 0) traceStage('preeq');
+    if (s.indexOf('[eq] extended') >= 0) traceStage('preeq');
+    if (s.indexOf('DONE ->') >= 0) traceStage('cte');
+    if (s.indexOf('[gui] === run finished') >= 0) traceStage('cte');
+    const m = MD_RE.exec(s);
+    if (!m) continue;
+    const p = {step:+m[1], t:+m[2], phase:m[3], pe:+m[4], ke:+m[5],
+               temp:+m[7], press:+m[8], vol:+m[9], a:+m[10]};
+    TRC.last = p;
+    if (p.phase.indexOf('prod') === 0){ TRC.nprod++; TRC.sum += p.a; TRC.sum2 += p.a*p.a; traceStage('prod'); }
+    else if (p.phase.indexOf('eq') === 0) traceStage('preeq');
+    TRC.pts.push(p);
+    if (TRC.pts.length > 4000) TRC.pts.shift();
+    traceFormulas(p);
+    traceDraw();
+  }
+}
+
+function traceFormulas(p){
+  const nx = (+(document.getElementById('nx')||{}).value) || 2;
+  document.getElementById('f-a').textContent =
+    p.a.toFixed(5) + ' Å   (V = ' + p.vol.toFixed(1) + ' Å³, n = ' + nx + ')';
+  const mu = 1 + (1/500)*(p.press*1e-4 - 0)/150;   // dt/tau=1/500, bar->GPa
+  document.getElementById('f-mu').textContent =
+    'μ = ' + mu.toFixed(6) + '   (P = ' + (p.press/1000).toFixed(1) + ' кбар)';
+  document.getElementById('f-dir').textContent =
+    Math.abs(p.press) <= 1500 ? 'равновесие достигнуто ✓'
+                              : (p.press > 0 ? 'ячейка расширяется ↑' : 'ячейка сжимается ↓');
+  if (TRC.nprod > 1){
+    const mean = TRC.sum/TRC.nprod;
+    const varr = Math.max(0, TRC.sum2/TRC.nprod - mean*mean);
+    document.getElementById('f-mean').textContent =
+      '⟨a⟩ = ' + mean.toFixed(5) + ' ± ' + Math.sqrt(varr).toFixed(5) +
+      ' Å   (N = ' + TRC.nprod + ')';
+  }
+}
+
+function traceDraw(){
+  const pts = TRC.pts.slice(-600);
+  if (!pts.length) return;
+  drawSeries('cvP', pts.map(q => q.press/1000), '#4aa3ff',
+             {zero:true, band:1.5, unit:'кбар'});
+  drawSeries('cvA', pts.map(q => q.a), '#ffd166',
+             {exp:TRC.aexp, unit:'Å'});
+  drawSeries('cvT', pts.map(q => q.temp), '#7ee787', {unit:'K'});
+}
+
+function drawSeries(id, vals, color, opt){
+  const cv = document.getElementById(id);
+  if (!cv) return;
+  const g = cv.getContext('2d');
+  const W = cv.width, H = cv.height, pad = 28;
+  g.clearRect(0,0,W,H);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (opt.exp) { lo = Math.min(lo, opt.exp); hi = Math.max(hi, opt.exp); }
+  if (opt.band) { lo = Math.min(lo, -opt.band); hi = Math.max(hi, opt.band); }
+  if (!isFinite(lo) || !isFinite(hi) || hi - lo < 1e-9) { hi = lo + 1; }
+  const y = v => H - pad - (v - lo)/(hi - lo) * (H - 2*pad);
+  const x = i => pad + i * (W - 2*pad) / Math.max(1, vals.length - 1);
+  if (opt.band){
+    g.fillStyle = 'rgba(70,200,120,.12)';
+    g.fillRect(pad, y(opt.band), W-2*pad, y(-opt.band)-y(opt.band));
+  }
+  if (opt.exp){
+    g.strokeStyle = '#ff8fa3'; g.setLineDash([5,4]); g.beginPath();
+    g.moveTo(pad, y(opt.exp)); g.lineTo(W-pad, y(opt.exp)); g.stroke();
+    g.setLineDash([]);
+  }
+  if (opt.zero){ g.strokeStyle = '#31465a'; g.beginPath();
+    g.moveTo(pad, y(0)); g.lineTo(W-pad, y(0)); g.stroke(); }
+  g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath();
+  vals.forEach((v,i) => { i ? g.lineTo(x(i), y(v)) : g.moveTo(x(0), y(v)); });
+  g.stroke();
+  g.fillStyle = '#7d93a8'; g.font = '10px monospace';
+  g.fillText(hi.toFixed(2) + ' ' + (opt.unit||''), 2, 12);
+  g.fillText(lo.toFixed(2), 2, H - 6);
+}
+
+async function loadPassport(){
+  const box = document.getElementById('passport');
+  try {
+    const r = await fetch('/api/passport'); const d = await r.json();
+    if (d.error) { box.textContent = 'ошибка: ' + d.error; return; }
+    TRC.cmd = d.command || '';
+    document.getElementById('passportcmd').textContent = TRC.cmd || '—';
+    const m = d.model || {}, st = d.structure || {};
+    const okBox = st.box_ok === undefined ? '<span class="fsub">—</span>'
+      : (st.box_ok ? '<span class="ok">зелёный: L ≥ 2·r_cut</span>'
+                   : '<span class="bad">жёлтый: бокс меньше 2·r_cut</span>');
+    const cal = d.calibration || {};
+    const calEl = document.getElementById('f-cal');
+    if (calEl) {
+      calEl.textContent = cal.k
+        ? ('k = ' + cal.k.toFixed(6) + '  (a_exp=' + cal.a_exp300.toFixed(4) +
+           ' Å, a_raw=' + cal.a300_raw.toFixed(4) + ' Å)')
+        : '— (появится после расчёта точки 300 K)';
+    }
+    box.innerHTML =
+      '<div><b>Потенциал:</b> <code>' + (m.path||'—') + '</code></div>' +
+      '<div>размер: ' + (m.size_mb||'—') + ' МБ · функционал: ' + (m.functional||'—') + '</div>' +
+      '<div>SHA256: <code>' + (m.sha256||'—') + '</code></div>' +
+      '<div><b>Структура:</b> <code>' + (st.path||'—') + '</code></div>' +
+      '<div>атомов: ' + (st.natoms||'—') + ' · бокс: ' + (st.box_ang ? st.box_ang.map(v=>v.toFixed(2)).join(' × ') + ' Å' : '—') + '</div>' +
+      '<div>' + okBox + '</div>' +
+      '<div><b>Команда:</b> <code>' + (d.command||'—') + '</code></div>';
+  } catch(e){ box.textContent = 'паспорт недоступен: ' + e; }
+}
+
+function copyRunCmd(){
+  if (!TRC.cmd) { consoleLine('команда пока неизвестна — запустите расчёт'); return; }
+  navigator.clipboard.writeText(TRC.cmd).then(
+    () => consoleLine('команда скопирована'),
+    () => consoleLine('копирование не удалось'));
+}
+
+async function loadFiles(){
+  const box = document.getElementById('filelist');
+  try {
+    const r = await fetch('/api/files'); const d = await r.json();
+    if (!d.files || !d.files.length){ box.textContent = 'файлов пока нет'; return; }
+    box.innerHTML = d.files.map(f =>
+      '<div><a href="#" onclick="openFilePath(\'' + f.path.replace(/\\/g,'\\\\') +
+      '\');return false">' + f.name + '</a><span class="sz">' +
+      (f.size/1024).toFixed(1) + ' КБ</span></div>').join('');
+  } catch(e){ box.textContent = 'список недоступен: ' + e; }
+}
+
+async function openFilePath(p){
+  try {
+    await fetch('/api/open_path', {method:'POST', headers:{'Content-Type':'application/json'},
+                                    body: JSON.stringify({path:p})});
+  } catch(e){ consoleLine('не удалось открыть файл: ' + e); }
+}
+
+document.querySelectorAll('#pipe .pnode').forEach(n => {
+  n.addEventListener('click', () => {
+    const st = n.dataset.stage;
+    const txt = {
+      gen: 'gen_structure.py — строит суперячейку из табличного параметра или заданных a,b,c.',
+      lmp: 'data-файл LAMMPS: заголовок, бокс, координаты. Путь — в паспорте расчёта.',
+      model: 'MACE .model загружается в VRAM; путь, размер и SHA256 — в паспорте.',
+      zero: 'Предварительная релаксация объёма перед нагревом (снятие стартового давления).',
+      preeq: 'Баростат Берендсена: держит P = 0; здесь ячейка выходит на равновесие.',
+      prod: 'Окно замера: среднее a и σ считаются только по этим шагам.',
+      cte: 'КТР по точкам a(T); файлы all_results.csv / cte_report.csv / xlsx.'
+    }[st] || '';
+    document.getElementById('pipedetail').textContent = txt;
+    loadPassport();
+  });
+});
 </script>
 </body>
 </html>

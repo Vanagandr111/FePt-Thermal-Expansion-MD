@@ -11,8 +11,9 @@ cell vector separately with the diagonal stress of the step:
 
     eps_i += dt/tau * (P_i - P_ext) / B,   s_i = 1 + eps_i
 
-P_i comes from the stress tensor (ASE sign: positive stress = compression,
-so pressure P = -stress). Berendsen coupling gives correct MEANS (a_x, a_y,
+P_i comes from the ASE stress tensor, which is tensile-positive
+(probe: a=3.50 -> sigma=-0.103, a=3.90 -> sigma=+0.116 for Cu), so the
+pressure is P = -trace(sigma)/3. GPa = 160.2176634 * eV/A^3. Berendsen coupling gives correct MEANS (a_x, a_y,
 a_z and c/a versus T) while damping volume fluctuations, which is what a
 thermal-expansion run needs; the reported sigma still comes from the window.
 """
@@ -36,7 +37,7 @@ class AnisoBerendsen:
 
     def __call__(self, atoms=None):
         atoms = atoms if atoms is not None else self.atoms
-        stress = atoms.get_stress(voigt=True)          # eV/A^3
+        stress = atoms.get_stress(voigt=True, include_ideal_gas=True)
         p_gpa = -np.array(stress[:3], dtype=float) * 160.2176634
         d_eps = ((self.dt_fs / self.taut_fs) * (p_gpa - self.p_ext_gpa)
                  / self.bulk_gpa)
@@ -47,6 +48,55 @@ class AnisoBerendsen:
         for i in range(3):
             new_cell[i] = cell[i] * scale[i]
         frac = atoms.get_scaled_positions(wrap=True)
+        vel = atoms.get_velocities()
         atoms.set_cell(new_cell, scale_atoms=False)
         atoms.set_scaled_positions(frac)      # affine: fractions are kept
+        if vel is not None:
+            atoms.set_velocities(vel / scale[:, None])
+        self.steps += 1
+
+class IsoBerendsen:
+    """Uniform (isotropic) cell relaxation to the target pressure.
+
+    scale = 1 + dt/tau * (P - P_ext) / B, applied to all three cell vectors
+    and to the fractional-coordinate-preserving atomic positions.
+    """
+
+    def __init__(self, atoms, timestep, pressure_au=0.0, taut_ps=1.0,
+                 bulk_modulus_gpa=150.0, max_step=0.002, smooth_steps=100):
+        self.atoms = atoms
+        self.dt_fs = float(timestep / units.fs)
+        self.p_ext_gpa = float(pressure_au) / units.GPa
+        self.taut_fs = max(50.0, float(taut_ps) * 1000.0)
+        self.bulk_gpa = max(1.0, float(bulk_modulus_gpa))
+        self.max_step = abs(float(max_step))
+        # Instantaneous pressure in a 100-atom cell fluctuates by tens of
+        # kbar; feeding that into the cell step makes the volume random-walk
+        # instead of settling. Exponential moving average ~ smooth_steps.
+        self.smooth = max(1, int(smooth_steps))
+        self.p_ema = None
+        self.steps = 0
+
+    def __call__(self, atoms=None):
+        atoms = atoms if atoms is not None else self.atoms
+        stress = atoms.get_stress(voigt=True, include_ideal_gas=True)
+        p_gpa = -float(np.mean(stress[:3])) * 160.2176634
+        if self.p_ema is None:
+            self.p_ema = p_gpa
+        else:
+            self.p_ema += (p_gpa - self.p_ema) / self.smooth
+        d_eps = ((self.dt_fs / self.taut_fs) * (self.p_ema - self.p_ext_gpa)
+                 / self.bulk_gpa)
+        d_eps = float(np.clip(d_eps, -self.max_step, self.max_step))
+        scale = 1.0 + d_eps
+        cell = atoms.get_cell()
+        frac = atoms.get_scaled_positions(wrap=True)
+        vel = atoms.get_velocities()
+        atoms.set_cell(cell * scale, scale_atoms=False)
+        atoms.set_scaled_positions(frac)
+        # Berendsen 1984: velocities must be rescaled by 1/mu as well,
+        # otherwise every cell step pumps/removes kinetic energy and the
+        # thermostat fights the barostat -> a permanent pressure offset.
+        if vel is not None:
+            atoms.set_velocities(vel / scale)
         self.steps += 1
