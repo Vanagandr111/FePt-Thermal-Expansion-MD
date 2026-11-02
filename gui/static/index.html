@@ -2945,7 +2945,10 @@ let CAL_MODE = 'raw';
 let LAST_RESULT = null;
 
 function calK(cte, key) {
-  const c = (cte || []).find(z => String(z.x_Pt) === String(key));
+  // x_Pt arrives as a number (0.0) while series keys are strings ("0.0"),
+  // so compare numerically as well
+  const c = (cte || []).find(z =>
+    String(z.x_Pt) === String(key) || Number(z.x_Pt) === Number(key));
   if (!c) return null;
   const a300 = +c.a300_raw, aexp = +c.a_exp300;
   return (a300 > 0 && aexp > 0) ? aexp / a300 : null;
