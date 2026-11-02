@@ -93,8 +93,11 @@ def test_cu_production_pressure_within_1p5_kbar(tmp_path):
     if not os.path.exists(model):
         pytest.skip('small MACE model not present')
 
+    # CPU by default: the acceptance test must run even when the GPU is busy
+    # with a real calculation (CUDA OOM made this test flaky).
+    dev = os.environ.get('FEPT_TEST_DEVICE', 'cpu')
     calc = rmm.FastMACECalculator(
-        model_paths=[model], device='cuda', default_dtype='float32',
+        model_paths=[model], device=dev, default_dtype='float32',
         compile_mode=None, precision='fp32', use_bf16=False)
     res = rmm.run_point(
         calc, comp=0.0, T=300, eq_steps=400, prod_steps=600,
