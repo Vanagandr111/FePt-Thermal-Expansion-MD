@@ -2117,7 +2117,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.9'
+APP_VERSION = '2.2.10'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2325,12 +2325,18 @@ def build_update_bat(self_pid, new_exe, cur_exe):
         'start "" "%(cur)s"\r\n'
         'echo relaunched %%TIME%% >> "%(report)s"\r\n'
         'ping -n 12 127.0.0.1 >nul\r\n'
-        'start "" "%(cur)s"\r\n'
-        'echo watchdog-relaunch %%TIME%% >> "%(report)s"\r\n'
+        'netstat -ano | findstr /c:":%(port)s " | findstr LISTENING >nul\r\n'
+        'if errorlevel 1 (\r\n'
+        '  start "" "%(cur)s"\r\n'
+        '  echo watchdog-relaunch %%TIME%% >> "%(report)s"\r\n'
+        ') else (\r\n'
+        '  echo watchdog-ok %%TIME%% >> "%(report)s"\r\n'
+        ')\r\n'
         'del "%%~f0"\r\n'
     ) % {'pid': int(self_pid), 'new': new_exe, 'cur': cur_exe,
          'curdir': os.path.dirname(os.path.abspath(cur_exe)),
          'report': report, 'ver': APP_VERSION,
+         'port': int(os.environ.get('FEPT_PORT') or 8321),
          'ts': time.strftime('%F %T')}
 
 

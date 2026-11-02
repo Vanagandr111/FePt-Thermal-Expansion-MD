@@ -50,6 +50,13 @@ def test_sh_unsets_pyi():
     assert 'unset _PYI_APPLICATION_HOME_DIR' in src
 
 
+def test_bat_watchdog_checks_port():
+    src = io.open(os.path.join(ROOT, 'gui', 'server.py'), encoding='utf-8').read()
+    assert 'findstr /c:":%(port)s "' in src
+    assert 'watchdog-ok' in src
+    assert "'port': int(os.environ.get('FEPT_PORT') or 8321)" in src
+
+
 def test_popen_uses_clean_env():
     src = io.open(os.path.join(ROOT, 'gui', 'server.py'), encoding='utf-8').read()
     assert 'env=clean_update_env()' in src
