@@ -97,9 +97,9 @@ def test_cu_production_pressure_within_1p5_kbar(tmp_path):
         model_paths=[model], device='cuda', default_dtype='float32',
         compile_mode=None, precision='fp32', use_bf16=False)
     res = rmm.run_point(
-        calc, comp=0.0, T=300, eq_steps=600, prod_steps=400,
-        thermo_interval=50, seed=42, grid=2, nx=2, ny=2, nz=2,
-        kind='a1', system='cu', pre_eq_steps=2000, timestep_fs=1.0)
+        calc, comp=0.0, T=300, eq_steps=400, prod_steps=600,
+        thermo_interval=20, seed=42, grid=2, nx=2, ny=2, nz=2,
+        kind='a1', system='cu', pre_eq_steps=4000, timestep_fs=1.0)
 
     p_mean = abs(float(res['mean_press']))
     assert p_mean <= 1500.0, 'production pressure %.0f bar exceeds +-1.5 kbar' % p_mean
