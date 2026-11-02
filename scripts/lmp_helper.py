@@ -307,7 +307,7 @@ SEED_C_OVER_A = None
 
 def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
                   kind=None, c_over_a=None, a_ang=None, b_ang=None,
-                  c_ang=None):
+                  c_ang=None, system='fept'):
     """Generate structure via gen_structure.py.
 
     force=True = regenerate even if it exists. lc = explicit seed lattice
@@ -329,8 +329,10 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
     if any(v not in (None, 0, 0.0) for v in (a_ang, b_ang, c_ang)):
         ax_tag = '_a{:.3f}b{:.3f}c{:.3f}'.format(
             float(a_ang or 0), float(b_ang or 0), float(c_ang or 0))
-    outfile = os.path.join(DATA_DIR, 'data.fept_{}_c{:.2f}_{}x{}x{}{}.lmp'
-                           .format(kind, comp, nx, ny, nz, ax_tag))
+    # a Cu cell must never be served from the Fe-Pt cache (and vice versa)
+    prefix = 'data.cu' if system == 'cu' else 'data.fept'
+    outfile = os.path.join(DATA_DIR, '{}_{}_c{:.2f}_{}x{}x{}{}.lmp'
+                           .format(prefix, kind, comp, nx, ny, nz, ax_tag))
     if os.path.exists(outfile):
         if not force:
             return outfile
@@ -343,6 +345,7 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
     cmd += ['--kind', str(kind)]
     if c_over_a is not None:
         cmd += ['--c-over-a', str(c_over_a)]
+    cmd += ['--system', str(system)]
     for _flag, _val in (('--a-ang', a_ang), ('--b-ang', b_ang),
                         ('--c-ang', c_ang)):
         if _val not in (None, 0, 0.0):

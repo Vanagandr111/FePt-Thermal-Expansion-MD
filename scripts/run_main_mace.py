@@ -324,7 +324,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
               md_log=None, nx=None, ny=None, nz=None, kind='a1',
               pre_eq_steps=4000, a_ang=None, b_ang=None, c_ang=None,
-              aniso=False):
+              aniso=False, system='fept'):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
@@ -348,7 +348,7 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     nz = int(nz or grid)
     datafile = lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz,
                                  a_ang=a_ang, b_ang=b_ang, c_ang=c_ang,
-                                 force=prepare, kind=kind)
+                                 force=prepare, kind=kind, system=system)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
 
@@ -876,7 +876,8 @@ def _mp_worker(tasks, out_queue, model, device, compile_mode, precision,
                     seed=base_seed, grid=max(nx, ny, nz), prepare=False,
                     md_log=md_log, nx=nx, ny=ny, nz=nz, kind=cell_kind,
                     pre_eq_steps=pre_eq_steps,
-                    a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso)
+                    a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso,
+                    system=system)
                 break
             except Exception as e:               # noqa: BLE001
                 if not rescue_or_raise(e, compile_mode):
@@ -929,6 +930,8 @@ def main():
                     help='anisotropic barostat: relax the cell SHAPE too '
                          '(per-axis stress), so c/a of L1_0 and alpha along '
                          'x/y/z become meaningful; default is isotropic MTK')
+    ap.add_argument('--system', default='fept', choices=('fept', 'cu'),
+                    help='fept = Fe-Pt binary (default), cu = pure copper')
     ap.add_argument('--lc', type=float, default=None,
                     help='seed lattice constant in Angstrom; default: '
                          'LC_TABLE by system (pt=experimental fcc 3.9242 A, '
@@ -990,6 +993,9 @@ def main():
     b_ang = getattr(args, 'b_ang', None)
     c_ang = getattr(args, 'c_ang', None)
     aniso = bool(getattr(args, 'aniso', False))
+    system = getattr(args, 'system', 'fept') or 'fept'
+    if system != 'fept':
+        print('[gui] system: {} (single-element cell)'.format(system), flush=True)
     if aniso:
         print('[gui] anisotropic barostat requested: cell shape will relax '
               '(a, b, c free)', flush=True)
@@ -1100,7 +1106,8 @@ def main():
                         seed=seed, grid=grid, md_log=md_log,
                         nx=nx, ny=ny, nz=nz, kind=cell_kind,
                         pre_eq_steps=pre_eq,
-                        a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso)
+                        a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso,
+                        system=system)
                     break
                 except Exception as e:           # noqa: BLE001
                     if not rescue_or_raise(e, compile_mode):
@@ -1119,7 +1126,7 @@ def main():
         for comp in {c for c, _ in tasks}:
             lmp.gen_structure(comp, nx=nx, ny=ny, nz=nz, force=True,
                               kind=cell_kind, a_ang=a_ang, b_ang=b_ang,
-                              c_ang=c_ang)
+                              c_ang=c_ang, system=system)
         from multiprocessing import get_context
         ctx = get_context('spawn')
         q = ctx.Queue()

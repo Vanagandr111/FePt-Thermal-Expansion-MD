@@ -321,6 +321,8 @@ FORM = {
     'a_ang': 0.0, 'b_ang': 0.0, 'c_ang': 0.0,
     # 1 = anisotropic barostat (per-axis stress -> alpha_x/y/z, c/a of L1_0)
     'aniso': 0,
+    # simulation system: 'fept' = Fe-Pt binary (default), 'cu' = pure copper
+    'system': 'fept',
 }
 _PY_MISS_LOGGED = False
 _PY_PICK_LOGGED = False
@@ -806,7 +808,7 @@ FORM_KEYS = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
              'seed', 'elem_a', 'elem_b',
              # cell shape: kind of lattice + per-axis replication
              'cell_kind', 'nx', 'ny', 'nz',
-             'a_ang', 'b_ang', 'c_ang', 'aniso')
+             'a_ang', 'b_ang', 'c_ang', 'aniso', 'system')
 
 
 def build_estimate(form):
@@ -1849,6 +1851,14 @@ def start_run(params):
                              'параметр решётки в ангстремах или 0 (авто)'
                              .format(_k, _v)}
         axes[_k] = _v
+    system = str(merged.get('system') or 'fept').lower()
+    if system not in ('fept', 'cu'):
+        return {'ok': False, 'error': 'неизвестная система {!r}: '
+                                      'ожидается fept или cu'.format(system)}
+    if system == 'cu':
+        # single-element metal: no composition axis, no ordering
+        comp = 0.0
+        cell_kind = 'a1'
     aniso = bool(int(merged.get('aniso') or 0))
     eq = int(merged.get('eq', 500))
     prod = int(merged.get('prod', 1000))
@@ -1901,7 +1911,7 @@ def start_run(params):
                 '--comps', str(comp), '--temps'] + [str(t) for t in temps] + \
                ['--grid', str(max(nx, ny, nz)),
                 '--nx', str(nx), '--ny', str(ny), '--nz', str(nz),
-                '--kind', cell_kind,
+                '--kind', cell_kind, '--system', system,
                 '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
         for _k in ('a_ang', 'b_ang', 'c_ang'):
@@ -1928,9 +1938,9 @@ def start_run(params):
     if any(axes.values()):
         _ax = ' a={:g} b={:g} c={:g} A'.format(
             axes['a_ang'], axes['b_ang'], axes['c_ang'])
-    log('[{}] === start {} mode | comp={} cell={} {}x{}x{}{} '
+    log('[{}] === start {} mode | system={} comp={} cell={} {}x{}x{}{} '
         'barostat={} eq={} prod={} T={}'
-        .format(src, mode, comp, cell_kind, nx, ny, nz, _ax,
+        .format(src, mode, system, comp, cell_kind, nx, ny, nz, _ax,
                 'aniso' if aniso else 'iso', eq, prod, temps))
     log('[gui] out: ' + outdir)
     try:
@@ -2117,7 +2127,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.2.10'
+APP_VERSION = '2.2.11'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.

@@ -56,7 +56,13 @@ LC_TABLE = {
     # tetragonal distortion driven by the Fe-Pt layer ordering).
     'l10_a': 3.85,
     'l10_c': 3.717,
+    # pure copper, experimental fcc 3.615 A at 293 K (sanity-check system:
+    # a single element with no ordering and no composition axis)
+    'cu': 3.615,
 }
+
+SYSTEMS = ('fept', 'cu')
+SYSTEM_ELEMENTS = {'fept': ('Fe', 'Pt'), 'cu': ('Cu',)}
 
 KINDS = ('a1', 'l10', 'l12')
 
@@ -158,7 +164,7 @@ def _l12_types(natoms_total, comp_pt):
 # errors: ValueError on unknown kind / L1_0 with x_Pt != 0.5
 def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
                        kind='a1', c_over_a=None, a_ang=None, b_ang=None,
-                       c_ang=None):
+                       c_ang=None, system='fept'):
     """Generate a supercell data file.
 
     Parameters
@@ -195,7 +201,21 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
     nx, ny, nz = int(nx), int(ny), int(nz)
     if min(nx, ny, nz) < 1:
         raise ValueError('nx, ny, nz must be >= 1')
+    system = (system or 'fept').lower()
+    if system not in SYSTEMS:
+        raise ValueError('unknown system {!r} (expected one of {})'
+                         .format(system, ', '.join(SYSTEMS)))
     comp_pt = float(comp_pt)
+    if system == 'cu':
+        # single-element metal: no ordering, no composition axis
+        if kind not in (None, 'a1'):
+            raise ValueError(
+                'система Cu — однокомпонентная: доступен только A1, '
+                'а запрошено {}'.format(kind))
+        kind = 'a1'
+        comp_pt = 0.0
+        if lc_override is None:
+            lc_override = LC_TABLE['cu']
     if kind == 'l10' and abs(comp_pt - 0.5) > 1e-6:
         raise ValueError(
             'L1_0 (упорядоченная CuAu-I) существует только при x_Pt = 0.5, '
@@ -225,7 +245,9 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
           .format(kind, a, b, c, lc_note))
     natoms_total = 4 * nx * ny * nz
 
-    if kind == 'l10':
+    if system == 'cu':
+        types, n_fe, n_pt = [1] * natoms_total, 0, 0
+    elif kind == 'l10':
         types, n_fe, n_pt = _l10_types(natoms_total)
     elif kind == 'l12':
         types, n_fe, n_pt = _l12_types(natoms_total, comp_pt)
@@ -257,11 +279,16 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
 
     with open(outfile, 'w') as f:
         label = {'l10': 'L1_0', 'l12': 'L1_2'}.get(kind, 'fcc(A1)')
+        # element list goes on the SECOND line: the first line stays the
+        # free-form description it has always been (older tests/tools read it)
         f.write("Fe-Pt {} solid solution, comp_Pt={:.2f}, "
-                "a={:.4f}, b={:.4f}, c={:.4f}, box={:.3f}x{:.3f}x{:.3f}\n\n"
+                "a={:.4f}, b={:.4f}, c={:.4f}, box={:.3f}x{:.3f}x{:.3f}\n"
                 .format(label, comp_pt, a, b, c, lx, ly, lz))
+        f.write("elements: {}{}\n\n"
+                .format(' '.join(SYSTEM_ELEMENTS[system]),
+                        ' (pure metal)' if len(SYSTEM_ELEMENTS[system]) == 1 else ''))
         f.write("{} atoms\n".format(natoms_total))
-        f.write("2 atom types\n\n")
+        f.write("{} atom types\n\n".format(len(SYSTEM_ELEMENTS[system])))
         f.write("0.0 {:.6f} xlo xhi\n".format(lx))
         f.write("0.0 {:.6f} ylo yhi\n".format(ly))
         f.write("0.0 {:.6f} zlo zhi\n\n".format(lz))
@@ -269,6 +296,10 @@ def generate_structure(nx, ny, nz, comp_pt, outfile, lc_override=None,
         for (aid_, x, y, z), tp in zip(atoms, types):
             f.write("{} {} {:.6f} {:.6f} {:.6f}\n".format(aid_, tp, x, y, z))
 
+    if system == 'cu':
+        print("Wrote {} atoms (pure Cu) box {:.3f}x{:.3f}x{:.3f} -> {}"
+              .format(natoms_total, lx, ly, lz, outfile))
+        return outfile
     print("Wrote {} atoms (xFe={}, xPt={}) box {:.3f}x{:.3f}x{:.3f} -> {}"
           .format(natoms_total, n_fe, n_pt, lx, ly, lz, outfile))
     return outfile
@@ -290,6 +321,8 @@ def main(argv=None):
                          '(x_Pt=0.25 Fe3Pt / 0.75 FePt3)')
     ap.add_argument('--c-over-a', type=float, default=None,
                     help='L1_0 tetragonal ratio c/a (default 0.966)')
+    ap.add_argument('--system', default='fept', choices=SYSTEMS,
+                    help='fept = Fe-Pt binary (default), cu = pure copper')
     for _ax in ('a', 'b', 'c'):
         ap.add_argument('--' + _ax + '-ang', type=float, default=None,
                         help='explicit lattice constant %s in Angstrom '
@@ -300,7 +333,7 @@ def main(argv=None):
                            lc_override=args.lc, kind=args.kind,
                            a_ang=args.a_ang, b_ang=args.b_ang,
                            c_ang=args.c_ang,
-                           c_over_a=args.c_over_a)
+                           c_over_a=args.c_over_a, system=args.system)
     except ValueError as e:
         print('error: {}'.format(e), file=sys.stderr)
         return 2

@@ -577,7 +577,13 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
         </div>
       </div>
       <div>
-        <label>Вид ячейки</label>
+        <label>Система</label>
+        <select id="system" onchange="systemChanged()"
+                title="Fe–Pt — бинарный сплав (Fe/Pt, композиция и упорядочение); Cu — чистая медь, один элемент, только A1">
+          <option value="fept">Fe–Pt (сплав)</option>
+          <option value="cu">Cu (чистая медь)</option>
+        </select>
+        <label style="margin-top:8px">Вид ячейки</label>
         <select id="cell_kind" onchange="cellKindChanged()"
                 title="A1 — случайный fcc-раствор; L1₀ — слои Fe/Pt (CuAu-I), x(Pt)=0.5; L1₂ — Cu3Au, x(Pt)=0.25 (Fe₃Pt) или 0.75 (FePt₃)">
           <option value="a1">A1 — fcc случайный раствор</option>
@@ -1169,6 +1175,28 @@ function updateCompCalc() {
 }
 function setComp(v) { $('comp').value = v; compOut(); }
 let lastCellMax = 0;          // from /api/estimate: atoms that fit the card
+function currentSystem() {
+  const el = $('system');
+  return (el && el.value) || 'fept';
+}
+function systemChanged() {    // Cu = one element: no composition, no ordering
+  const cu = currentSystem() === 'cu';
+  const kindEl = $('cell_kind'), compEl = $('comp');
+  if (kindEl) {
+    kindEl.disabled = cu;
+    if (cu) kindEl.value = 'a1';
+  }
+  if (compEl) {
+    compEl.disabled = cu;
+    if (cu) { compEl.value = 0; compOut(); }
+  }
+  const l10 = document.querySelector('option[value="l10"]');
+  const l12 = document.querySelector('option[value="l12"]');
+  if (l10) l10.disabled = cu;
+  if (l12) l12.disabled = cu;
+  atomCount();
+  if (typeof cellKindChanged === 'function') cellKindChanged();
+}
 function cellDims() {         // one source of truth for the cell shape
   const cl = (v, d) => Math.min(12, Math.max(1, Math.round(+v) || d));
   const kindEl = $('cell_kind');
@@ -1271,6 +1299,10 @@ function pulse(el) {
   setTimeout(() => el.classList.remove('pulse'), 2400);
 }
 function applyState(st) {
+  if ($('system')) {
+    $('system').value = (s && s.system) || 'fept';
+    systemChanged();
+  }
   /* Server-side form (possibly edited by the agent via MCP) -> visible UI */
   const f = st && st.form;
   if (!f) return;
@@ -1574,6 +1606,7 @@ function collectForm() {
   return {
     mode: $('mode').value,
     comp: +$('comp').value,
+    system: currentSystem(),
     cell_kind: $('cell_kind') ? $('cell_kind').value : 'a1',
     nx: +$('nx').value || 4,
     ny: +$('ny').value || 4,

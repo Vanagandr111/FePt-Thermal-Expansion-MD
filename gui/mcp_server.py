@@ -86,6 +86,9 @@ TOOLS = [
                 'aniso': {'type': 'integer', 'enum': [0, 1],
                           'description': '1 = anisotropic barostat: relax the '
                                          'cell shape too (alpha_x/y/z, c/a)'},
+                'system': {'type': 'string', 'enum': ['fept', 'cu'],
+                           'description': 'fept = Fe-Pt binary, cu = pure '
+                                          'copper cell'},       
                 'temps': {'type': 'string',
                           'description': 'space-separated temperatures'},
                 'eq': {'type': 'integer'},
@@ -143,6 +146,9 @@ TOOLS = [
                 'aniso': {'type': 'integer', 'enum': [0, 1],
                           'description': '1 = anisotropic barostat: relax the '
                                          'cell shape too (alpha_x/y/z, c/a)'},
+                'system': {'type': 'string', 'enum': ['fept', 'cu'],
+                           'description': 'fept = Fe-Pt binary, cu = pure '
+                                          'copper cell'},       
                 'temps': {'type': 'string'},
                 'eq': {'type': 'integer'},
                 'prod': {'type': 'integer'},
@@ -352,7 +358,7 @@ def require_gui():
 def form_keys(args):
     keys = ('mode', 'model', 'device', 'precision', 'comp', 'grid', 'temps',
             'eq', 'prod', 'seed', 'cell_kind', 'nx', 'ny', 'nz',
-            'a_ang', 'b_ang', 'c_ang', 'aniso')
+            'a_ang', 'b_ang', 'c_ang', 'aniso', 'system')
     return {k: args[k] for k in keys if k in args and args[k] is not None}
 
 

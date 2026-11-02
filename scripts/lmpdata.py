@@ -20,9 +20,10 @@ Format written by gen_structure.py / lmp_helper.gen_structure:
 """
 import os
 
-# LAMMPS type id -> chemical symbol (Fe/Pt binary, project convention)
+# LAMMPS type id -> chemical symbol: legacy Fe/Pt convention, used only
+# when the data file carries no explicit `elements:` header line.
 TYPE_SYMBOLS = {1: 'Fe', 2: 'Pt'}
-SYMBOL_Z = {'Fe': 26, 'Pt': 78}
+SYMBOL_Z = {'Fe': 26, 'Pt': 78, 'Cu': 29}
 
 
 class DataFileError(ValueError):
@@ -52,10 +53,14 @@ def parse_data(path):
     natoms = None
     box = [None] * 6
     atom_rows = []
+    elements = None
     i = 0
     while i < len(lines):
         ln = lines[i]
-        if ln.endswith('atoms'):
+        if ln.startswith('elements:'):
+            # written by gen_structure.py: `elements: Cu` or `elements: Fe Pt`
+            elements = ln.split(':', 1)[1].split()
+        elif ln.endswith('atoms'):
             natoms = int(ln.split()[0])
         elif ln.endswith('xlo xhi'):
             box[0], box[1] = map(float, ln.split()[:2])
@@ -81,16 +86,20 @@ def parse_data(path):
 
     atom_rows.sort(key=lambda r: r[0])
     types = [r[1] for r in atom_rows]
-    unknown = sorted({t for t in types if t not in TYPE_SYMBOLS})
+    tmap = (dict((k + 1, s) for k, s in enumerate(elements))
+            if elements else TYPE_SYMBOLS)
+    unknown = sorted({t for t in types if t not in tmap})
     if unknown:
         raise DataFileError('unknown atom type(s) {} in {}'.format(
             unknown, path))
-    symbols = [TYPE_SYMBOLS[t] for t in types]
+    symbols = [tmap[t] for t in types]
     positions = [[r[2], r[3], r[4]] for r in atom_rows]
     lx = box[1] - box[0]
     ly = box[3] - box[2]
     lz = box[5] - box[4]
-    counts = {'Fe': symbols.count('Fe'), 'Pt': symbols.count('Pt')}
+    counts = dict((s, symbols.count(s)) for s in sorted(set(symbols)))
+    counts.setdefault('Fe', 0)
+    counts.setdefault('Pt', 0)
     return {
         'natoms': natoms,
         'box': [[box[0], box[1]], [box[2], box[3]], [box[4], box[5]]],
