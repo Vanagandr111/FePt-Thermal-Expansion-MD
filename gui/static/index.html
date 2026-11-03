@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231b2b3a'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2359a6d8'/%3E%3C/svg%3E">
 <meta charset="utf-8">
 <title>FePt Thermal Expansion — GUI</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -305,11 +306,12 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 .hints-head { display:flex; gap:6px; align-items:baseline;
   margin-bottom:4px; flex-wrap:wrap; }
 .hints-head b { font-size:12px; }
-.hints-track { display:flex; gap:4px; overflow:hidden; padding-bottom:1px;
-  transition:transform .3s ease; min-width:0; max-width:100%; }
-.hint-card { flex:0 0 132px; border:1px solid #3f4658; border-radius:5px;
-  background:#1a1f2b; padding:4px 5px; cursor:pointer;
-  transition:border-color .2s, transform .2s; }
+.hints-track { display:flex; flex-direction:column; gap:3px;
+  overflow-y:auto; max-height:230px; padding:1px 3px 1px 1px;
+  min-width:0; max-width:100%; }
+.hint-card { flex:0 0 auto; width:100%; border:1px solid #3f4658;
+  border-radius:5px; background:#1a1f2b; padding:3px 6px; cursor:pointer;
+  transition:border-color .2s; box-sizing:border-box; }
 .hints-track .hint-card { min-width:0; }
 .hint-card:hover { border-color:#7db4ff; transform:translateY(-1px); }
 .hint-card .ht-t { font-weight:600; font-size:10.5px; color:#e6ebf5;
@@ -387,6 +389,27 @@ button.lamp-r { color:#ff7a7a !important; animation:lampr .8s ease-in-out infini
 .fnum{font-size:16px;color:#e8f3ff;font-variant-numeric:tabular-nums}
 .fsub{font-size:11px;color:#7d93a8;margin-top:2px}
 canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;border-radius:6px;margin:3px 0 8px}
+/* narrow screens: cards stack instead of squeezing the right column out */
+.row{flex-wrap:wrap}
+@media (max-width:1500px){
+  .row > div{flex:1 1 220px;min-width:0}
+}
+@media (max-width:1100px){
+  main .card{padding:8px}
+  .row > div{flex:1 1 100%}
+  .hints-track{max-height:200px}
+  .cellrow input{min-width:0}
+}
+.qchip{display:inline-flex;align-items:center;gap:5px;margin-left:6px;
+  padding:2px 7px;border:1px solid #2c4358;border-radius:11px;
+  background:#16232f;color:#cfe2f2;font-size:11px}
+.qchip .queue-x{cursor:pointer;color:#8fb6d6;font-weight:600}
+.qchip .queue-x:hover{color:#f87171}
+.boxkind{margin-top:6px;border:1px solid #24384a;border-radius:6px;padding:4px 8px;background:#0f1a24}
+.boxkind summary{cursor:pointer;color:#8fb6d6;font-size:11px;padding:2px 0}
+.boxkind-grid{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.boxkind-grid button{padding:4px 8px;font-size:11px;border:1px solid #2c4358;border-radius:4px;background:#16232f;color:#cfe2f2;cursor:pointer}
+.boxkind-grid button:hover{background:#22374a}
 .q{display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center;border-radius:50%;background:#1d2b38;color:#8fb6d6;font:10px/1 sans-serif;cursor:help;margin-left:5px;position:relative;border:1px solid #2c4358;vertical-align:middle}
 .q:hover{background:#26405a;color:#fff}
 .q::after{content:attr(data-tip);position:absolute;left:-4px;top:20px;z-index:60;width:270px;padding:8px 10px;background:#0e1a24;border:1px solid #2c4358;border-radius:6px;color:#d5e3ef;font:11px/1.45 sans-serif;white-space:normal;text-align:left;opacity:0;pointer-events:none;transition:opacity .12s;box-shadow:0 6px 18px rgba(0,0,0,.55)}
@@ -509,7 +532,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
   <button id="tab-res" onclick="tab('res')">Результаты</button>
   <button id="tab-prof" onclick="tab('prof')">Диагностика</button>
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
-  <button id="tab-trace" onclick="tab('trace')">Прозрачность</button>
+  <button id="tab-trace" onclick="tab('trace')">Методика расчёта</button>
   <button id="tab-journal" onclick="tab('journal')">Журнал расчёта</button>
   <button id="tab-about" onclick="tab('about')">О программе</button>
   <label class="ctoggle" id="compact-wrap"
@@ -540,7 +563,17 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
         <button class="ghost tiny" style="margin-top:5px"
                 onclick="openPotModal()">＋ Добавить потенциал</button>
       </div>
-      <div id="wrap-device" style="flex:1;min-width:150px">
+      <div id="ckptmodal" style="display:none;position:fixed;inset:0;z-index:80;background:rgba(6,10,14,.72);align-items:center;justify-content:center">
+  <div style="background:#111a22;border:1px solid #2c4358;border-radius:10px;padding:14px;max-width:620px;width:92%;max-height:76vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:13px">Автосохранения расчёта</b>
+      <button class="ghost tiny" onclick="document.getElementById('ckptmodal').style.display='none'">Закрыть</button>
+    </div>
+    <div class="hint" style="margin-bottom:8px">Пишутся каждые 200 шагов в фоновом потоке, хранится 5 последних. Выбор восстанавливает параметры в форме и переключает кнопку на «Продолжить».</div>
+    <div id="ckptlist" style="display:flex;flex-direction:column;gap:5px"></div>
+  </div>
+</div>
+<div id="wrap-device" style="flex:1;min-width:150px">
         <label>Устройство</label>
         <select id="device">
           <option value="cuda">CUDA GPU</option>
@@ -608,8 +641,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
           <div class="hints-track" id="hints-track"
                title="колесо мыши — листать подсказки"></div>
           <input id="hints-slider" type="range" min="0" max="0" value="0"
-                 step="1" style="width:100%;margin-top:4px"
-                 title="ползунок: листать подсказки"
+                 step="1" style="display:none"
                  oninput="hintGo(+this.value)">
         </div>
       </div>
@@ -631,26 +663,38 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
           <span id="atomcount"></span></label>
         <div class="cellrow">
           <input id="nx" type="number" min="1" max="12" value="4"
-                 title="повторы по x" oninput="atomCount()">
+                 placeholder="nx · x" title="повторы по x" oninput="atomCount()">
           <input id="ny" type="number" min="1" max="12" value="4"
-                 title="повторы по y" oninput="atomCount()">
+                 placeholder="ny · y" title="повторы по y" oninput="atomCount()">
           <input id="nz" type="number" min="1" max="12" value="4"
-                 title="повторы по z" oninput="atomCount()">
+                 placeholder="nz · z" title="повторы по z" oninput="atomCount()">
         </div>
         <div class="cellrow" style="margin-top:4px">
           <input id="natomsin" type="number" min="4" step="4"
                  title="Целевое число атомов — подберём ближайшую кубическую сетку"
                  oninput="atomsEdited()" placeholder="атомов">
         </div>
-        <label style="margin-top:8px">Параметры решётки a / b / c, Å
+        <details class="boxkind" id="boxkind">
+          <summary>Тип бокса — выбрать готовый</summary>
+          <div class="boxkind-grid">
+            <button type="button" onclick="setBoxKind('cube')">Кубический</button>
+            <button type="button" onclick="setBoxKind('ortho')">Орторомбический</button>
+            <button type="button" onclick="setBoxKind('film')">Плёнка (z = 1)</button>
+            <button type="button" onclick="setBoxKind('column')">Столбик (x = y)</button>
+          </div>
+          <div class="hint">Числа сетки подставятся сами; после этого их можно
+            править вручную — бокс останется тем, что записан в полях.</div>
+        </details>
+        <label style="margin-top:8px">Параметры решётки, Å
           <span class="hint" style="font-weight:400">(0 — авто по составу)</span>
+          <span class="q" data-tip="Три поля идут в порядке a, b, c — это длины рёбер элементарной ячейки по осям x, y, z. Ноль означает «взять из справочника по составу». Если a ≠ b ≠ c, ячейка орторомбическая; при a = b = c — кубическая. Эти же числа задают стартовый объём, из которого баростат выходит на нулевое давление.">?</span>
         </label>
         <div class="cellrow">
           <input id="a_ang" type="number" min="0" max="12" step="0.001"
-                 value="0" title="явный параметр a в ангстремах (0 = авто)"
+                 value="0" placeholder="a, Å" title="явный параметр a в ангстремах (0 = авто)"
                  oninput="cellAxesChanged()">
           <input id="b_ang" type="number" min="0" max="12" step="0.001"
-                 value="0" title="явный параметр b в ангстремах (0 = как a)"
+                 value="0" placeholder="b, Å" title="явный параметр b в ангстремах (0 = как a)"
                  oninput="cellAxesChanged()">
           <input id="c_ang" type="number" min="0" max="12" step="0.001"
                  value="0" title="явный параметр c в ангстремах (0 = как a, для L1₀ — c/a)"
@@ -660,6 +704,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
                title="Анизотропный баростат: релаксирует не только объём, но и форму ячейки — появляются α по осям и c/a у L1₀">
           <input type="checkbox" id="aniso" onchange="cellAxesChanged()">
           <span class="ctr"></span><span class="clbl">анизотропный баростат (α по осям, c/a)</span>
+          <span class="q" data-tip="Выключен — баростат меняет только объём, ячейка остаётся кубической: получается один коэффициент расширения α. Включён — разрешается менять три ребра независимо, поэтому появляются α по осям и отношение c/a (важно для L1₀ и для проверки, что решётка действительно тетрагональная, а не «в среднем кубическая»). Включайте, когда нужны α_x/α_y/α_z; для кубических металлов разницы почти нет.">?</span>
         </label>
         <div id="cellaxes" style="font-size:12px;color:var(--dim)"></div>
         <div id="cellhint"></div>
@@ -677,14 +722,21 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
         <input id="prod" type="number" value="1000">
       </div>
       <div>
-        <label>RNG seed (инициализация NPT)</label>
+        <label>RNG seed (инициализация NPT)
+          <span class="q" data-tip="Сид задаёт начальные скорости и броуновские толчки термостата. Фиксированный — повторяет траекторию байт в байт, удобно сравнивать правки. Случайный — каждому расчёту в серии (в том числе внутри среднего по N расчётам) выдаётся свой сид; все выданные сиды пишутся в журнал и в паспорт результата, поэтому видно, что они действительно разные.">?</span>
+        </label>
+        <select id="seed_mode" onchange="seedModeChanged()">
+          <option value="fixed">Фиксированный</option>
+          <option value="random">Случайный для каждого расчёта</option>
+        </select>
         <input id="seed" type="number" value="42">
-        <div class="hint">Одинаковый seed воспроизводит одну и ту же
+        <div class="hint" id="seedhint">Одинаковый seed воспроизводит одну и ту же
           траекторию — удобно для сравнения правок.</div>
       </div>
     </div>
     <div class="row" style="margin-top:14px;align-items:center">
       <button class="act" id="btn-start" onclick="startRun()">▶ Запустить</button>
+      <button class="ghost" onclick="ckptOpen()">↺ Загрузить checkpoint</button>
       <span class="hint" style="margin:0">расчётов для среднего:</span>
       <input id="runs-count" type="number" min="1" max="20" value="3"
              style="width:56px" title="Сколько независимых расчётов
@@ -1076,14 +1128,14 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
       в potentials/gpu/. <b>torch.compile по умолчанию выключен</b> в GUI
       (на части ПК антивирус резал ptxas с WinError 5); на машинах, где
       он работает, включается переменной окружения
-      <code>FEPT_COMPILE=1</code> — тогда движок сам проверит компилятор
+      <code>FEPT_COMPILE=1</code> — тогда расчётное ядро сам проверит компилятор
       до старта и при блоке всё равно продолжит без него.<br>
       • <b>MCP</b> (для ИИ-агентов): сервер JSON-RPC на
       http://127.0.0.1:8321 (клиент fept_gui) — инструменты
       gui_set_form, gui_start_run, gui_status, gui_get_form,
       gui_calibrate, gui_list_potentials, gui_download_model и др.;
       переменная FEPT_GUI_URL перенаправляет адрес.<br>
-      • <b>CLI</b>: движком управляется и напрямую —
+      • <b>CLI</b>: расчётным ядром управляется и напрямую —
       <code>python scripts/run_main_mace.py --help</code> и
       <code>python scripts/run_main.py --help</code> (LAMMPS-режим);
       все расчёты пишут CSV/XLSX/графики/md_*.log в results_*/.<br>
@@ -1445,7 +1497,7 @@ function pulse(el) {
 }
 function applyState(st) {
   if ($('system')) {
-    $('system').value = (s && s.system) || 'fept';
+    $('system').value = (st && st.system) || 'fept';
     systemChanged();
   }
   /* Server-side form (possibly edited by the agent via MCP) -> visible UI */
@@ -1730,14 +1782,13 @@ async function refreshModels() {
       (REC_MODELS.indexOf(p.name) >= 0 ? '  ★ Рекомендованный' : '');
     sel.appendChild(o);
   });
-  // SevenNet: pip 'sevenn' in the engine venv, weights fetch themselves
-  [['7net-0', 'SevenNet-0 (7net-0, веса скачутся сами)'],
-   ['7net-omni-i12', 'SevenNet-Omni-i12 (новейшая, веса скачутся сами)'],
-   ['orb-v3', 'ORB v3 (Orbital, веса скачутся сами)']].forEach(pair => {
+  // SevenNet / ORB: only when the package is installed (server decides),
+  // otherwise they would be dead entries in a list of things to run
+  (r.extra || []).forEach(p => {
     const sn = document.createElement('option');
-    sn.value = pair[0];
-    sn.textContent = pair[0] + ' (' + pair[1] + ', веса скачутся сами)' +
-      (REC_MODELS.indexOf(pair[0]) >= 0 ? '  ★ Рекомендованный' : '');
+    sn.value = p.name;
+    sn.textContent = p.name + ' — ' + p.label +
+      ' (веса загрузятся при первом расчёте)';
     sel.appendChild(sn);
   });
   if (!sel.options.length) {
@@ -1769,6 +1820,7 @@ function collectForm() {
     device: $('device').value,
     precision: $('precision').value,
     seed: +$('seed').value || 42,
+    seed_mode: ($('seed_mode') || {}).value || 'fixed',
   };
 }
 function cellAxesChanged() {
@@ -1809,6 +1861,70 @@ async function postRun(extra) {
                                      : 'Ошибка: ' + j.error;
   setStartEnabled(!j.ok);
   return j;
+}
+async function ckptOpen() {
+  const box = $('ckptlist');
+  box.innerHTML = '<div class="hint">Читаю…</div>';
+  $('ckptmodal').style.display = 'flex';
+  try {
+    const r = await (await fetch('/api/checkpoints')).json();
+    box.innerHTML = '';
+    if (!r.items || !r.items.length) {
+      box.innerHTML = '<div class="hint">Чекпоинтов пока нет: они ' +
+        'появляются во время расчёта каждые 200 шагов.</div>';
+      return;
+    }
+    r.items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = 'ghost tiny';
+      b.style.textAlign = 'left';
+      b.textContent = it.name + '  ·  шаг ' + (it.step == null ? '?' : it.step) +
+        '  ·  T = ' + (it.T == null ? '?' : it.T) + ' K  ·  ' + it.mb + ' МБ';
+      b.onclick = () => ckptLoad(it.traj);
+      box.appendChild(b);
+    });
+  } catch (e) {
+    box.innerHTML = '<div class="hint">Не удалось получить список: ' + e + '</div>';
+  }
+}
+async function ckptLoad(traj) {
+  try {
+    const r = await (await fetch('/api/checkpoint_load', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({f: traj})})).json();
+    if (!r.ok) { consoleLine('[ckpt] ' + r.error); return; }
+    const m = r.meta || {};
+    applyState({form: {comp: m.comp, nx: m.nx, ny: m.ny, nz: m.nz,
+                       cell_kind: m.kind, temps: String(m.T), seed: m.seed}});
+    const btn = $('btn-start');
+    if (btn) btn.textContent = '⏵ Продолжить с шага ' + r.step;
+    $('ckptmodal').style.display = 'none';
+    consoleLine('[ckpt] загружен ' + traj + ' (шаг ' + r.step + ')');
+  } catch (e) { consoleLine('[ckpt] ошибка: ' + e); }
+}
+function seedModeChanged() {
+  const m = ($('seed_mode') || {}).value || 'fixed';
+  const inp = $('seed'), hint = $('seedhint');
+  if (!inp || !hint) return;
+  if (m === 'random') {
+    inp.disabled = true;
+    hint.textContent = 'Каждый расчёт серии получит свой сид; все выданные ' +
+      'сиды попадут в журнал и в паспорт результата.';
+  } else {
+    inp.disabled = false;
+    hint.textContent = 'Одинаковый seed воспроизводит одну и ту же ' +
+      'траекторию — удобно для сравнения правок.';
+  }
+}
+/* box presets: the numbers are a starting point, the fields stay editable */
+function setBoxKind(k) {
+  const n = {cube: [4, 4, 4], ortho: [3, 4, 4], film: [4, 4, 1],
+             column: [3, 3, 6]}[k];
+  if (!n) return;
+  ['nx', 'ny', 'nz'].forEach((id, i) => { if ($(id)) $(id).value = n[i]; });
+  atomCount();
+  const box = $('boxkind');
+  if (box) box.open = false;
 }
 function startRun() { return postRun({run_count: 1}); }
 function startRunMulti() {
@@ -3271,7 +3387,7 @@ async function loadDeps(refresh) {
        j.no_engine_python
            ? (j.python_system
                ? ('системный: ' + j.python_system + ' — venv создастся при установке')
-               : 'не найден - движку нужен Python 3.10…3.14')
+               : 'не найден - расчётному ядру нужен Python 3.10…3.14')
            : ('v' + (j.engine_python ? '' : j.python) +
               (j.engine_python || j.executable)), null);
   // link-install block only when NO python exists at all; a system
@@ -3291,26 +3407,26 @@ async function loadDeps(refresh) {
       '</span></div>';
   }
   h += depRow('numpy', 'numpy', L.numpy,
-       L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в движке',
+       L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('numpy')");
   h += depRow('openpyxl', 'openpyxl (экспорт в Excel)', L.openpyxl,
        L.openpyxl ? ('v' + (L.openpyxl_v || '?'))
                    : 'не найдено — кнопка «Excel» не заработает',
        "installLib('openpyxl')");
   h += depRow('scipy', 'scipy', L.scipy,
-       L.scipy ? ('v' + (L.scipy_v || '?')) : 'не найдено в движке',
+       L.scipy ? ('v' + (L.scipy_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('scipy')");
   h += depRow('pandas', 'pandas', L.pandas,
-       L.pandas ? ('v' + (L.pandas_v || '?')) : 'не найдено в движке',
+       L.pandas ? ('v' + (L.pandas_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('pandas')");
   h += depRow('psutil', 'psutil (нужен для калибровки)', L.psutil,
-       L.psutil ? ('v' + (L.psutil_v || '?')) : 'не найдено в движке',
+       L.psutil ? ('v' + (L.psutil_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('psutil')");
   h += depRow('mace', 'mace', L.mace,
        L.mace ? ('v' + (L.mace_v || '?') + ' (пакет mace-torch)')
-              : 'не найдено в движке', "installLib('mace')");
+              : 'не найдено в расчётном ядре', "installLib('mace')");
   h += depRow('ase', 'ase', L.ase,
-       L.ase ? ('v' + (L.ase_v || '?')) : 'не найдено в движке',
+       L.ase ? ('v' + (L.ase_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('ase')");
   const t = L.torch;
   const tOk = t.installed && !t.error;
@@ -3318,7 +3434,7 @@ async function loadDeps(refresh) {
        tOk ? ('v' + t.version + (t.cuda_available
              ? ' · CUDA ' + t.cuda + ' · ' + t.device
              : ' · ' + (t.cuda || 'CPU')))
-           : (t.error || 'не найдено в движке'),
+           : (t.error || 'не найдено в расчётном ядре'),
        "installLib('torch')", 'Установить (CUDA 12.8 + triton)');
   const tri = L.triton;
   h += depRow('triton', 'Triton (компилятор torch.compile)', !!tri,
@@ -3333,8 +3449,8 @@ async function loadDeps(refresh) {
        j.lammps.found ? 'dlLammpsFolder()' : 'dlLammps()',
        j.lammps.found ? '📁 Открыть папку' : 'Установить');
   if (L.probe_error)
-    h += '<div class="status">Ошибка пробы движка: ' + L.probe_error + '</div>';
-  h += '<div style="margin-top:8px" class="status">Интерпретатор движка: ' +
+    h += '<div class="status">Ошибка пробы расчётного ядра: ' + L.probe_error + '</div>';
+  h += '<div style="margin-top:8px" class="status">Интерпретатор расчётного ядра: ' +
        (j.engine_python || j.executable) +
        (j.engine_python_version
            ? ' <span class="pill ok">' + j.engine_python_version + '</span>'
@@ -3649,12 +3765,10 @@ async function pollQueue() {
         bar.classList.add('hidden');
       } else {
         bar.classList.remove('hidden');
-        bar.innerHTML = '<span class="dl-lbl" style="margin:0">⏳ В очереди: ' +
-          items.map((it, i) =>
-            (i + 1) + ') ' + it.name +
-            ' <b class="queue-x" data-qdel="' + it.name +
-            '" title="убрать из очереди">✕</b>').join(' · ') +
-          '</span>';
+        bar.innerHTML = '<span class="dl-lbl" style="margin:0">В очереди: </span>' +
+          items.map(it => '<span class="qchip">' + it.name +
+            '<b class="queue-x" data-qdel="' + it.name +
+            '" title="убрать из очереди">✕</b></span>').join('');
         bar.querySelectorAll('[data-qdel]').forEach(b =>
           b.addEventListener('click', () =>
             queueRemove(b.getAttribute('data-qdel'))));
@@ -4102,7 +4216,7 @@ bootPoll();
 </script>
 
 <script id="trace-js">
-/* ===================== Прозрачность: живые данные ===================== */
+/* ===================== Методика расчёта: живые данные ===================== */
 const TRC = {stage: null, pts: [], aexp: null, last: null, mean: null,
              started: false, nprod: 0, sum: 0, sum2: 0, cmd: ''};
 const MD_RE = /^\s*(\d+)\s+([\d.]+)\s+(\w+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)\s*$/;

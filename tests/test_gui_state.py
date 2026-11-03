@@ -66,4 +66,4 @@ def test_scan_potentials_handles_missing_folders(tmp_path, monkeypatch):
     monkeypatch.setattr(gui, 'GPU_DIR', str(tmp_path / 'nope'))
     monkeypatch.setattr(gui, 'CPU_DIR', str(tmp_path / 'nada'))
     out = gui.scan_potentials()
-    assert out == {'gpu': [], 'cpu': []}
+    assert out['gpu'] == [] and out['cpu'] == []

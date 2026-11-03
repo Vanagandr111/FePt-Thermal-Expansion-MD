@@ -97,3 +97,5 @@ memwatch*.csv
 install_manifest.json
 proxy.json
 app_root.txt
+
+checkpoints/

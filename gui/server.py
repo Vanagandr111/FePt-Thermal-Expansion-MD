@@ -886,9 +886,25 @@ def scan_potentials():
                     out.append({'name': fn, 'path': p,
                                 'mb': round(os.path.getsize(p) / 1e6, 1)})
         return out
+    # Only models that are really on disk are selectable for a calculation;
+    # SevenNet/ORB appear here only when their pip package is installed
+    # (their weights download on first use), never as dead entries.
+    extra = []
+    try:
+        py = resolve_python()
+        if py:
+            for mod, tag, label in (('sevenn', '7net-0', 'SevenNet-0'),
+                                    ('sevenn', '7net-omni-i12',
+                                     'SevenNet-Omni-i12'),
+                                    ('orb_models', 'orb-v3', 'ORB v3')):
+                if not _missing_modules(py, (mod,)):
+                    extra.append({'name': tag, 'label': label})
+    except Exception:
+        extra = []
     return {
         'gpu': lst(GPU_DIR, ('.pt', '.model')),
         'cpu': lst(CPU_DIR, ('.eam', '.meam', '.alloy', '.fs')),
+        'extra': extra,
     }
 
 
@@ -1806,6 +1822,56 @@ def stop_run():
             proc.kill()
 
 
+def _ckpt_roots():
+    roots = [os.path.join(PROJ, 'checkpoints')]
+    try:
+        for d in os.listdir(PROJ):
+            if d.startswith('results_'):
+                roots.append(os.path.join(PROJ, d, 'checkpoints'))
+    except OSError:
+        pass
+    return roots
+
+
+def list_checkpoints(limit=50):
+    """Newest first; each item knows its meta sidecar and its step."""
+    out = []
+    for root in _ckpt_roots():
+        if not os.path.isdir(root):
+            continue
+        for fn in os.listdir(root):
+            if not fn.endswith('.traj'):
+                continue
+            traj = os.path.join(root, fn)
+            meta = traj[:-5] + '.json'
+            item = {'traj': traj, 'meta': meta,
+                    'name': fn[:-5], 'dir': root,
+                    'mb': round(os.path.getsize(traj) / 1e6, 1),
+                    'mtime': os.path.getmtime(traj)}
+            try:
+                with open(meta, encoding='utf-8') as fh:
+                    m = json.load(fh)
+                item.update({'step': m.get('step'), 'T': m.get('T'),
+                             'system': m.get('system'),
+                             'comp': m.get('comp'),
+                             'saved': m.get('saved')})
+            except Exception:
+                item['step'] = None
+            out.append(item)
+    out.sort(key=lambda x: x['mtime'], reverse=True)
+    return out[:limit]
+
+
+def find_checkpoint(name):
+    if not name:
+        items = list_checkpoints(1)
+        return items[0] if items else None
+    for it in list_checkpoints(500):
+        if it['traj'] == name or it['name'] == name:
+            return it
+    return None
+
+
 def start_run(params):
     if RUN.get('running') and RUN['proc'] and RUN['proc'].poll() is None:
         return {'ok': False, 'error': 'run already in progress'}
@@ -1907,6 +1973,16 @@ def start_run(params):
                     'error': 'no model selected (download one on the Models tab first)'}
         device = merged.get('device', 'cuda')
         seed = int(merged.get('seed', 42))
+        # Random mode: every leg of a series (including every leg of the
+        # average-of-N protocol) gets its own seed, and the seed is written
+        # to the console and to the run folder, so the customer can verify
+        # that the seeds really differ.
+        if str(merged.get('seed_mode') or 'fixed').lower() == 'random':
+            import random as _rnd
+            seed = _rnd.SystemRandom().randint(1, 2 ** 31 - 1)
+            log('[gui] seed: {} (случайный для этого расчёта)'.format(seed))
+        else:
+            log('[gui] seed: {} (фиксированный)'.format(seed))
         precision = str(merged.get('precision') or 'fp16').lower()
         if precision not in ('fp16', 'bf16', 'fp32'):
             precision = 'fp16'
@@ -1918,6 +1994,18 @@ def start_run(params):
                 '--kind', cell_kind, '--system', system,
                 '--eq', str(eq), '--prod', str(prod),
                 '--seed', str(seed), '--out', outdir]
+        _resume = merged.get('resume') or FORM.get('resume')
+        if _resume and os.path.isfile(str(_resume)):
+            cmd += ['--resume', str(_resume)]
+            log('[gui] продолжаю с чекпоинта: ' + str(_resume))
+        try:
+            os.makedirs(outdir, exist_ok=True)
+            with open(os.path.join(outdir, 'seed.txt'), 'w',
+                      encoding='utf-8') as _sf:
+                _sf.write('seed={}\nmode={}\n'.format(
+                    seed, merged.get('seed_mode') or 'fixed'))
+        except Exception:
+            pass
         for _k in ('a_ang', 'b_ang', 'c_ang'):
             if axes.get(_k):
                 cmd += ['--' + _k.replace('_ang', '-ang'), str(axes[_k])]
@@ -2145,7 +2233,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.3.1'
+APP_VERSION = '2.4.0'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2700,6 +2788,7 @@ INSTALL_SPECS = {
     'psutil': ['psutil'],
     'scipy': ['scipy'],
     'pandas': ['pandas'],
+    'openpyxl': ['openpyxl'],
     'ase': ['ase'],
     'mace': ['mace-torch'],
     'triton': list(TRITON_SPEC),
@@ -3440,6 +3529,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:                      # noqa: BLE001
                 self._json({'error': str(e)}, 500)
             return
+        if path == '/api/checkpoints':
+            self._json({'ok': True, 'items': list_checkpoints()})
+            return
         if path == '/api/files':
             try:
                 self._json(api_files(None))
@@ -3909,6 +4001,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({'ok': False, 'error': 'unknown action'})
             return
+        if path == '/api/checkpoint_load':
+            item = find_checkpoint((q.get('f') or [''])[0])
+            if not item:
+                self._json({'ok': False, 'error': 'checkpoint not found'})
+                return
+            try:
+                with open(item['meta'], encoding='utf-8') as fh:
+                    meta = json.load(fh)
+            except Exception as e:                  # noqa: BLE001
+                self._json({'ok': False, 'error': str(e)})
+                return
+            # the form must show exactly what the interrupted run was doing
+            FORM.update({k: meta[k] for k in
+                         ('comp', 'nx', 'ny', 'nz', 'kind', 'system', 'T')
+                         if meta.get(k) is not None})
+            FORM['resume'] = item['traj']
+            FORM['resume_step'] = meta.get('step')
+            state_update({'model': meta.get('model') or FORM.get('model')},
+                         source='checkpoint')
+            self._json({'ok': True, 'meta': meta, 'traj': item['traj'],
+                        'step': meta.get('step')})
+            return
         if path == '/api/stop':
             stop_run()
             self._json({'ok': True})
@@ -3991,10 +4105,12 @@ class Handler(BaseHTTPRequestHandler):
             if not py:
                 self._json({'ok': False, 'error': 'no engine python'})
                 return
-            missing = _missing_modules(py, ('psutil', 'numpy', 'ase'))
+            missing = _missing_modules(py, ('psutil', 'numpy', 'ase',
+                                            'torch', 'mace'))
             if missing:
                 self._json({'ok': False,
-                            'error': 'в движке нет ' + ', '.join(missing) +
+                            'error': 'в расчётном ядре нет ' +
+                                     ', '.join(missing) +
                                      ' — вкладка Зависимости → Установить'})
                 return
             cmd = [py, '-u',
@@ -4015,12 +4131,26 @@ class Handler(BaseHTTPRequestHandler):
                                        timeout=1200,
                                        encoding='utf-8', errors='replace',
                                        creationflags=NOWIN)
-                    for ln in (r.stdout or '').splitlines():
+                    out = r.stdout or ''
+                    for ln in out.splitlines():
                         log('[calib] ' + ln)
+                    # say OUT LOUD how many sizes actually produced a point:
+                    # "0/3" used to look like success in the bar
+                    m_ok = re.search(r'\((\d+)/(\d+) sizes ok\)', out)
+                    if m_ok and int(m_ok.group(1)) == 0:
+                        dl_end('калибровка НЕ удалась: 0 из ' +
+                               m_ok.group(2) + ' размеров — причина в консоли')
+                    elif m_ok:
+                        dl_end('калибровка: ' + m_ok.group(1) + ' из ' +
+                               m_ok.group(2) + ' размеров')
+                    elif r.returncode != 0:
+                        dl_end('калибровка прервана (код ' +
+                               str(r.returncode) + ') — см. консоль')
+                    else:
+                        dl_end('калибровка оценки завершена')
                 except Exception as e:
                     log('[calib] ERROR: ' + str(e))
-                finally:
-                    dl_end('калибровка оценки завершена')
+                    dl_end('калибровка прервана: ' + str(e)[:80])
 
             threading.Thread(target=_calib_job, daemon=True).start()
             self._json({'ok': True})

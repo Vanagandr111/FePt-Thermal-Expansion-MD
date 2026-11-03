@@ -52,7 +52,11 @@ class AnisoBerendsen:
         atoms.set_cell(new_cell, scale_atoms=False)
         atoms.set_scaled_positions(frac)      # affine: fractions are kept
         if vel is not None:
-            atoms.set_velocities(vel / scale[:, None])
+            # scale is a per-axis (3,) vector: velocities are (N, 3), so the
+            # axis must broadcast along the LAST index. scale[:, None] is
+            # (3, 1) and blows up on any cell with N != 3 atoms
+            # ("(480,3) (3,1)" on a 480-atom orthorhombic run).
+            atoms.set_velocities(vel / scale[None, :])
         self.steps += 1
 
 class IsoBerendsen:

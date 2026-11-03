@@ -30,6 +30,8 @@ explicit --device cuda on a machine without CUDA falls back to CPU
 with a warning instead of crashing.
 """
 import os
+import glob
+import json
 # CUDA: avoid allocator fragmentation (parallel workers + inductor temp
 # buffers OOM'd on an 8 GiB card with 5 GiB still "free").
 # garbage_collection_threshold:0.8 = the allocator reclaims segment slack
@@ -56,6 +58,7 @@ import math
 import subprocess
 import sys
 import time
+import threading
 
 import numpy as np
 
@@ -357,7 +360,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
               md_log=None, nx=None, ny=None, nz=None, kind='a1',
               pre_eq_steps=4000, a_ang=None, b_ang=None, c_ang=None,
-              aniso=False, system='fept'):
+              aniso=False, system='fept', resume=None, ckpt_dir=None,
+              ckpt_every=200, ckpt_keep=5, model_path=None):
     """NPT run for one (composition, T) point.
 
     Client's version ran pure Langevin (NVT): cell frozen, CTE = 0.
@@ -426,19 +430,68 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             # kbar (r2SCAN Cu: forces converged at P = -43 kbar). The
             # barostat only cares about pressure, so solve P(a) = 0
             # directly: da/a = +P/(3B), damped, at most 16 iterations.
-            b_gpa = 150.0
-            n_it = 0
-            for _ in range(int(os.environ.get('FEPT_STATIC_STEPS', '24'))):
-                p_now = pressure_bar(atoms)
-                if abs(p_now) < 300.0:
-                    break
-                # a too-large cell reports NEGATIVE P (tension) and must
-                # shrink, so the step follows P with a PLUS sign:
-                # da/a = +P/(3B)
-                s = (1.0 + 0.7 * (p_now * 1e-4) / (3.0 * b_gpa)) ** (1.0 / 3.0)
+            # Relax the ATOMIC positions first: on an alloy the seed
+            # configuration is not at a force minimum, and scaling the cell
+            # around strained positions biases a(0 K) upwards (MP-0 Pt-Fe:
+            # 3.8431 A unrelaxed vs 3.8364 A at 300 K - a negative
+            # expansion, which is impossible).
+            try:
+                from ase.optimize import BFGS as _BFGS
+                _bf = _BFGS(atoms, logfile=None)
+                _bf.run(fmax=0.02, steps=150)
+            except Exception as _e:                 # noqa: BLE001
+                print('  [0k] position relax skipped: {}'.format(_e),
+                      flush=True)
+            # Secant search on P(a): the cell is isotropic, pressure is
+            # monotonic in a, so two probe points + secant steps find the
+            # root in 4-6 force/stress evaluations. A damped Newton step
+            # needs a bulk modulus and crawls: 40 iterations once stopped
+            # at P = +2000 bar.
+            def _press():
+                return pressure_bar(atoms)
+
+            def _set_a(a_target):
+                a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+                s = a_target / a_now
                 s = max(0.90, min(1.10, s))
                 atoms.set_cell(atoms.get_cell() * s, scale_atoms=True)
+
+            def _a_now():
+                return (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+
+            def _move(a_target):
+                s = max(0.90, min(1.10, a_target / _a_now()))
+                atoms.set_cell(atoms.get_cell() * s, scale_atoms=True)
+
+            # 1) bracket the root: walk in the direction that lowers P
+            a_lo = _a_now()
+            p_lo = _press()
+            n_it = 0
+            step = 1.01 if p_lo > 0 else 0.99
+            a_hi, p_hi = a_lo, p_lo
+            for _ in range(12):
+                if abs(p_lo) < 100.0:
+                    break
+                a_hi = a_lo * step
+                _move(a_hi)
+                p_hi = _press()
                 n_it += 1
+                if p_hi * p_lo <= 0:
+                    break
+                a_lo, p_lo = a_hi, p_hi
+            # 2) bisect inside the bracket
+            if p_hi * p_lo < 0:
+                for _ in range(14):
+                    a_mid = 0.5 * (a_lo + a_hi)
+                    _move(a_mid)
+                    p_mid = _press()
+                    n_it += 1
+                    if abs(p_mid) < 100.0:
+                        break
+                    if p_mid * p_lo <= 0:
+                        a_hi, p_hi = a_mid, p_mid
+                    else:
+                        a_lo, p_lo = a_mid, p_mid
             a0 = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
             p_static = pressure_bar(atoms)
             if abs(p_static) > 10000.0:
@@ -468,6 +521,63 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     # converging. These steps never enter the averages.
     pre_eq = int(pre_eq_steps or 0)
     a_start = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+    # ---- resume from a checkpoint -------------------------------------
+    if resume:
+        try:
+            from ase.io import read as _ase_read
+            _ck = _ase_read(resume)
+            atoms.set_cell(_ck.get_cell(), scale_atoms=False)
+            atoms.set_scaled_positions(_ck.get_scaled_positions())
+            if _ck.get_velocities() is not None:
+                atoms.set_velocities(_ck.get_velocities())
+            a_start = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
+            print('  [ckpt] продолжили с ' + str(resume), flush=True)
+        except Exception as _e:                     # noqa: BLE001
+            print('  [ckpt] не удалось продолжить: {}'.format(_e),
+                  flush=True)
+    # ---- asynchronous autosave ---------------------------------------
+    _ckdir = (ckpt_dir or os.environ.get('FEPT_CKPT_DIR')
+              or os.path.join(os.getcwd(), 'checkpoints'))
+    _ck = {'dir': _ckdir, 'every': int(ckpt_every or 0),
+           'keep': int(ckpt_keep or 5), 'busy': False, 'n': 0}
+    _ck_meta = {'comp': comp, 'T': T, 'nx': nx, 'ny': ny, 'nz': nz,
+                'kind': kind, 'system': system, 'model': model_path,
+                'eq_steps': eq_steps, 'prod_steps': prod_steps,
+                'pre_eq_steps': pre_eq, 'seed': seed,
+                'thermo_interval': thermo_interval}
+
+    def _save_ckpt_now(step_now, phase_now):
+        if _ck['busy'] or not _ck['every']:
+            return
+        _ck['busy'] = True
+        snap = atoms.copy()
+        meta = dict(_ck_meta, step=int(step_now), phase=str(phase_now),
+                    saved=time.strftime('%Y-%m-%d %H:%M:%S'))
+
+        def _writer():
+            try:
+                os.makedirs(_ck['dir'], exist_ok=True)
+                nm = 'автосейв_' + time.strftime('%Y%m%d_%H%M%S')
+                p = os.path.join(_ck['dir'], nm)
+                snap.write(p + '.traj')
+                with open(p + '.json', 'w', encoding='utf-8') as fh:
+                    json.dump(meta, fh, ensure_ascii=False, indent=1)
+                trajs = sorted(glob.glob(os.path.join(
+                    _ck['dir'], 'автосейв_*.traj')))
+                for old in trajs[:max(0, len(trajs) - _ck['keep'])]:
+                    for ext in ('.traj', '.json'):
+                        try:
+                            os.remove(old[:-5] + ext)
+                        except OSError:
+                            pass
+                _ck['n'] += 1
+            except Exception as _e:                 # noqa: BLE001
+                print('  [ckpt] save failed: {}'.format(_e), flush=True)
+            finally:
+                _ck['busy'] = False
+
+        threading.Thread(target=_writer, daemon=True).start()
+
     if pre_eq > 0:
         # Adaptive: the barostat overshoots, so run in 500-step chunks and
         # stop as soon as a stops moving. The cap is pre_eq_steps.
@@ -518,6 +628,9 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
 
     def collect():
         # get_stress(voigt=True) already returns the 6-component voigt vector
+        _st_now = int(getattr(dyn_md, 'nsteps', 0))
+        if _ck['every'] and _st_now and _st_now % _ck['every'] == 0:
+            _save_ckpt_now(_st_now, phase.get('name'))
         stress = atoms.get_stress(voigt=True)
         p_bar = pressure_bar(atoms)
         vol = atoms.get_volume()
@@ -1007,6 +1120,12 @@ def main():
     ap.add_argument('--prod', type=int, default=None)
     ap.add_argument('--interval', type=int, default=100,
                     help='thermo sample interval (steps)')
+    ap.add_argument('--resume', default=None,
+                    help='checkpoint .traj to continue from')
+    ap.add_argument('--ckpt-every', type=int, default=200,
+                    help='autosave every N MD steps (0 = off)')
+    ap.add_argument('--ckpt-dir', default=None,
+                    help='folder for autosaves')
     ap.add_argument('--grid', type=int, default=None,
                     help='supercell replication N: atoms=4*N^3 '
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
@@ -1211,7 +1330,10 @@ def main():
                         nx=nx, ny=ny, nz=nz, kind=cell_kind,
                         pre_eq_steps=pre_eq,
                         a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso,
-                        system=system)
+                        system=system, resume=getattr(args, 'resume', None),
+                        ckpt_dir=getattr(args, 'ckpt_dir', None),
+                        ckpt_every=getattr(args, 'ckpt_every', 200),
+                        model_path=model)
                     break
                 except Exception as e:           # noqa: BLE001
                     if not rescue_or_raise(e, compile_mode):
