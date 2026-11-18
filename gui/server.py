@@ -147,7 +147,10 @@ def apply_app_root(root):
     GPU_DIR = os.path.join(root, 'potentials', 'gpu')
     CPU_DIR = os.path.join(root, 'potentials', 'cpu')
     ELEMENTS_PATH = os.path.join(root, 'data', 'elements.json')
-    _CATALOG['data'] = None       # re-read potentials_catalog.json
+    # apply_app_root() runs at import time (before _CATALOG exists below),
+    # so reset the cache only when the dict is already there.
+    if '_CATALOG' in globals():
+        _CATALOG['data'] = None   # re-read potentials_catalog.json
     os.environ['FEPT_PROJECT_DIR'] = root
     BOOT['root'] = root
 
@@ -2233,7 +2236,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.4.0'
+APP_VERSION = '2.4.1'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
