@@ -3445,9 +3445,11 @@ async function loadDeps(refresh) {
        L.numpy ? ('v' + (L.numpy_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('numpy')");
   h += depRow('openpyxl', 'openpyxl (экспорт в Excel)', L.openpyxl,
-       L.openpyxl ? ('v' + (L.openpyxl_v || '?'))
+       L.openpyxl ? (L.openpyxl_v
+                     ? ('v' + L.openpyxl_v + ' — в составе программы')
+                     : 'в составе программы')
                    : 'не найдено — кнопка «Excel» не заработает',
-       "installLib('openpyxl')");
+       L.openpyxl ? '' : "installLib('openpyxl')");
   h += depRow('scipy', 'scipy', L.scipy,
        L.scipy ? ('v' + (L.scipy_v || '?')) : 'не найдено в расчётном ядре',
        "installLib('scipy')");

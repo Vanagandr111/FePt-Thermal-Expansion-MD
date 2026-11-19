@@ -93,7 +93,7 @@ def test_torch_mirror_chain_and_success_msg(monkeypatch):
     """Failed mirror N -> next mirror; success writes завершена + manifest."""
     calls = []
 
-    def fake_stream(py, spec_args, tag='pip'):
+    def fake_stream(py, spec_args, tag='pip', timeout=None):
         calls.append(list(spec_args))
         return 1 if len(calls) == 1 else 0
 
@@ -117,7 +117,8 @@ def test_torch_mirror_chain_and_success_msg(monkeypatch):
 
 def test_all_mirrors_fail_message(monkeypatch):
     """Every mirror down -> честная плашка с кодом последней попытки."""
-    monkeypatch.setattr(srv, '_pip_stream', lambda py, a, tag='pip': 1)
+    monkeypatch.setattr(srv, '_pip_stream',
+                      lambda py, a, tag='pip', timeout=None: 1)
     monkeypatch.setattr(srv, 'ensure_engine_python',
                         lambda: (sys.executable, False))
     monkeypatch.setattr(srv, 'manifest_note', _FakeManifest())

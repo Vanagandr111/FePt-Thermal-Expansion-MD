@@ -981,6 +981,10 @@ def collect_deps(refresh=False):
             'pandas_v': probe.get('pandas_v'),
             'psutil': probe.get('psutil', False),
             'psutil_v': probe.get('psutil_v'),
+            # openpyxl: judged in THIS process - it serves the Excel
+            # export and ships inside the exe (hiddenimports)
+            'openpyxl': _bundled_pkg('openpyxl')[0],
+            'openpyxl_v': _bundled_pkg('openpyxl')[1],
             'triton': probe.get('triton', False),
             'triton_v': probe.get('triton_v'),
             'ptxas': probe.get('ptxas'),
@@ -2236,7 +2240,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.4.3'
+APP_VERSION = '2.4.4'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -2848,6 +2852,10 @@ DL = {'active': False, 'label': '', 'have': 0, 'total': 0, 'mode': 'bytes',
 # inside the old 1800 s; on a slow line the install was killed silently
 # and the bar still said "завершён" (customer saw "не смог доделать").
 PIP_TIMEOUT = 3600
+# tiny pure-python wheels (openpyxl/psutil/pysocks/...) must fail FAST
+# when PyPI is unreachable: the old shared 3600 s limit made a 1 MB
+# package look like an eternal install (customer: "openpyxl вечно весит")
+PIP_SMALL_TIMEOUT = 180
 
 
 def dl_begin(label, mode='bytes', total=0):
@@ -2863,7 +2871,7 @@ def dl_end(msg=''):
         pass
 
 
-def _pip_stream(py, spec_args, tag='pip'):
+def _pip_stream(py, spec_args, tag='pip', timeout=None):
     """Run pip with LIVE console output and a real network meter.
 
     The old code captured all output and showed only the last 4 stdout
@@ -2879,7 +2887,10 @@ def _pip_stream(py, spec_args, tag='pip'):
     Returns rc (int, 'timeout') or None on spawn failure.
     """
     import subprocess as _sp
+    if timeout is None:
+        timeout = PIP_TIMEOUT
     t0 = time.time()
+    silent_since = [time.time()]
     io0 = None
     try:
         import psutil
@@ -2906,6 +2917,7 @@ def _pip_stream(py, spec_args, tag='pip'):
                 ln = ln.rstrip('\r\n')
                 if not ln:
                     continue
+                silent_since[0] = time.time()
                 lines.append(ln)
                 log('[pip] ' + ln[:500])
                 m = re.search(r'Downloading .*\((\d+(?:\.\d+)?)\s*(GB|MB|KB)\)',
@@ -2925,6 +2937,13 @@ def _pip_stream(py, spec_args, tag='pip'):
         last, last_t = io0, time.time()
         while proc.poll() is None:
             time.sleep(2.0)
+            # pip prints NOTHING while it resolves/sits on a dead PyPI:
+            # say it out loud instead of spinning silently forever
+            quiet = time.time() - silent_since[0]
+            if quiet > 45 and DL.get('active'):
+                DL['label'] = ('{} · {} с без вывода pip - '
+                               'проверь сеть/зеркало'
+                               .format(tag, int(quiet)))
             if io0 is None or not DL.get('active'):
                 continue
             try:
@@ -2945,13 +2964,13 @@ def _pip_stream(py, spec_args, tag='pip'):
     rt.start()
     threading.Thread(target=_meter, daemon=True).start()
     try:
-        rc = proc.wait(timeout=PIP_TIMEOUT)
+        rc = proc.wait(timeout=timeout)
     except Exception:
         try:
             proc.kill()
         except Exception:
             pass
-        log('[gui] pip killed: exceeded {} s'.format(PIP_TIMEOUT))
+        log('[gui] pip killed: exceeded {} s'.format(timeout))
         rc = 'timeout'
     rt.join(10)
     try:
@@ -2999,15 +3018,17 @@ def install_lib(name):
     r, vspec, err = None, list(spec), ''
     try:
         for vi, vspec in enumerate(variants):
+            timeout = (PIP_SMALL_TIMEOUT if spec[0] in LIGHT_LIBS
+                       else PIP_TIMEOUT)
             log('[gui] pip install {} into {} (mirror {}/{})'.format(
                 vspec[0], py, vi + 1, len(variants)))
             dl_begin('pip install ' + vspec[0], mode='indeterminate')
-            r = _pip_stream(py, vspec, tag=spec[0])
+            r = _pip_stream(py, vspec, tag=spec[0], timeout=timeout)
             if r == 0:
                 break
             if r == 'timeout':
-                err = ('превышен лимит {} мин - проверь сеть и повтори'
-                       .format(PIP_TIMEOUT // 60))
+                err = ('превышен лимит {} с - проверь сеть/зеркало и '
+                       'повтори'.format(timeout))
                 break
             if r is None:
                 err = 'pip не запустился (см. консоль)'
@@ -3046,6 +3067,36 @@ def install_lib(name):
         dl_end('УСТАНОВКА НЕ УДАЛАСЬ: ' + spec[0] + code +
                ' - подробности в консоли выше')
     _DEPS_CACHE['t'] = 0.0
+
+
+def _bundled_pkg(name):
+    """(found, version) for a package inside THIS running program.
+
+    The Excel export runs in the exe process itself, so its openpyxl
+    must be judged here - probing only the engine interpreter showed
+    'not installed' on every fresh PC and sent the user into a pip run
+    that could never help.
+    """
+    try:
+        import importlib.util as _u
+        if _u.find_spec(name) is None:
+            return False, ''
+        ver = ''
+        try:
+            from importlib.metadata import version as _v
+            ver = _v(name)
+        except Exception:
+            ver = ''
+        if not ver:
+            # frozen builds often ship no dist-info for bundled libs:
+            # fall back to the module attribute (openpyxl.__version__)
+            try:
+                ver = getattr(__import__(name), '__version__', '') or ''
+            except Exception:
+                ver = ''
+        return True, ver
+    except Exception:
+        return False, ''
 
 
 def _torch_present(py):
