@@ -82,7 +82,8 @@ def test_download_url_gives_up_but_unblocks_the_ui(monkeypatch, tmp_path):
     try:
         srv.download_url('https://example.invalid/m.model', dest, 'm.model')
         raised = False
-    except OSError:
+    except (OSError, RuntimeError):
+        # download_url wraps the exhausted-mirror error in RuntimeError
         raised = True
 
     assert raised, 'final error must propagate to the caller'

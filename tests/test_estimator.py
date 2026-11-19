@@ -117,7 +117,9 @@ def test_update_point_merges_and_reports_change():
     assert est.update_point(prof, 'mace', 'cuda', 4, 54.4) is False  # same
     assert est.update_point(prof, 'mace', 'cuda', 4, 51.0) is True   # changed
     assert len(prof['points']) == 1
-    assert prof['points'][0]['ms_per_step'] == 51.0
+    # the point keeps a window of samples (54.4, 54.4, 51.0) and reports
+    # its mean, so one noisy run cannot drag the estimate
+    assert prof['points'][0]['ms_per_step'] == 52.7
     assert est.update_point(prof, 'mace', 'cuda', 2, 25.0) is True
     assert len(prof['points']) == 2
 

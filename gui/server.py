@@ -2236,7 +2236,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.4.1'
+APP_VERSION = '2.4.2'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -3534,6 +3534,41 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == '/api/checkpoints':
             self._json({'ok': True, 'items': list_checkpoints()})
+            return
+        if path == '/api/phases':
+            qha, order = None, []
+            _qerr = ''
+            try:
+                _pat = os.path.join(PROJ, '**', 'qha_*.json')
+                qh = sorted(glob.glob(_pat, recursive=True),
+                            key=os.path.getmtime)
+            except Exception as _e:              # noqa: BLE001
+                qh, _qerr = [], repr(_e)
+            if qh:
+                try:
+                    with open(qh[-1], encoding='utf-8') as fh:
+                        qha = json.load(fh)
+                except Exception as e:           # noqa: BLE001
+                    qha = {'error': str(e)}
+            try:
+                oo = sorted(glob.glob(os.path.join(
+                    PROJ, '**', 'order_T*_x*.json'), recursive=True),
+                    key=os.path.getmtime)
+            except Exception:                    # noqa: BLE001
+                oo = []
+            for f in oo[-12:]:
+                try:
+                    with open(f, encoding='utf-8') as fh:
+                        d = json.load(fh)
+                    d['file'] = os.path.basename(f)
+                    order.append(d)
+                except Exception:                # noqa: BLE001
+                    pass
+            self._json({'ok': True, 'qha': qha, 'order': order,
+                        'dbg': {'proj': PROJ,
+                                'qha_files': qh[-3:] if qh else [],
+                        'qerr': _qerr,
+                                'order_files': oo[-3:] if oo else []}})
             return
         if path == '/api/files':
             try:

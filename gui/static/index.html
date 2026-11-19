@@ -534,6 +534,7 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
   <button id="tab-deps" onclick="tab('deps')">Зависимости</button>
   <button id="tab-trace" onclick="tab('trace')">Методика расчёта</button>
   <button id="tab-journal" onclick="tab('journal')">Журнал расчёта</button>
+  <button id="tab-phases" onclick="tab('phases')">Фазы</button>
   <button id="tab-about" onclick="tab('about')">О программе</button>
   <label class="ctoggle" id="compact-wrap"
          title="Компактный режим: свернуть карточки во всех вкладках — только нужное"
@@ -1091,6 +1092,39 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
     WARNING и ERROR подсвечены цветом.</div>
   </div>
 </section>
+<section id="sec-phases" class="hidden">
+  <div class="card">
+    <h3>Фазы: свободная энергия и порядок</h3>
+    <div class="q">
+      G(T) — квазигармоническое сравнение двух фаз одного состава:
+      E0(V) после релаксации + фононная F_vib(T) + конфигурационный
+      F_conf для разупорядоченной A1. Температура перехода T_tr — точка
+      пересечения кривых G(T).
+      S(t) — химический дальнего порядка подрешёток Брэгг-Вильямса:
+      падает при обменах Fe↔Pt в режиме гибридного MC/MD.
+      q4/q6 — кристаллическая симметрия (ГЦК: q6 ≈ 0.58): держатся выше
+      0.35, пока кристалл цел. Плотность ρ(t) — третий признак плавления.
+      Падение S при живых q6 — это химическое разупорядочение, а НЕ
+      плавление; совместное падение q6 и ρ — уже плавление.
+    </div>
+    <div class="row">
+      <div><h4>G(T): упорядоченная vs разупорядоченная</h4>
+        <canvas id="ph-qha" width="520" height="300"></canvas>
+        <div class="hint" id="ph-qha-note">нет QHA-файла: рассчитайте
+          scripts/phase_stability.py</div></div>
+      <div><h4>S(t): дальнего порядка подрешёток</h4>
+        <canvas id="ph-s" width="520" height="300"></canvas>
+        <div class="hint" id="ph-s-note">нет данных order_*.json:
+          запустите расчёт с режимом MC/MD</div></div>
+    </div>
+    <div class="row">
+      <div><h4>q4 / q6: кристаллическая симметрия</h4>
+        <canvas id="ph-q" width="520" height="300"></canvas></div>
+      <div><h4>Плотность ρ(t)</h4>
+        <canvas id="ph-rho" width="520" height="300"></canvas></div>
+    </div>
+  </div>
+</section>
 <section id="sec-about" class="hidden">
   <div class="card">
     <div class="cbar"><b>О программе</b>
@@ -1291,13 +1325,14 @@ let GREEN_PENDING = false;   // run finished; waiting for the user
 let resGreenTimer = null;
 
 function tab(name) {
-  ['run','res','prof','deps','trace','journal','about'].forEach(t => {
+  ['run','res','prof','deps','trace','journal','phases','about'].forEach(t => {
     const b = $('tab-' + t);
     if (b) b.classList.toggle('on', t === name);
     const s = $('sec-' + t);
     if (s) s.classList.toggle('hidden', t !== name);
   });
   /* ---- notification lamps are cleared when the section is opened ---- */
+  if (name === 'phases') loadPhases();
   if (name === 'deps') setLamp('deps', '');    // re-armed by loadDeps if
                                                // something is still missing
   if (name === 'prof') setLamp('prof', '');   // acknowledged
@@ -4314,6 +4349,97 @@ function drawSeries(id, vals, color, opt){
   g.fillStyle = '#7d93a8'; g.font = '10px monospace';
   g.fillText(hi.toFixed(2) + ' ' + (opt.unit||''), 2, 12);
   g.fillText(lo.toFixed(2), 2, H - 6);
+}
+
+function drawPh(id, series, opt){
+  opt = opt || {};
+  const cv = document.getElementById(id);
+  if (!cv) return;
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, pad = 36;
+  g.clearRect(0, 0, W, H);
+  let lo = Infinity, hi = -Infinity, n = 1;
+  series.forEach(s => {
+    n = Math.max(n, s.vals.length);
+    s.vals.forEach(v => {
+      if (isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    });
+  });
+  if (!isFinite(lo)) {
+    g.fillStyle = '#7d93a8'; g.font = '11px monospace';
+    g.fillText(opt.empty || 'нет данных', 12, 24);
+    return;
+  }
+  if (hi - lo < 1e-9) hi = lo + 1;
+  const X = i => pad + i * (W - 2 * pad) / Math.max(1, n - 1);
+  const Y = v => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+  g.strokeStyle = '#31465a'; g.lineWidth = 1;
+  g.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+  if (lo < 0 && hi > 0) {
+    g.strokeStyle = '#445b70'; g.setLineDash([4, 4]);
+    g.beginPath(); g.moveTo(pad, Y(0)); g.lineTo(W - pad, Y(0));
+    g.stroke(); g.setLineDash([]);
+  }
+  const dp = (opt.dp === undefined) ? 3 : opt.dp;
+  series.forEach((s, si) => {
+    g.strokeStyle = s.c; g.lineWidth = 1.6; g.beginPath();
+    let up = false;
+    s.vals.forEach((v, i) => {
+      if (!isFinite(v)) { up = false; return; }
+      if (up) g.lineTo(X(i), Y(v)); else { g.moveTo(X(i), Y(v)); up = true; }
+    });
+    g.stroke();
+    g.fillStyle = s.c; g.font = '10px monospace';
+    g.fillText(s.label || '', pad + 6, 14 + 12 * si);
+  });
+  g.fillStyle = '#7d93a8'; g.font = '10px monospace';
+  g.fillText(hi.toFixed(dp) + (opt.unit || ''), 2, 12);
+  g.fillText(lo.toFixed(dp), 2, H - 6);
+  if (opt.xlabel) g.fillText(opt.xlabel, pad, H - 6);
+}
+
+async function loadPhases(){
+  let d = null;
+  try { d = await (await fetch('/api/phases')).json(); }
+  catch (e) { return; }
+  if (!d) return;
+  const q = d.qha;
+  if (q && q.a && q.a.curve && q.b && q.b.curve) {
+    drawPh('ph-qha', [
+      {c: '#7fd8ff', label: 'G(' + q.a_kind + ')',
+       vals: q.a.curve.map(p => p.G)},
+      {c: '#ff9f6f', label: 'G(' + q.b_kind + ')',
+       vals: q.b.curve.map(p => p.G)}],
+      {unit: ' eV/at', xlabel: 'T ' + q.temps[0] + '-' +
+       q.temps[q.temps.length - 1] + ' K'});
+    const note = document.getElementById('ph-qha-note');
+    if (note) note.textContent = q.T_tr
+      ? ('T_tr = ' + Math.round(q.T_tr) + ' K')
+      : 'пересечения dG=0 в диапазоне нет';
+  } else {
+    drawPh('ph-qha', [], {empty: 'нет QHA-файла qha_*.json'});
+  }
+  const rows = d.order || [];
+  if (rows.length) {
+    const byT = {};
+    rows.forEach(r => { (byT[r.T] = byT[r.T] || []).push(r); });
+    const keys = Object.keys(byT).sort((a, b) => a - b);
+    const cols = ['#7fd8ff', '#ff9f6f', '#9fd87f', '#e0b3ff', '#ffd166'];
+    drawPh('ph-s', keys.map((k, i) => ({c: cols[i % cols.length],
+      label: k + ' K', vals: byT[k].map(r => r.S)})),
+      {dp: 2, xlabel: 'MD step', empty: 'no order_*.json yet'});
+    drawPh('ph-q', keys.map((k, i) => ({c: cols[i % cols.length],
+      label: k + ' K q6', vals: byT[k].map(r => r.q6)})),
+      {dp: 2, xlabel: 'MD step'});
+    drawPh('ph-rho', keys.map((k, i) => ({c: cols[i % cols.length],
+      label: k + ' K', vals: byT[k].map(r => r.rho)})),
+      {unit: ' 1/A3', dp: 3, xlabel: 'MD step'});
+    const note = document.getElementById('ph-s-note');
+    if (note) note.textContent = 'files: ' + rows.map(r => r.file).join(', ');
+  } else {
+    drawPh('ph-s', [], {empty: 'нет order_*.json: нужен режим MC/MD'});
+    drawPh('ph-q', [], {empty: 'нет order_*.json'});
+    drawPh('ph-rho', [], {empty: 'нет order_*.json'});
+  }
 }
 
 async function loadPassport(){

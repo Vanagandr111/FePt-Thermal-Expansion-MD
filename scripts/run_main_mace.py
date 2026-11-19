@@ -67,6 +67,10 @@ from mace.calculators import MACECalculator  # noqa: E402 (needs torch env)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lmp_helper as lmp                      # noqa: E402
 from aniso_barostat import AnisoBerendsen, IsoBerendsen     # noqa: E402  (no torch)
+from order_params import (corner_indices_from_scaled,    # noqa: E402
+                            layer_indices_from_scaled,
+                            bragg_williams, steinhardt_q,
+                            mc_swap_sweep, number_density)  # noqa: E402
 import lmpdata                                # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
 
@@ -360,7 +364,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
               timestep_fs=1.0, seed=42, grid=4, prepare=True,
               md_log=None, nx=None, ny=None, nz=None, kind='a1',
               pre_eq_steps=4000, a_ang=None, b_ang=None, c_ang=None,
-              aniso=False, system='fept', resume=None, ckpt_dir=None,
+                  aniso=False, system='fept', resume=None, ckpt_dir=None,
+                  mc_interval=0, mc_attempts=10,
               ckpt_every=200, ckpt_keep=5, model_path=None):
     """NPT run for one (composition, T) point.
 
@@ -388,6 +393,10 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                                  force=prepare, kind=kind, system=system)
     atoms = read_lammps_data(datafile)
     atoms.calc = calc
+    # Lattice sublattices must be identified on the structure AS WRITTEN:
+    # the 0 K relaxation below moves atoms off the ideal sites, and the
+    # corner/layer test (1e-4 tolerance) would then find nothing (S=None).
+    _init_scaled = atoms.get_scaled_positions(wrap=True)
     os.environ['FEPT_SYSTEM'] = str(system or 'fept').lower()
 
     # Finite-size guard: the potential sees periodic images that fall inside
@@ -626,6 +635,39 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         except OSError:
             log_fh = None
 
+    # ---- phase-transition observables (v2.4.0) ----------------------
+    # S(t)  : chemical sublattice order (Fe<->Pt). MC swaps are REQUIRED
+    #         for it to move: plain heating cannot disorder an ordered
+    #         crystal below melting, there are no vacancies in the cell.
+    # q4/q6 : bond-orientational order. They stay high while the crystal
+    #         is crystalline, so a falling S with q6 > 0.35 is real
+    #         chemical disordering, not melting.
+    _ph = {'on': bool(mc_interval), 'mc_every': int(mc_interval or 0),
+           'last_mc': -1, 'acc': float('nan'), 'rows': [],
+           'sub_idx': [], 'sub_el': 'Pt'}
+    if kind == 'l10':
+        _ph['sub_idx'] = list(layer_indices_from_scaled(
+            _init_scaled, int(nz or 1)))
+        _ph['sub_el'] = 'Pt'
+    elif kind == 'l12':
+        _ph['sub_idx'] = list(corner_indices_from_scaled(
+            _init_scaled, int(nx or 1), int(ny or 1), int(nz or 1)))
+        _ph['sub_el'] = 'Fe' if comp > 0.5 else 'Pt'
+    else:
+        # random A1: corners are just a random quarter, S must sit ~0
+        _ph['sub_idx'] = list(corner_indices_from_scaled(
+            _init_scaled, int(nx or 1), int(ny or 1), int(nz or 1)))
+        _ph['sub_el'] = 'Pt'
+    _rng = np.random.default_rng(seed)
+
+    def _mc_sweep():
+        sym = atoms.get_chemical_symbols()
+        idx_fe = [i for i, s in enumerate(sym) if s == 'Fe']
+        idx_pt = [i for i, s in enumerate(sym) if s == 'Pt']
+        _ph['acc'] = mc_swap_sweep(atoms, atoms.calc, max(1.0, float(T)),
+                                   int(mc_attempts or 10), idx_fe, idx_pt,
+                                   _rng)
+
     def collect():
         # get_stress(voigt=True) already returns the 6-component voigt vector
         _st_now = int(getattr(dyn_md, 'nsteps', 0))
@@ -652,6 +694,31 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             if log_fh:
                 log_fh.write(frame + '\n')
                 log_fh.flush()
+        # --- observables: only on thermo samples, never per MD step ----
+        _step = int(getattr(dyn_md, 'nsteps', 0))
+        if _ph['on'] and _ph['mc_every'] > 0:
+            _bucket = _step // _ph['mc_every']
+            if _bucket > _ph['last_mc']:
+                _ph['last_mc'] = _bucket
+                _mc_sweep()
+        if _ph['sub_idx']:
+            _s_val = bragg_williams(atoms, _ph['sub_idx'], _ph['sub_el'])
+        else:
+            _s_val = float('nan')
+        _q4 = steinhardt_q(atoms, 4)
+        _q6 = steinhardt_q(atoms, 6)
+        _rho = number_density(atoms)
+        _row = {'step': _step, 'S': None if _s_val != _s_val else round(float(_s_val), 4),
+                'q4': None if _q4 != _q4 else round(float(_q4), 4),
+                'q6': None if _q6 != _q6 else round(float(_q6), 4),
+                'rho': None if _rho != _rho else round(float(_rho), 5),
+                'mc_acc': (None if _ph['acc'] != _ph['acc']
+                           else round(float(_ph['acc']), 3))}
+        _ph['rows'].append(_row)
+        if _ph['on'] and _step % max(200, _ph['mc_every'] * 5) == 0:
+            print('[order] step={} S={} q6={} rho={} mc_acc={}'.format(
+                _row['step'], _row['S'], _row['q6'], _row['rho'],
+                _row['mc_acc']), flush=True)
 
     collect()  # t=0 point into records only (no frame yet: the attached
     # collector fires once more at nsteps==0 right when run() starts)
@@ -773,6 +840,11 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
         'c_over_a': (float(az_arr.mean()) / float(ax_arr.mean()))
         if (len(az_arr) and len(ax_arr) and ax_arr.mean()) else float('nan'),
         'barostat': 'aniso' if aniso else 'iso',
+        'order': _ph['rows'],
+        'mc_accept': (float(np.nanmean([r['mc_acc'] for r in _ph['rows']
+            if r['mc_acc'] is not None]))
+            if any(r['mc_acc'] is not None for r in _ph['rows'])
+            else None),
         'pre_eq_steps': pre_eq, 'r_max': r_max, 'box_min': L_min,
         'a_start': a_start,
         'log': datafile,
@@ -1126,6 +1198,11 @@ def main():
                     help='autosave every N MD steps (0 = off)')
     ap.add_argument('--ckpt-dir', default=None,
                     help='folder for autosaves')
+    ap.add_argument('--mc-every', type=int, default=0,
+                    help='hybrid MC/MD: swap Fe<->Pt every N MD steps '
+                         '(0 = off)')
+    ap.add_argument('--mc-attempts', type=int, default=10,
+                    help='Metropolis swap attempts per MC sweep')
     ap.add_argument('--grid', type=int, default=None,
                     help='supercell replication N: atoms=4*N^3 '
                          '(4 -> 256 atoms, 2 -> 32; default 4, quick: 2)')
@@ -1332,6 +1409,8 @@ def main():
                         a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, aniso=aniso,
                         system=system, resume=getattr(args, 'resume', None),
                         ckpt_dir=getattr(args, 'ckpt_dir', None),
+                        mc_interval=getattr(args, 'mc_every', 0) or 0,
+                        mc_attempts=getattr(args, 'mc_attempts', 10),
                         ckpt_every=getattr(args, 'ckpt_every', 200),
                         model_path=model)
                     break
@@ -1399,6 +1478,22 @@ def main():
                   mode_label='mace', eq_steps=eq_steps,
                   prod_steps=prod_steps)
     write_cte_full(parsed_all, comps, temps, _OUT)
+    # Phase observables (S, q4, q6, rho, MC acceptance) - one file per
+    # temperature so the GUI "Phases" tab can plot them without CSV hacks.
+    for (_c_, _t_), _pr in parsed_all.items():
+        _rows = _pr.get('order') if isinstance(_pr, dict) else None
+        if not _rows:
+            continue
+        try:
+            with open(os.path.join(
+                    _OUT, 'order_T{:d}_x{:.2f}.json'.format(
+                        int(_t_), float(_c_))),
+                    'w', encoding='utf-8') as _fh:
+                json.dump({'comp': float(_c_), 'T': int(_t_),
+                           'mc_accept': _pr.get('mc_accept'),
+                           'rows': _rows}, _fh, ensure_ascii=False)
+        except Exception as _e:                 # noqa: BLE001
+            print('  order json skipped: {}'.format(_e))
     try:
         lmp.make_plots(parsed_all, comps, temps, seed, _OUT,
                        title_prefix='Fe-Pt MACE')
