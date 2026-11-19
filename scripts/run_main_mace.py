@@ -70,7 +70,8 @@ from aniso_barostat import AnisoBerendsen, IsoBerendsen     # noqa: E402  (no to
 from order_params import (corner_indices_from_scaled,    # noqa: E402
                             layer_indices_from_scaled,
                             bragg_williams, steinhardt_q,
-                            mc_swap_sweep, number_density)  # noqa: E402
+                            mc_swap_sweep, number_density,
+                            long_range_order)  # noqa: E402
 import lmpdata                                # noqa: E402
 from gen_structure import generate_structure  # noqa: E402
 
@@ -501,6 +502,41 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                         a_hi, p_hi = a_mid, p_mid
                     else:
                         a_lo, p_lo = a_mid, p_mid
+            # 3) final touch-up: the acceptance wants |P| < 500 bar
+            #    before MD starts. When the bracket walk never changed
+            #    sign the bisection above never ran and the cell stays
+            #    strained (Fe3Pt once stopped at +2141 bar): extend the
+            #    bracket for at most 8 steps, then bisect 8 times.
+            p_now = _press()
+            n_touch = 0
+            if abs(p_now) > 500.0:
+                a_lo, p_lo = _a_now(), p_now
+                step_t = 1.01 if p_lo > 0 else 0.99
+                a_hi, p_hi = a_lo, p_lo
+                for _ in range(8):
+                    n_touch += 1
+                    a_hi = a_lo * step_t
+                    _move(a_hi)
+                    p_hi = _press()
+                    if p_hi * p_lo <= 0:
+                        break
+                    a_lo, p_lo = a_hi, p_hi
+                if p_hi * p_lo < 0:
+                    for _ in range(8):
+                        n_touch += 1
+                        a_mid = 0.5 * (a_lo + a_hi)
+                        _move(a_mid)
+                        p_mid = _press()
+                        if abs(p_mid) < 100.0:
+                            break
+                        if p_mid * p_lo <= 0:
+                            a_hi, p_hi = a_mid, p_mid
+                        else:
+                            a_lo, p_lo = a_mid, p_mid
+                n_it += n_touch
+                print('  [0k] touch-up: P {:+.0f} -> {:+.0f} bar '
+                      '({} steps)'.format(p_now, _press(), n_touch),
+                      flush=True)
             a0 = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
             p_static = pressure_bar(atoms)
             if abs(p_static) > 10000.0:
@@ -642,22 +678,12 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     # q4/q6 : bond-orientational order. They stay high while the crystal
     #         is crystalline, so a falling S with q6 > 0.35 is real
     #         chemical disordering, not melting.
+    # S comes from long_range_order(): the maximum over all
+    # crystallographically equivalent sublattices (see order_params).
+    # A pinned sublattice reported S = -1/3 for a perfectly ordered
+    # L1_2 cell whose order simply lives on another sublattice.
     _ph = {'on': bool(mc_interval), 'mc_every': int(mc_interval or 0),
-           'last_mc': -1, 'acc': float('nan'), 'rows': [],
-           'sub_idx': [], 'sub_el': 'Pt'}
-    if kind == 'l10':
-        _ph['sub_idx'] = list(layer_indices_from_scaled(
-            _init_scaled, int(nz or 1)))
-        _ph['sub_el'] = 'Pt'
-    elif kind == 'l12':
-        _ph['sub_idx'] = list(corner_indices_from_scaled(
-            _init_scaled, int(nx or 1), int(ny or 1), int(nz or 1)))
-        _ph['sub_el'] = 'Fe' if comp > 0.5 else 'Pt'
-    else:
-        # random A1: corners are just a random quarter, S must sit ~0
-        _ph['sub_idx'] = list(corner_indices_from_scaled(
-            _init_scaled, int(nx or 1), int(ny or 1), int(nz or 1)))
-        _ph['sub_el'] = 'Pt'
+           'last_mc': -1, 'acc': float('nan'), 'rows': []}
     _rng = np.random.default_rng(seed)
 
     def _mc_sweep():
@@ -701,10 +727,9 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             if _bucket > _ph['last_mc']:
                 _ph['last_mc'] = _bucket
                 _mc_sweep()
-        if _ph['sub_idx']:
-            _s_val = bragg_williams(atoms, _ph['sub_idx'], _ph['sub_el'])
-        else:
-            _s_val = float('nan')
+        _s_val = long_range_order(atoms, kind, float(comp),
+                                  _init_scaled, int(nx or 1),
+                                  int(ny or 1), int(nz or 1))
         _q4 = steinhardt_q(atoms, 4)
         _q6 = steinhardt_q(atoms, 6)
         _rho = number_density(atoms)

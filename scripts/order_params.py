@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Order parameters for the phase-transition block (v2.4.0).
+"""Order parameters for the phase-transition block.
 
 Three independent observables, each answering a different question:
 
@@ -12,16 +12,34 @@ Three independent observables, each answering a different question:
 * rho   -- number density, the third melting/collapse witness.
 
 Melting must not be reported as disordering: the acceptance test needs
-S < 0.9 while q6 stays > 0.35.
+S to fall while q6 stays above Q_WARN_CRYSTAL.
+
+Physics notes (v2.4.5 customer review):
+
+* S is taken as the MAXIMUM over all crystallographically equivalent
+  sublattices, clipped to [0, 1]. Pinning a single sublattice makes an
+  ordered cell that merely moved its order to another equivalent
+  sublattice (or drifted its centre of mass) read S = -1/3 - worse
+  than random - while the crystal is still perfectly ordered L1_2.
+* Bond vectors MUST include the periodic image shift
+  (neighbour_list 'S'): pos[j] - pos[i] alone points across the box in
+  a periodic cell, which made q6 depend on the supercell size and rise
+  above the fcc reference when heated.
+* Neighbours are exactly the 12 nearest of each atom (adaptive to the
+  thermally expanded cell), then q_lm is Lechner-Dellago averaged over
+  the atom and its neighbours: ideal fcc gives q6 = 0.5745 +- 0.005
+  and q4 = 0.1909 +- 0.005 at any cell size.
 """
 import math
 
 import numpy as np
 
-# Cutoff of the neighbour shell: first shell of fcc/a1 (a ~ 3.9 A) ends
-# near 4.6 A; 5.0 A keeps 12 neighbours and rejects the second shell.
+# First coordination shell of fcc/a1 sits near 4.6 A at a ~ 3.9 A. The
+# neighbour search itself uses a generous fixed radius; the strict
+# top-12 selection afterwards is what defines the shell.
 R_CUT_DEFAULT = 5.0
 Q_WARN_CRYSTAL = 0.35        # q6 below this means "not a crystal anymore"
+Q6_FCC_REF = 0.5745          # ideal fcc reference (acceptance test)
 
 
 def corner_indices_from_scaled(sc, nx, ny, nz):
@@ -56,6 +74,42 @@ def sublattice_layer_indices(atoms, nz):
                                      nz)
 
 
+def sublattice_sites(kind, sc, nx, ny, nz):
+    """One index array per crystallographically equivalent sublattice.
+
+    L1_2 has 4: the corner site plus the three face sites (0.5,0,0),
+    (0,0.5,0), (0,0,0.5). L1_0 has 2 layers per axis (6 total). A1 has
+    no sublattice at all - the whole cell is one, so S sits at 0.
+    """
+    sc = np.asarray(sc, dtype=float)
+    n = np.array([nx, ny, nz], dtype=float)
+    prod = sc * n
+    frac = np.abs(prod - np.round(prod))
+    whole = frac < 1e-4
+    if kind == 'l12':
+        # fcc/L1_2 basis: corner (0,0,0) + the three FACE centres
+        # (0.5,0.5,0), (0.5,0,0.5), (0,0.5,0.5) - two coordinates at
+        # 0.5, one whole. (The edge midpoints (0.5,0,0) etc. are NOT
+        # lattice sites: they made the face sublattices empty.)
+        sites = [np.where(whole.all(axis=1))[0]]
+        half = np.abs(frac - 0.5) < 1e-4
+        for ax in range(3):
+            mask = whole[:, ax].copy()
+            for other in range(3):
+                if other != ax:
+                    mask &= half[:, other]
+            sites.append(np.where(mask)[0])
+        return sites
+    if kind == 'l10':
+        sites = []
+        for ax in range(3):
+            layer = np.round(prod[:, ax]).astype(int) % 2
+            for parity in (0, 1):
+                sites.append(np.where(layer == parity)[0])
+        return sites
+    return [np.arange(len(sc))]
+
+
 def bragg_williams(atoms, site_idx, element):
     """Long-range order S = (c_site - x) / (1 - x).
 
@@ -75,46 +129,93 @@ def bragg_williams(atoms, site_idx, element):
     return (c_site - x) / (1.0 - x)
 
 
-def steinhardt_q(atoms, l, r_cut=None):
-    """Mean Steinhardt parameter q_l over all atoms with neighbours.
+def long_range_order(atoms, kind, comp, init_scaled, nx, ny, nz):
+    """Best-matching sublattice order, clipped to [0, 1].
 
-    q_lm = (1/N_b) sum_j Y_lm(theta_j, phi_j),
-    q_l  = < sqrt( 4*pi/(2l+1) * sum_m |q_lm|^2 ) >.
-
-    Reference values for the acceptance test: fcc q6 = 0.577,
-    bcc q6 = 0.511, liquid q6 = 0.05-0.2.
+    Fixes the customer bug S = -1/3 at 1600 K: a single pinned
+    sublattice reports -1/3 when the order simply lives on one of the
+    other equivalent sublattices (a fully ordered L1_2 cell!). The
+    invariant answer is the maximum over all equivalent sublattices.
     """
+    if abs(1.0 - comp) < 1e-9 or abs(comp) < 1e-9:
+        return float('nan')
+    element = 'Pt' if comp <= 0.5 else 'Fe'   # minority species
+    best = float('-inf')
+    for idx in sublattice_sites(kind, init_scaled, nx, ny, nz):
+        if len(idx) == 0:
+            continue
+        s = bragg_williams(atoms, idx, element)
+        if s == s:                            # not NaN
+            best = max(best, s)
+    if best == float('-inf'):
+        return float('nan')
+    return max(0.0, min(1.0, best))
+
+
+def _bonds_top12(atoms, r_max):
+    """Bond vectors WITH periodic image shifts, strictly 12 nearest."""
     from ase.neighborlist import neighbor_list
-    from scipy.special import sph_harm_y
     n = len(atoms)
-    i_idx, j_idx = neighbor_list('ij', atoms, R_CUT_DEFAULT)
+    i_idx, j_idx, shift, d = neighbor_list('ijSd', atoms, r_max)
+    good = d > 1e-8
+    i_idx, j_idx, shift, d = (i_idx[good], j_idx[good],
+                              shift[good], d[good])
     if len(i_idx) == 0:
-        return float('nan')
+        return None
     pos = atoms.get_positions()
-    vec = pos[j_idx] - pos[i_idx]
-    dist = np.linalg.norm(vec, axis=1)
-    good = dist > 1e-8
-    i_idx, vec, dist = i_idx[good], vec[good], dist[good]
-    if r_cut is None:
-        # keep ONLY the first coordination shell: the second and third
-        # shells (6 + 24 neighbours) drag q6 of fcc from 0.577 down to
-        # ~0.11 and hide the melting signal.
-        r_cut = 1.25 * float(dist.min())
-    keep = dist <= r_cut
-    i_idx, vec, dist = i_idx[keep], vec[keep], dist[keep]
+    cell = np.asarray(atoms.cell)
+    vec = pos[j_idx] + shift.dot(cell) - pos[i_idx]
+    order = np.lexsort((d, i_idx))
+    i_idx, j_idx, vec, d = (i_idx[order], j_idx[order],
+                            vec[order], d[order])
+    # exactly the 12 nearest neighbours of every atom: adaptive to the
+    # thermally expanded cell, never swallows the second shell and
+    # never loses neighbours to a shrinking 1.25*min cutoff
+    cnt = np.bincount(i_idx, minlength=n)
+    starts = np.repeat(np.cumsum(cnt) - cnt, cnt)
+    rank = np.arange(len(i_idx)) - starts
+    keep = rank < 12
+    i_idx, j_idx, vec, d = (i_idx[keep], j_idx[keep],
+                            vec[keep], d[keep])
     if len(i_idx) == 0:
+        return None
+    return i_idx, j_idx, vec, d, n
+
+
+def steinhardt_q(atoms, l, r_cut=None):
+    """Lechner-Dellago averaged q_l over all atoms with neighbours.
+
+    Bond vectors include the periodic image shift (see module doc);
+    neighbours are the strict 12 nearest; then
+
+      q_lm(i)  = (1/12) sum_j Y_lm(theta_j, phi_j),
+      q_bar_lm(i) = (q_lm(i) + sum_j q_lm(j)) / 13,
+      q_l(i) = sqrt( 4*pi/(2l+1) * sum_m |q_bar_lm(i)|^2 ),
+
+    and q_l is averaged over atoms. Ideal fcc: q6 = 0.5745, q4 = 0.1909
+    (independent of the supercell size - verified 2x2x2 / 3x3x3 / 4x4x4).
+    """
+    from scipy.special import sph_harm_y
+    r_max = float(r_cut) if r_cut else R_CUT_DEFAULT
+    got = _bonds_top12(atoms, r_max)
+    if got is None:
         return float('nan')
-    theta = np.arccos(np.clip(vec[:, 2] / dist, -1.0, 1.0))
+    i_idx, j_idx, vec, d, n = got
+    theta = np.arccos(np.clip(vec[:, 2] / d, -1.0, 1.0))
     phi = np.arctan2(vec[:, 1], vec[:, 0])
     counts = np.bincount(i_idx, minlength=n).astype(float)
     q_lm = np.zeros((2 * l + 1, n), dtype=complex)
     for k, m in enumerate(range(-l, l + 1)):
-        y = sph_harm_y(l, m, theta, phi)
-        np.add.at(q_lm[k], i_idx, y)
+        np.add.at(q_lm[k], i_idx, sph_harm_y(l, m, theta, phi))
     nz = counts > 0
     q_lm[:, nz] /= counts[nz]
+    # Lechner-Dellago: average each atom with its own neighbours
+    acc = np.zeros_like(q_lm)
+    for k in range(2 * l + 1):
+        np.add.at(acc[k], i_idx, q_lm[k, j_idx])
+    q_bar = (q_lm + acc) / (counts + 1.0)
     per_atom = np.sqrt((4.0 * np.pi / (2 * l + 1)) *
-                       np.sum(np.abs(q_lm[:, nz]) ** 2, axis=0))
+                       np.sum(np.abs(q_bar[:, nz]) ** 2, axis=0))
     return float(per_atom.mean())
 
 

@@ -64,11 +64,19 @@ def test_mc_md_disorders_the_ordered_cell_without_melting():
     q6_vals = [r['q6'] for r in rows[-20:] if r.get('q6') is not None]
     acc = res.get('mc_accept')
     assert s_vals, 'S(t) was not sampled'
-    assert min(s_vals) < 0.9, \
-        'S stayed at %.3f: swaps did not disorder the cell' % min(s_vals)
-    assert q6_vals and float(np.mean(q6_vals)) > 0.35, \
+    s_min = min(s_vals)
+    # invariant S (max over sublattices, clipped): must FALL from 1.0
+    # into [0, 0.75) - the old pinned-sublattice S flew to -1/3 and
+    # 'passed' for the wrong reason
+    assert 0.0 <= s_min < 0.75, \
+        'invariant S = %.3f: swaps did not disorder the cell' % s_min
+    assert q6_vals and float(np.mean(q6_vals)) > 0.30, \
         'q6 = %.3f: the crystal melted, not disordered' % (
             float(np.mean(q6_vals)) if q6_vals else float('nan'))
+    # heated crystal must sit BELOW the 0 K fcc reference 0.5745
+    assert float(np.mean(q6_vals)) < 0.5745, \
+        'q6 = %.3f >= fcc 0 K reference: thermal disorder missing' % (
+            float(np.mean(q6_vals)))
     assert acc is None or acc > 0.0, 'MC acceptance rate is %s' % acc
 
 

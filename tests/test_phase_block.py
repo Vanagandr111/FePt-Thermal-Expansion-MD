@@ -41,14 +41,75 @@ def test_l12_order_is_one_and_random_is_zero(l12_cell, a1_cell):
     assert abs(op.bragg_williams(a1_cell, idx_a, 'Pt')) < 0.25
 
 
-def test_q6_fcc_reference(l12_cell):
-    """fcc q6 = 0.577; only the first shell may be counted (r_cut = 1.25
-    x nearest distance), otherwise the 2nd+3rd shells drag q6 to ~0.11
-    and the melting test can never pass."""
-    q6 = op.steinhardt_q(l12_cell, 6)
-    assert 0.50 < q6 < 0.65, q6
-    q4 = op.steinhardt_q(l12_cell, 4)
-    assert 0.15 < q4 < 0.30, q4
+def test_q6_fcc_reference_exact():
+    """Ideal fcc at 0 K must hit the textbook Lechner-Dellago values:
+    q6 = 0.5745 +- 0.005 and q4 = 0.1909 +- 0.005 - at ANY supercell
+    size (the old implementation used bond vectors without periodic
+    image shifts, so q6 drifted with the cell size and exceeded the
+    reference when heated: 0.673 at 1600 K)."""
+    from ase.build import bulk
+    for k in (2, 3, 4):
+        cell = bulk('Cu', 'fcc', a=3.615, cubic=True) * (k, k, k)
+        q6 = op.steinhardt_q(cell, 6)
+        q4 = op.steinhardt_q(cell, 4)
+        assert abs(q6 - 0.5745) < 0.005, 'k=%d q6=%.4f' % (k, q6)
+        assert abs(q4 - 0.1909) < 0.005, 'k=%d q4=%.4f' % (k, q4)
+
+
+def test_invariant_s_over_all_sublattices():
+    """S is the maximum over all equivalent sublattices, clipped to
+    [0, 1]:
+
+    * a perfect L1_2 cell reads 1.0 (not -1/3);
+    * an INVERTED L1_2 cell (order moved to the face sublattices)
+      still reads 1.0 - the crystal is ordered either way;
+    * a random A1 cell reads ~0;
+    * a drifted centre of mass cannot change S (it is defined on the
+      generated sublattices and only the symbols count).
+    """
+    import numpy as np
+    out = os.path.join(os.environ.get('TEMP', '/tmp'), 't_inv.lmp')
+
+    def cell(comp, kind='l12'):
+        gs.generate_structure(3, 3, 3, comp, out, kind=kind,
+                              system='fept')
+        return lmpdata.read_lammps_data(out)
+
+    def s_of(atoms, comp):
+        sc = atoms.get_scaled_positions(wrap=True)
+        return op.long_range_order(atoms, 'l12', comp, sc, 3, 3, 3)
+
+    # 1) perfect cells at both compositions
+    assert abs(s_of(cell(0.25), 0.25) - 1.0) < 1e-6
+    assert abs(s_of(cell(0.75), 0.75) - 1.0) < 1e-6
+
+    # 2) inverted ordering: minority moves off the corner sublattice
+    #    onto the three face sublattices -> still perfectly ordered
+    a = cell(0.75)
+    sc = a.get_scaled_positions(wrap=True)
+    sites = op.sublattice_sites('l12', sc, 3, 3, 3)
+    corners = sites[0]
+    faces = np.concatenate(sites[1:])
+    sym = a.get_chemical_symbols()
+    for i in corners:
+        sym[int(i)] = 'Pt'
+    for i in faces:
+        sym[int(i)] = 'Fe'
+    a.set_chemical_symbols(sym)
+    assert abs(s_of(a, 0.75) - 1.0) < 1e-6, 'inverted order must read 1.0'
+
+    # 3) random A1: S ~ 0 (never negative, never -1/3)
+    b = cell(0.25, kind='a1')
+    assert 0.0 <= s_of(b, 0.25) < 0.2, s_of(b, 0.25)
+
+    # 4) centre-of-mass drift cannot move S: the sublattices are those
+    #    of the AS-GENERATED cell (that is what run_point keeps in
+    #    _init_scaled), only the symbols decide
+    c = cell(0.25)
+    sc0 = c.get_scaled_positions(wrap=True)
+    c.set_scaled_positions(c.get_scaled_positions() + 0.13)
+    assert abs(op.long_range_order(c, 'l12', 0.25, sc0, 3, 3, 3)
+               - 1.0) < 1e-6
 
 
 def test_density_is_physical(l12_cell):
