@@ -3379,7 +3379,7 @@ function renderSummary(r) {
   h += cell('Точность', String(f.precision || 'fp16').toUpperCase());
   h += cell('Seed', f.seed !== undefined ? f.seed : '\u2014');
   h += cell('Режим', (f.mode || 'mace') + (f.device ? ' \u00b7 ' + f.device : ''));
-  h += cell('Прогоны', isAvg ? (m.runs_n + ' \u2192 среднее') : '1');
+  h += cell('Расчёты', isAvg ? (m.runs_n + ' \\u2192 среднее') : '1');
   if (cte) {
     h += cell('\u03b1 (\u0444\u0438\u0442)', (cte.alpha_fit * 1e6).toFixed(2) +
               ' \u00b7 10\u207b\u2076 K\u207b\u00b9');
