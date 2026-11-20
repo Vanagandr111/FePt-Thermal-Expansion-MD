@@ -184,3 +184,38 @@ def test_build_estimate_uses_orthorhombic_shape():
                               'nx': 2, 'ny': 3, 'nz': 4, 'temps': '300',
                               'eq': 10, 'prod': 20, 'precision': 'fp16'})
     assert est['natoms'] == 96
+
+
+def test_locked_cache_file_falls_back_to_temp(monkeypatch):
+    """Customer crash: PermissionError [WinError 5] while opening
+    data.fept_*.lmp for writing (AV or a dead process holds the file).
+
+    The cache file is only read back by the caller, so the generator
+    retries and then writes into the system temp dir - the run must
+    survive a locked cache path."""
+    import builtins
+    import tempfile
+
+    lock_name = 'data.fept_a1_c0.50_3x3x3.lmp'
+    real_open = builtins.open
+    hits = {'n': 0}
+
+    def fake_open(file, mode='r', *a, **k):
+        f = str(file)
+        # refuse ONLY the project cache: the temp fallback must stay
+        # writable, otherwise the test locks both paths itself
+        if ('w' in mode and os.path.basename(f) == lock_name
+                and not f.startswith(tempfile.gettempdir())):
+            hits['n'] += 1
+            raise PermissionError(13, 'Отказано в доступе', f)
+        return real_open(file, mode, *a, **k)
+
+    monkeypatch.setattr(builtins, 'open', fake_open)
+    path = lmp.gen_structure(0.5, nx=3, ny=3, nz=3, force=True)
+    monkeypatch.setattr(builtins, 'open', real_open)
+
+    # 1 refusal + 3 retries, then the temp-dir write
+    assert hits['n'] == 4, hits
+    assert os.path.exists(path), path
+    assert os.path.dirname(path) == tempfile.gettempdir(), path
+    os.remove(path)

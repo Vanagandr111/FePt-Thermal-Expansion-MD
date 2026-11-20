@@ -2240,7 +2240,7 @@ def progress_summary():
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.4.6'
+APP_VERSION = '2.4.7'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.

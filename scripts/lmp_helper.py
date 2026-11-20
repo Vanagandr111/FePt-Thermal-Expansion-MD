@@ -356,10 +356,36 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
         _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         _gen = _mod.generate_structure
-    try:
-        _gen(int(nx), int(ny), int(nz), float(comp), outfile,
+    def _do_generate(target):
+        _gen(int(nx), int(ny), int(nz), float(comp), target,
              lc_override=lc, kind=kind, c_over_a=c_over_a,
              a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, system=system)
+
+    try:
+        try:
+            _do_generate(outfile)
+        except PermissionError:
+            # Windows PermissionError [WinError 5] on the cache file:
+            # an AV scanner or a dead process holds data.fept_*.lmp
+            # (customer log: rc=1 from the child, 'Отказано в доступе').
+            # Locks like this usually clear in under a second - retry,
+            # then write the cell into the system temp dir: the caller
+            # only needs a readable data file, not this exact path.
+            _done = False
+            for _i in range(3):
+                time.sleep(0.8)
+                try:
+                    _do_generate(outfile)
+                    _done = True
+                    break
+                except PermissionError:
+                    continue
+            if not _done:
+                import tempfile
+                _alt = os.path.join(tempfile.gettempdir(),
+                                    os.path.basename(outfile))
+                _do_generate(_alt)
+                outfile = _alt
     except Exception as _e:                          # noqa: BLE001
         raise RuntimeError('gen_structure failed: {}'.format(_e)) from _e
     if not os.path.exists(outfile):
