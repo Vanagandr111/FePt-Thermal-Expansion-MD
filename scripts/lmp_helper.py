@@ -338,28 +338,33 @@ def gen_structure(comp, nx=8, ny=8, nz=8, force=False, lc=None,
             return outfile
         os.remove(outfile)
     os.makedirs(DATA_DIR, exist_ok=True)
-    cmd = [sys.executable, gen_script, str(nx), str(ny), str(nz), str(comp),
-           outfile]
-    if lc is not None:
-        cmd.append(str(lc))
-    cmd += ['--kind', str(kind)]
-    if c_over_a is not None:
-        cmd += ['--c-over-a', str(c_over_a)]
-    cmd += ['--system', str(system)]
-    for _flag, _val in (('--a-ang', a_ang), ('--b-ang', b_ang),
-                        ('--c-ang', c_ang)):
-        if _val not in (None, 0, 0.0):
-            cmd += [_flag, str(_val)]
-    proc = subprocess.run(
-        cmd, capture_output=True, timeout=30
-    )
-    if proc.returncode != 0 or not os.path.exists(outfile):
-        raise RuntimeError('gen_structure failed (rc={}): {}'.format(
-            proc.returncode,
-            proc.stderr.decode(errors='replace')[-400:]))
-    # surface the generator's own log (seed lc + source note) into run logs
-    if proc.stdout:
-        sys.stdout.write(proc.stdout.decode(errors='replace'))
+    # In-process generation. The old path spawned
+    #   [sys.executable, gen_structure.py, ...]
+    # and on the customer machine that child process died inside
+    # _winapi.CreateProcess (exit 1, traceback cut at lmp_helper.py:353,
+    # the exception type never reached the log; 2.1 GB free RAM and an
+    # AV hook are the plausible system causes). generate_structure() is
+    # a plain function that prints the very same lines the child used
+    # to echo, so no subprocess is needed at all: the cell is built in
+    # this process and any failure raises OUR error with the real text.
+    try:
+        from gen_structure import generate_structure as _gen
+    except Exception:                                # noqa: BLE001
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location('_fept_gen_structure',
+                                             gen_script)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _gen = _mod.generate_structure
+    try:
+        _gen(int(nx), int(ny), int(nz), float(comp), outfile,
+             lc_override=lc, kind=kind, c_over_a=c_over_a,
+             a_ang=a_ang, b_ang=b_ang, c_ang=c_ang, system=system)
+    except Exception as _e:                          # noqa: BLE001
+        raise RuntimeError('gen_structure failed: {}'.format(_e)) from _e
+    if not os.path.exists(outfile):
+        raise RuntimeError('gen_structure produced no file: '
+                           + str(outfile))
     return outfile
 
 
