@@ -2,6 +2,7 @@
 """Fast tests: element hint encyclopedia, exact Pt lattice, run progress
 card math, app status summary and the self-update batch file."""
 import os
+import subprocess
 import sys
 import time
 
@@ -153,3 +154,103 @@ def test_gui_installer_ships_triton_spec():
 def test_triton_present_helper_sees_engine_triton():
     # True in our engine venv (triton-windows installed via bootstrap)
     assert server._triton_present(sys.executable) is True
+
+
+# ---- v2.4.8: bar must move INSIDE the first point --------------------
+def test_progress_summary_counts_current_point_steps():
+    """[PROG] markers from the engine fill the gap before the first
+    point finishes - the bar sat at 0% for the whole pre-equilibration
+    (customer complaint)."""
+    srv = server
+    old = {k: srv.RUN.get(k) for k in
+           ('plan_total', 'done_points', 'start', 'running',
+            'last_exit', 'prog_step', 'prog_total', 'prog_phase')}
+    try:
+        srv.RUN['plan_total'] = 4
+        srv.RUN['done_points'] = 0
+        srv.RUN['start'] = time.time() - 60.0
+        srv.RUN['running'] = True
+        srv.RUN['last_exit'] = None
+        srv.RUN['prog_phase'] = 'pre-eq'
+        srv.RUN['prog_step'] = 300
+        srv.RUN['prog_total'] = 600          # half of the first point
+        p = srv.progress_summary()
+        assert p['done'] == 0
+        assert abs(p['pct'] - 12.5) < 0.01   # 0.5 of 4 points
+        assert p['eta_s'] is not None        # ETA exists before point 1
+        assert p['prog_phase'] == 'pre-eq'
+        assert p['prog_step'] == 300 and p['prog_total'] == 600
+        # a finished point resets the in-point position
+        srv.RUN['prog_step'] = 0
+        srv.RUN['prog_total'] = 0
+        p2 = srv.progress_summary()
+        assert p2['pct'] == 0.0
+    finally:
+        srv.RUN.update(old)
+
+
+# ---- v2.4.8: deps probe must not block the HTTP thread ---------------
+def test_deps_stale_cache_answers_now_without_probe(monkeypatch):
+    """A stale cache is served immediately and refreshed in the
+    background: the fresh probe imports torch (~60 s) and used to hang
+    the deps tab / drop the connection (customer)."""
+    old_cache = dict(server._DEPS_CACHE)
+    old_bg = dict(server._DEPS_BG)
+    calls = {'probe': 0, 'bg': 0}
+    snapshot = {'marker': 'previous-snapshot'}
+
+    def _no_probe(eng):
+        calls['probe'] += 1
+        return {}
+
+    def _no_bg():
+        calls['bg'] += 1
+
+    monkeypatch.setattr(server, '_probe_libs', _no_probe)
+    monkeypatch.setattr(server, '_deps_refresh_bg', _no_bg)
+    try:
+        server._DEPS_CACHE['data'] = snapshot
+        server._DEPS_CACHE['t'] = 0.0         # long stale
+        out = server.collect_deps(refresh=False)
+        assert out is snapshot                # served the old snapshot
+        assert calls['probe'] == 0            # NO heavy probe inline
+        assert calls['bg'] == 1               # refresh moved to background
+    finally:
+        server._DEPS_CACHE.clear()
+        server._DEPS_CACHE.update(old_cache)
+        server._DEPS_BG.clear()
+        server._DEPS_BG.update(old_bg)
+
+
+# ---- v2.4.8: `cmd /c start` must not linger --------------------------
+def test_reap_cmd_kills_lingering_cmd():
+    """The browser opener stayed alive after the URL was handed over
+    and kept the install folder undeletable (customer)."""
+
+    class FakeProc:
+        def __init__(self):
+            self.killed = False
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd='cmd', timeout=timeout)
+
+        def kill(self):
+            self.killed = True
+
+    p = FakeProc()
+    server._reap_cmd(p, limit=0.01)
+    assert p.killed is True
+
+    class OkProc:
+        def __init__(self):
+            self.killed = False
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            self.killed = True
+
+    q = OkProc()
+    server._reap_cmd(q, limit=0.01)
+    assert q.killed is False                   # exits on its own: leave it

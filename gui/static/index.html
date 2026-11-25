@@ -767,8 +767,9 @@ canvas.pulse{width:100%;height:auto;background:#0d141b;border:1px solid #1d2b38;
       </div>
       <div class="bar" style="margin-top:8px">
         <div class="fill" id="pg-bar" style="width:0%"></div></div>
-      <div class="hint" id="pg-conf">Скорость и ETA считаются по первым
-        завершённым точкам; полоса выровнена под ETA.</div>
+      <div class="hint" id="pg-conf">Полоса и ETA учитывают шаги внутри
+        текущей точки (подогрев/эквилибрирование/расчёт), а не только
+        завершённые точки.</div>
     </div>
     <div class="est-card" id="est-card">
       <div class="est-title">Предварительная оценка расчёта (план, не факт)
@@ -2056,9 +2057,15 @@ async function pollProgress() {
     $('pg-bar').style.width = Math.min(100, p.pct || 0) + '%';
     if (running) {
       const legs = (p.legs_total || 1);
-      $('prog-state').textContent = legs > 1
+      let st = legs > 1
         ? 'идёт… расчёт ' + p.leg + ' из ' + legs
         : 'идёт…';
+      if (p.prog_total > 0) {
+        // live position inside the current point (pre-eq/eq/prod)
+        st += ' · ' + (p.prog_phase || '') + ' ' +
+          p.prog_step + '/' + p.prog_total;
+      }
+      $('prog-state').textContent = st;
     } else if (p.done > 0 && p.total && p.done >= p.total) {
       $('prog-state').textContent = 'точки завершены (' +
         (p.last_exit === 0 ? 'exit 0' : 'exit ' + p.last_exit) + ')';

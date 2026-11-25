@@ -86,6 +86,14 @@ except Exception:
 # third-party DeprecationWarnings (torch.jit on py3.14, ASE renames) leak
 # into the GUI console on every run - keep OUR messages, silence THEIR noise
 import warnings as _warnings                       # noqa: E402
+# our env var TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD (set above on
+# purpose: old .model files carry numpy objects) makes mace warn
+# on EVERY load, and torch always complains about
+# expandable_segments on Windows - both are noise for the run log
+_warnings.filterwarnings(
+    'ignore', message='.*TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD.*')
+_warnings.filterwarnings(
+    'ignore', message='.*expandable_segments not supported.*')
 _warnings.filterwarnings("ignore", category=DeprecationWarning,
                          module=r"torch(\.|$)")
 
@@ -565,6 +573,9 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
     # measures a drift and the answer depends on eq/prod instead of
     # converging. These steps never enter the averages.
     pre_eq = int(pre_eq_steps or 0)
+    # one denominator for the [PROG] markers: the whole point in MD
+    # steps, so the GUI bar can show life during pre-eq/eq/prod
+    _plan_total = max(1, int(pre_eq) + int(eq_steps) + int(prod_steps))
     a_start = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
     # ---- resume from a checkpoint -------------------------------------
     if resume:
@@ -631,6 +642,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
             chunk = min(500, pre_eq - done)
             dyn_md.run(chunk)
             done += chunk
+            print('  [PROG] pre-eq {}/{}'.format(
+                done, _plan_total), flush=True)
             a_now = (4.0 * atoms.get_volume() / len(atoms)) ** (1.0 / 3.0)
             p_now = pressure_bar(atoms)
             if (a_prev is not None and done >= 1000
@@ -709,6 +722,8 @@ def run_point(calc, comp, T, eq_steps, prod_steps, thermo_interval,
                         float(_L[2]) / nz))
         # one LAMMPS-style frame: console (live GUI stream) + md_*.log
         step = int(getattr(dyn_md, 'nsteps', 0))
+        print('  [PROG] {} {}/{}'.format(
+            phase['name'], step, _plan_total), flush=True)
         pe = float(atoms.get_potential_energy())
         ke = float(atoms.get_kinetic_energy())
         temp = 2.0 * ke / (3.0 * len(atoms) * _K_B)

@@ -301,9 +301,12 @@ RUN = {
     'state_n': 0, 'last_source': None,
     # live progress of the CURRENT run (points of the planned grid):
     'done_points': 0, 'plan_total': 0, 'last_exit': None,
+    # live position INSIDE the current point ([PROG] markers):
+    'prog_step': 0, 'prog_total': 0, 'prog_phase': '',
 }
 COND = threading.Condition()
 _DEPS_CACHE = {'t': 0.0, 'data': None}
+_DEPS_BG = {'busy': False}
 
 # Shared form state: the browser edits it via UI, an agent edits it via
 # MCP -> POST /api/form; every change bumps state_n so the open GUI
@@ -929,9 +932,34 @@ def engine_py_ver(py):
         return ''
 
 
+def _deps_refresh_bg():
+    """Re-probe dependencies off the HTTP thread (one at a time)."""
+    if _DEPS_BG['busy']:
+        return
+    _DEPS_BG['busy'] = True
+
+    def _job():
+        try:
+            collect_deps(refresh=True)
+        except Exception:                        # noqa: BLE001
+            pass
+        finally:
+            _DEPS_BG['busy'] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+
+
 def collect_deps(refresh=False):
     now = time.time()
     if not refresh and _DEPS_CACHE['data'] and now - _DEPS_CACHE['t'] < 120:
+        return _DEPS_CACHE['data']
+    if not refresh and _DEPS_CACHE['data']:
+        # Stale (an install just reset the cache): a fresh probe
+        # imports torch and takes ~60 s INSIDE the handler, which
+        # made clients see a dropped connection (customer: deps tab
+        # errors during installs). Serve the previous snapshot NOW
+        # and refresh in the background.
+        _deps_refresh_bg()
         return _DEPS_CACHE['data']
 
     # Heavy libs (torch/mace/ase) live in the ENGINE interpreter — an
@@ -2109,9 +2137,18 @@ def start_run(params):
     def pump():
         import re
         ms_re = re.compile(r'ms/step=([0-9.]+)')
+        prog_re = re.compile(r'\[PROG\]\s+(\S+)\s+(\d+)/(\d+)')
         pt_re = re.compile(r'^\s+comp=[\d.]+\s+T=\s*\d+K\s+a=')
         lmp_re = re.compile(r'->\s*(\S+\.lmp)')
         for line in proc.stdout:
+            m_prog = prog_re.search(line)
+            if m_prog:
+                # engine heartbeat for the progress bar - never a
+                # log line (it would spam the console every 200 steps)
+                RUN['prog_phase'] = m_prog.group(1)
+                RUN['prog_step'] = int(m_prog.group(2))
+                RUN['prog_total'] = int(m_prog.group(3))
+                continue
             log(line)
             m_lmp = lmp_re.search(line)
             if m_lmp:
@@ -2120,6 +2157,9 @@ def start_run(params):
                 RUN['compile_off'] = True
             if pt_re.match(line):
                 RUN['done_points'] += 1
+                RUN['prog_step'] = 0
+                RUN['prog_total'] = 0
+                RUN['prog_phase'] = ''
                 log('[gui] point done {}/{}'.format(
                     RUN['done_points'], RUN['plan_total']))
                 continue
@@ -2216,14 +2256,22 @@ def progress_summary():
     if not running and RUN.get('last_exit') is not None:
         # frozen final elapsed of the finished run
         elapsed = elapsed or 0.0
-    rate = (done / elapsed * 60.0) if (done > 0 and elapsed > 0) else 0.0
-    eta = ((total - done) * elapsed / done) if (done > 0 and total > done
-                                               and elapsed > 0) else None
+    # inside the current point: [PROG] step/total from the engine, so
+    # the bar moves during a long pre-equilibration instead of
+    # sitting at 0% for minutes (customer complaint)
+    frac = 0.0
+    if running and int(RUN.get('prog_total') or 0) > 0:
+        frac = min(1.0, float(RUN.get('prog_step') or 0) /
+                   float(RUN['prog_total']))
+    eff = done + frac
+    rate = (eff / elapsed * 60.0) if (eff > 0 and elapsed > 0) else 0.0
+    eta = ((total - eff) * elapsed / eff) if (eff > 0 and total > eff
+                                             and elapsed > 0) else None
     # legs already finished are not in elapsed - add their known cost
-    if legs > 1 and left > 0 and done > 0 and total > done:
+    if legs > 1 and left > 0 and eff > 0 and total > eff:
         per_leg = elapsed / max(1, (legs - left - 1))
         eta += per_leg * left
-    pct = (100.0 * done / total) if total > 0 else 0.0
+    pct = (100.0 * eff / total) if total > 0 else 0.0
     return {
         'running': running,
         'total': total,
@@ -2236,11 +2284,15 @@ def progress_summary():
         'eta_s': (round(eta, 1) if eta is not None else None),
         'last_exit': RUN.get('last_exit'),
         'outdir': RUN.get('outdir'),
+        # where exactly inside the current point the engine is
+        'prog_phase': RUN.get('prog_phase') or '',
+        'prog_step': int(RUN.get('prog_step') or 0),
+        'prog_total': int(RUN.get('prog_total') or 0),
     }
 
 
 # --------------------- app status (ok / warn / error / update) ----------
-APP_VERSION = '2.4.7'
+APP_VERSION = '2.4.8'
 
 # UI languages. Russian is the default AND the only one shipped today;
 # the selector reads this table, so adding a locale is one tuple.
@@ -4425,6 +4477,28 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ------------------------------------------------------------- browser --
+def _reap_cmd(cmd_proc, limit=8.0):
+    """`cmd /c start <url>` can outlive the URL it opened and keep
+    the install folder busy after an update (customer: the folder
+    could not be deleted). Grace period, then kill it - by then the
+    browser already has the URL."""
+    try:
+        cmd_proc.wait(timeout=limit)
+    except Exception:                            # noqa: BLE001
+        try:
+            cmd_proc.kill()
+        except Exception:                        # noqa: BLE001
+            pass
+
+
+def _spawn_reaped(popen, url):
+    p = popen(['cmd', '/c', 'start', '', url],
+              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    threading.Thread(target=_reap_cmd, args=(p,), daemon=True).start()
+    return p
+
+
 def browser_open_chain(url, popen=None, startfile=None, wb_open=None,
                        is_nt=None):
     """POP the browser open and VISIBLE; return the strategy that worked.
@@ -4445,10 +4519,7 @@ def browser_open_chain(url, popen=None, startfile=None, wb_open=None,
     if is_nt:
         # `start` opens a NEW visible window of the default browser
         strategies = [
-            ('cmd-start', lambda: popen(
-                ['cmd', '/c', 'start', '', url],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))),
+            ('cmd-start', lambda: _spawn_reaped(popen, url)),
             ('startfile', lambda: startfile(url)),
         ]
     else:
